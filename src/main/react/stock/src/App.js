@@ -1,24 +1,45 @@
-import logo from './logo.svg';
-import './App.css';
+import React, { useState } from 'react';
+import { HashRouter as Router, Routes, Route } from 'react-router-dom';
+import ImageSlider from './components/ImageSlider';
+import ProductList from './components/ProductList';
+import CategoryList from './components/CategoryList';
+import LoginModal from './components/LoginModal';
+import StockPage from './pages/StockPage';
+import ClothingPage from './pages/ClothingPage';
+import './styles/App.css';
 
 function App() {
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
-    </div>
+    <Router>
+      <div className="App">
+        <header className="App-header">
+          <h1>쇼핑몰</h1>
+          <button className="login-btn" onClick={() => setIsLoginModalOpen(true)}>로그인</button>
+        </header>
+        <main>
+          <Routes>
+            <Route path="/" element={
+              <>
+                <ImageSlider />
+                <CategoryList />
+                <ProductList />
+              </>
+            } />
+            <Route path="/clothing" element={<ClothingPage />} />
+            <Route path="/shoes" element={<div className="category-page"><h1>신발 페이지</h1></div>} />
+            <Route path="/bags" element={<div className="category-page"><h1>가방 페이지</h1></div>} />
+            <Route path="/accessories" element={<div className="category-page"><h1>액세서리 페이지</h1></div>} />
+            <Route path="/stock" element={<StockPage />} />
+          </Routes>
+        </main>
+        <LoginModal 
+          isOpen={isLoginModalOpen} 
+          onClose={() => setIsLoginModalOpen(false)} 
+        />
+      </div>
+    </Router>
   );
 }
 

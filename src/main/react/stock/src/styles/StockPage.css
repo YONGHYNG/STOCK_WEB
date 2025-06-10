@@ -1,0 +1,106 @@
+.stock-page {
+  padding: 2% 4%;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.stock-page h1 {
+  font-size: 2vw;
+  color: #333;
+  margin-bottom: 2%;
+  text-align: center;
+}
+
+.top5-container {
+  background: white;
+  border-radius: 2%;
+  padding: 3%;
+  box-shadow: 0 0.2% 1% rgba(0, 0, 0, 0.1);
+}
+
+.top5-title {
+  font-size: 1.5vw;
+  color: #333;
+  margin-bottom: 2%;
+  text-align: center;
+  font-weight: 600;
+}
+
+.top5-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.top5-item {
+  display: flex;
+  align-items: center;
+  padding: 1.5% 2%;
+  margin-bottom: 1%;
+  background-color: #f8f9fa;
+  border-radius: 1vw;
+  transition: all 0.3s ease;
+}
+
+.top5-item:hover {
+  transform: translateX(1%);
+  background-color: #f0f0f0;
+}
+
+.rank {
+  font-size: 1.2vw;
+  font-weight: 600;
+  color: #4ecdc4;
+  margin-right: 2%;
+  min-width: 2vw;
+  text-align: center;
+}
+
+.name {
+  font-size: 1.1vw;
+  color: #666;
+}
+
+@media screen and (max-width: 768px) {
+  .stock-page h1 {
+    font-size: 2.5vw;
+  }
+
+  .top5-title {
+    font-size: 2vw;
+  }
+
+  .top5-item {
+    padding: 2% 3%;
+  }
+
+  .rank {
+    font-size: 1.6vw;
+  }
+
+  .name {
+    font-size: 1.5vw;
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .stock-page h1 {
+    font-size: 3vw;
+  }
+
+  .top5-title {
+    font-size: 2.5vw;
+  }
+
+  .top5-item {
+    padding: 3% 4%;
+  }
+
+  .rank {
+    font-size: 2vw;
+  }
+
+  .name {
+    font-size: 1.8vw;
+  }
+} 

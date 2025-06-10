@@ -14,7 +14,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-//test
+//test2
 @RestController
 @RequestMapping("/api/stocks")
 @CrossOrigin(origins = "http://localhost:3000")

@@ -34,10 +34,10 @@ public class StockController {
         int count = 0;
         for (Element row : rows) {
             Elements cols = row.select("td");
-            if (cols.size() > 0 && count < 10) {
+            if (cols.size() > 4 && count < 10) {
                 String name = cols.get(1).text();
                 String price = cols.get(2).text();
-                String changeRate = cols.get(6).text();
+                String changeRate = cols.get(4).text();
 
                 Stock stock = new Stock(name, price, changeRate);
                 stockList.add(stock);

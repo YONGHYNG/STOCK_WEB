@@ -16,8 +16,8 @@ import java.util.List;
 @Service
 public class NewsCrawlerService {
 
-    public List<String> getPopularNewsUrls() {
-        List<String> urls = new ArrayList<>();
+    public List<String> getPopularNewsTitles() {
+        List<String> titles = new ArrayList<>();
 
         try {
             Document doc = Jsoup.connect("https://news.einfomax.co.kr/news/articleList.html?view_type=sm").get();
@@ -26,28 +26,14 @@ public class NewsCrawlerService {
             Elements links = doc.select("div#skin-15 div.item > a");
 
             for(Element link : links) {
-                String href = link.attr("href");
-                if(!href.startsWith("http")) {
-                    href = "http://news.einfomax.co.kr" + href;
-                }
-                urls.add(href);
+                String title = link.text();
+                titles.add(title);
             }
         } catch (IOException e) {
             e.printStackTrace();
         }
 
-        return urls;
-    }
-
-    //테스트용 main 메서드
-    public static void main(String[] args) {
-        NewsCrawlerService crawler = new NewsCrawlerService();
-        List<String> newsUrls = crawler.getPopularNewsUrls();
-
-        System.out.println("인규 뉴스 목록");
-        for(String url : newsUrls) {
-            System.out.println(url);
-        }
+        return titles;
     }
 
 }

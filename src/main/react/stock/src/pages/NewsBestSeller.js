@@ -9,31 +9,52 @@ function NewsBestSeller() {
   const [internationalNews, setInternationalNews] = useState([]);
   
   useEffect(() => {
-    fetch('http://localhost:8080/api/news/popular-top10')
+    fetch('http://localhost:8080/api/news/popular')
       .then(res => res.json())
-      .then(data => setPopularNews(data))
-      .catch(err => console.error(err));
+      .then(data => {
+        // 데이터가 배열인지 확인하고, 아니면 빈 배열로 설정
+        setPopularNews(Array.isArray(data) ? data : []);
+      })
+      .catch(err => {
+        console.error('Error fetching popular news:', err);
+        setPopularNews([]);
+      });
   }, []);
 
   useEffect(() => {
-    fetch('http://localhost:8080/api/news/latest-top10')
+    fetch('http://localhost:8080/api/news/latest')
       .then(res => res.json())
-      .then(data => setLatestNews(data))
-      .catch(err => console.error(err));
+      .then(data => {
+        setLatestNews(Array.isArray(data) ? data : []);
+      })
+      .catch(err => {
+        console.error('Error fetching latest news:', err);
+        setLatestNews([]);
+      });
   }, []);
 
   useEffect(() => {
-    fetch('http://localhost:8080/api/news/domestic-top10')
+    fetch('http://localhost:8080/api/news/domestic')
       .then(res => res.json())
-      .then(data => setDomesticNews(data))
-      .catch(err => console.error(err));
+      .then(data => {
+        setDomesticNews(Array.isArray(data) ? data : []);
+      })
+      .catch(err => {
+        console.error('Error fetching domestic news:', err);
+        setDomesticNews([]);
+      });
   }, []);
 
   useEffect(() => {
-    fetch('http://localhost:8080/api/news/international-top10')
+    fetch('http://localhost:8080/api/news/international')
       .then(res => res.json())
-      .then(data => setInternationalNews(data))
-      .catch(err => console.error(err));
+      .then(data => {
+        setInternationalNews(Array.isArray(data) ? data : []);
+      })
+      .catch(err => {
+        console.error('Error fetching international news:', err);
+        setInternationalNews([]);
+      });
   }, []);
 
   const handleRowClick = (type) => {
@@ -84,6 +105,9 @@ function NewsBestSeller() {
   };
 
   const renderNewsTable = (title, news, type) => {
+    // news가 배열이 아니면 빈 배열로 처리
+    const newsArray = Array.isArray(news) ? news : [];
+    
     return (
       <div className="news-table-section">
         <h2>{title}</h2>
@@ -98,20 +122,26 @@ function NewsBestSeller() {
               </tr>
             </thead>
             <tbody>
-              {news.map((item, index) => (
-                <tr 
-                  key={index} 
-                  onClick={() => handleRowClick(type)}
-                  style={{ cursor: 'pointer' }}
-                >
-                  <td className="rank-cell">
-                    {renderRank(index)}
-                  </td>
-                  <td>{item.title}</td>
-                  <td>{item.publisher}</td>
-                  <td>{item.date}</td>
+              {newsArray.length > 0 ? (
+                newsArray.map((item, index) => (
+                  <tr 
+                    key={index} 
+                    onClick={() => handleRowClick(type)}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <td className="rank-cell">
+                      {renderRank(index)}
+                    </td>
+                    <td>{item.title || item}</td>
+                    <td>{item.publisher || '-'}</td>
+                    <td>{item.date || '-'}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan="4" style={{ textAlign: 'center' }}>데이터를 불러오는 중입니다...</td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>

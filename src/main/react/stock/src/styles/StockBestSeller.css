@@ -1,79 +1,102 @@
 .stock-best-seller {
-  padding: 2%;
-  max-width: 90%;
+  padding: 20px;
+  max-width: 1200px;
   margin: 0 auto;
 }
 
 .stock-best-seller h1 {
-  font-size: 2.5vw;
-  color: #333;
-  margin-bottom: 2%;
   text-align: center;
+  margin-bottom: 30px;
+  font-size: 24px;
+  color: #333;
 }
 
 .stock-tables-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 4%;
-  margin-top: 2%;
+  gap: 20px;
 }
 
 .stock-table-section {
   background: white;
-  border-radius: 1vw;
-  padding: 2%;
-  box-shadow: 0 0.2vw 0.4vw rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  padding: 15px;
 }
 
 .stock-table-section h2 {
-  margin-bottom: 1.5%;
+  font-size: 18px;
+  margin-bottom: 15px;
   color: #333;
-  font-size: 1.5vw;
+  text-align: center;
 }
 
 .stock-table-container {
   overflow-x: auto;
+  max-width: 100%;
 }
 
 .stock-table {
   width: 100%;
   border-collapse: collapse;
-  margin-top: 1%;
+  font-size: 14px;
 }
 
 .stock-table th,
 .stock-table td {
-  padding: 1% 2%;
+  padding: 8px;
   text-align: center;
-  border-bottom: 0.1vw solid #eee;
+  border-bottom: 1px solid #eee;
 }
 
 .stock-table th {
   background-color: #f8f9fa;
-  font-weight: bold;
+  font-weight: 600;
+  color: #333;
 }
 
 .stock-table tr:hover {
-  background-color: #f5f5f5;
+  background-color: #f8f9fa;
+}
+
+/* 1,2,3등 행 텍스트 스타일 */
+.stock-table tr:nth-child(1) td {
+  color: #daa520;
+  font-size: 1.1em;
+  font-weight: 800;
+}
+
+.stock-table tr:nth-child(2) td {
+  color: #a9a9a9;
+  font-size: 1.06em;
+  font-weight: 700;
+}
+
+.stock-table tr:nth-child(3) td {
+  color: #b87333;
+  font-size: 1.05em;
+  font-weight: 600;
 }
 
 .rank-cell {
-  width: 8%;
+  width: 60px;
+  text-align: center;
 }
 
 .crown-container {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5%;
+  gap: 4px;
+}
+
+.crown-icon {
+  font-size: 16px;
 }
 
 .rank-number {
   font-weight: bold;
-}
-
-.crown-icon {
-  font-size: 1.2vw;
+  font-size: 14px;
 }
 
 .gold {
@@ -88,6 +111,16 @@
   color: #CD7F32;
 }
 
+@media (max-width: 768px) {
+  .stock-tables-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .stock-table-section {
+    margin-bottom: 20px;
+  }
+}
+
 @media screen and (max-width: 768px) {
   .stock-best-seller h1 {
     font-size: 3vw;
@@ -97,14 +130,14 @@
     font-size: 2vw;
   }
 
+  .stock-table-container {
+    width: 90%;
+  }
+  
   .stock-table th,
   .stock-table td {
-    padding: 1.5% 2%;
+    padding: 3%;
     font-size: 1.8vw;
-  }
-
-  .crown-icon {
-    font-size: 1.5vw;
   }
 }
 

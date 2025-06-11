@@ -20,16 +20,30 @@ import java.util.List;
 @CrossOrigin(origins = "http://localhost:3000")
 public class StockController {
 
-    @GetMapping("/top10")
-    public List<Stock> getTopStocks() throws IOException {
+    @GetMapping("/volume-top10")
+    public List<Stock> getTopByVolume() throws IOException {
+        return fetchStocks("https://finance.naver.com/sise/nxt_sise_quant.naver?sosok=0");
+    }
+
+    @GetMapping("/marketcap-top10")
+    public List<Stock> getTopByMarketCap() throws IOException {
+        return fetchStocks("https://finance.naver.com/sise/sise_market_sum.naver?sosok=0&page=1");
+    }
+
+    @GetMapping("/rising-top10")
+    public List<Stock> getTopRising() throws IOException {
+        return fetchStocks("https://finance.naver.com/sise/sise_rise.naver");
+    }
+
+    @GetMapping("/falling-top10")
+    public List<Stock> getTopFalling() throws IOException {
+        return fetchStocks("https://finance.naver.com/sise/sise_fall.naver");
+    }
+
+    private List<Stock> fetchStocks(String url) throws IOException {
         List<Stock> stockList = new ArrayList<>();
-        String url = "https://finance.naver.com/sise/nxt_sise_quant.naver?sosok=0";
         Document doc = Jsoup.connect(url).get();
-
-        System.out.println("페이지 로딩 완료");
-
         Elements rows = doc.select("table.type_2 tr");
-        System.out.println("행 수: " + rows.size());
 
         int count = 0;
         for (Element row : rows) {
@@ -39,14 +53,12 @@ public class StockController {
                 String price = cols.get(2).text();
                 String changeRate = cols.get(4).text();
 
-                Stock stock = new Stock(name, price, changeRate);
-                stockList.add(stock);
-
-                System.out.println(stock);
+                stockList.add(new Stock(name, price, changeRate));
                 count++;
             }
         }
 
         return stockList;
     }
+
 }

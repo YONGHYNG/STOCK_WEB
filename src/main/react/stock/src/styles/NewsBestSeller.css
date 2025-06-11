@@ -1,0 +1,93 @@
+.news-best-seller {
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.news-best-seller h1 {
+  text-align: center;
+  margin-bottom: 30px;
+  color: #333;
+}
+
+.news-tables-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+}
+
+.news-table-section {
+  background: white;
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.news-table-section h2 {
+  margin-bottom: 15px;
+  color: #333;
+  font-size: 1.2em;
+}
+
+.news-table-container {
+  overflow-x: auto;
+}
+
+.news-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.news-table th,
+.news-table td {
+  padding: 12px;
+  border-bottom: 1px solid #eee;
+}
+
+.news-table th {
+  background-color: #f8f9fa;
+  font-weight: 600;
+}
+
+.news-table tr:hover {
+  background-color: #f8f9fa;
+}
+
+.rank-cell {
+  width: 60px;
+  text-align: center;
+}
+
+.crown-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.crown-icon {
+  font-size: 1.2em;
+}
+
+.rank-number {
+  font-weight: bold;
+}
+
+.gold {
+  color: #FFD700;
+}
+
+.silver {
+  color: #C0C0C0;
+}
+
+.bronze {
+  color: #CD7F32;
+}
+
+@media (max-width: 768px) {
+  .news-tables-grid {
+    grid-template-columns: 1fr;
+  }
+} 

@@ -6,6 +6,7 @@ import CategoryList from './components/CategoryList';
 import LoginModal from './components/LoginModal';
 import StockPage from './pages/StockPage';
 import StockBestSeller from './pages/StockBestSeller';
+import NewsBestSeller from './pages/NewsBestSeller';
 import './styles/App.css';
 
 function App() {
@@ -28,9 +29,10 @@ function App() {
               </>
             } />
             <Route path="/clothing" element={<StockBestSeller />} />
-            <Route path="/shoes" element={<div className="category-page"><h1>신발 페이지</h1></div>} />
+            <Route path="/news" element={<NewsBestSeller />} />
             <Route path="/bags" element={<div className="category-page"><h1>가방 페이지</h1></div>} />
             <Route path="/accessories" element={<div className="category-page"><h1>액세서리 페이지</h1></div>} />
+            <Route path="/community" element={<div className="category-page"><h1>커뮤니티 페이지</h1></div>} />
             <Route path="/stock" element={<StockPage />} />
           </Routes>
         </main>

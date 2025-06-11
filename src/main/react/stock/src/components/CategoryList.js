@@ -11,9 +11,9 @@ const categories = [
   },
   {
     id: 2,
-    name: '신발',
-    icon: '👞',
-    path: '/shoes'
+    name: '뉴스',
+    icon: '📰',
+    path: '/news'
   },
   {
     id: 3,

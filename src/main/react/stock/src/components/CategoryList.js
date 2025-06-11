@@ -5,8 +5,8 @@ import '../styles/CategoryList.css';
 const categories = [
   {
     id: 1,
-    name: '의류',
-    icon: '👕',
+    name: '주식',
+    icon: '📈',
     path: '/clothing'
   },
   {
@@ -29,9 +29,9 @@ const categories = [
   },
   {
     id: 5,
-    name: '주식',
-    icon: '📈',
-    path: '/stock'
+    name: '커뮤니티',
+    icon: '💬',
+    path: '/community'
   }
 ];
 

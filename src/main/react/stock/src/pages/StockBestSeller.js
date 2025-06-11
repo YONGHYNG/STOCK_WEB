@@ -47,36 +47,50 @@ function StockBestSeller() {
     }
   };
 
+  const renderStockTable = (title) => {
+    return (
+      <div className="stock-table-section">
+        <h2>{title}</h2>
+        <div className="stock-table-container">
+          <table className="stock-table">
+            <thead>
+              <tr>
+                <th>순위</th>
+                <th>종목명</th>
+                <th>현재가</th>
+                <th>등락률</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stocks.map((stock, index) => (
+                <tr 
+                  key={index} 
+                  onClick={handleRowClick}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <td className="rank-cell">
+                    {renderRank(index)}
+                  </td>
+                  <td>{stock.name}</td>
+                  <td>{stock.price}</td>
+                  <td>{stock.changeRate}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="stock-best-seller">
       <h1>주식 마켓 베스트셀러</h1>
-      <div className="stock-table-container">
-        <table className="stock-table">
-          <thead>
-            <tr>
-              <th>순위</th>
-              <th>종목명</th>
-              <th>현재가</th>
-              <th>등락률</th>
-            </tr>
-          </thead>
-          <tbody>
-            {stocks.map((stock, index) => (
-              <tr 
-                key={index} 
-                onClick={handleRowClick}
-                style={{ cursor: 'pointer' }}
-              >
-                <td className="rank-cell">
-                  {renderRank(index)}
-                </td>
-                <td>{stock.name}</td>
-                <td>{stock.price}</td>
-                <td>{stock.changeRate}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="stock-tables-grid">
+        {renderStockTable("거래량 상위 종목")}
+        {renderStockTable("시가총액 상위 종목")}
+        {renderStockTable("상승률 상위 종목")}
+        {renderStockTable("하락률 상위 종목")}
       </div>
     </div>
   );

@@ -23,4 +23,23 @@ public class NewsController {
             return List.of("뉴스를 불러오는 중 오류가 발생했습니다.");
         }
     }
+
+    @GetMapping("/api/news/international")
+    public List<String> getInternationalNewsTitles() {
+        try {
+            return newsService.getInternationalNewsTitles();
+        } catch (IOException e) {
+            e.printStackTrace();
+            return List.of("국제 뉴스를 불러오는 중 오류가 발생했습니다.");
+        }
+    }
+
+    @GetMapping("/api/news/domestic")
+    public List<String> getDomesticNewsTitles() {
+        try {
+            return newsService.getDomesticNewsTitles();
+        } catch (IOException e) {
+            return List.of("국내 뉴스를 불러오는 중 오류 발생했습니다.");
+        }
+    }
 }

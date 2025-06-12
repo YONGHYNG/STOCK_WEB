@@ -66,10 +66,15 @@ function NewsBestSeller() {
         window.open('https://finance.naver.com/news/news_list.naver?mode=LSTD&section_id=101&section_id2=258&type=1', '_blank');
         break;
       case 'domestic':
-        window.open('https://news.naver.com/main/main.naver?mode=LSD&mid=shm&sid1=100', '_blank');
+        window.open(
+          "https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258","_blank"
+        );
         break;
       case 'international':
-        window.open('https://news.naver.com/main/main.naver?mode=LSD&mid=shm&sid1=104', '_blank');
+        window.open(
+          "https://finance.naver.com/news/news_list.naver?mode=LSS3D&section_id=101&section_id2=258&section_id3=403",
+          "_blank"
+        );
         break;
       default:
         break;
@@ -81,31 +86,30 @@ function NewsBestSeller() {
       case 0:
         return (
           <div className="crown-container">
-            <span className="rank-number gold">1</span>
+            <span className="rank-number gold">1.</span>
             <FaCrown className="crown-icon gold" />
           </div>
         );
       case 1:
         return (
           <div className="crown-container">
-            <span className="rank-number silver">2</span>
+            <span className="rank-number silver">2.</span>
             <FaCrown className="crown-icon silver" />
           </div>
         );
       case 2:
         return (
           <div className="crown-container">
-            <span className="rank-number bronze">3</span>
+            <span className="rank-number bronze">3.</span>
             <FaCrown className="crown-icon bronze" />
           </div>
         );
       default:
-        return index + 1;
+        return `${index + 1}.`;
     }
   };
 
   const renderNewsTable = (title, news, type) => {
-    // news가 배열이 아니면 빈 배열로 처리
     const newsArray = Array.isArray(news) ? news : [];
     
     return (
@@ -117,8 +121,6 @@ function NewsBestSeller() {
               <tr>
                 <th>순위</th>
                 <th>제목</th>
-                <th>언론사</th>
-                <th>작성일</th>
               </tr>
             </thead>
             <tbody>
@@ -132,19 +134,17 @@ function NewsBestSeller() {
                     <td className="rank-cell">
                       {renderRank(index)}
                     </td>
-                    <td>
+                    <td className="title-cell">
                       {type === 'popular' ? 
                         (item.title ? item.title.substring(2).trim() : item) 
                         : (item.title || item)
                       }
                     </td>
-                    <td>{item.publisher || '-'}</td>
-                    <td>{item.date || '-'}</td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan="4" style={{ textAlign: 'center' }}>데이터를 불러오는 중입니다...</td>
+                  <td colSpan="2" style={{ textAlign: 'center' }}>데이터를 불러오는 중입니다...</td>
                 </tr>
               )}
             </tbody>
@@ -156,7 +156,16 @@ function NewsBestSeller() {
 
   return (
     <div className="news-best-seller">
-      <h1>뉴스 베스트셀러</h1>
+      <div className="title-container">
+        <h1>뉴스 베스트셀러</h1>
+        <div className="date-display">
+          {new Date().toLocaleDateString('ko-KR', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          })}
+        </div>
+      </div>
       <div className="news-tables-grid">
         {renderNewsTable("많이 본 뉴스", popularNews, 'popular')}
         {renderNewsTable("최신 뉴스", latestNews, 'latest')}

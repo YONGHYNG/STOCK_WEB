@@ -63,7 +63,7 @@ function NewsBestSeller() {
         window.open('https://news.einfomax.co.kr/news/articleList.html?view_type=sm', '_blank');
         break;
       case 'latest':
-        window.open('https://news.naver.com/main/main.naver?mode=LSD&mid=shm&sid1=100', '_blank');
+        window.open('https://finance.naver.com/news/news_list.naver?mode=LSTD&section_id=101&section_id2=258&type=1', '_blank');
         break;
       case 'domestic':
         window.open('https://news.naver.com/main/main.naver?mode=LSD&mid=shm&sid1=100', '_blank');

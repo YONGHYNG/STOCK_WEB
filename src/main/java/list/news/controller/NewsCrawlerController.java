@@ -24,12 +24,6 @@ public class NewsCrawlerController {
         return newsCrawlerService.getPopularNewsTitles();
     }
 
-    @GetMapping("/latest")
-    public List<String> getLatestNews() {
-        // TODO: implement
-        return List.of(); // 예시
-    }
-
     @GetMapping("/international")
     public List<String> getInternationalNews() {
         // TODO: implement

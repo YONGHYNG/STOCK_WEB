@@ -26,8 +26,9 @@ public class NewsCrawlerService {
             Elements links = doc.select("div#skin-15 div.item > a");
 
             for(Element link : links) {
-                String title = link.text();
-                titles.add(title);
+                String fullTitle = link.text();
+                String cleanedTitle = fullTitle.replaceFirst("^[0-9]{1,2}\\.\\s*", "");
+                titles.add(cleanedTitle);
             }
         } catch (IOException e) {
             e.printStackTrace();

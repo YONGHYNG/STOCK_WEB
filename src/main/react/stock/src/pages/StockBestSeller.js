@@ -3,13 +3,12 @@ import '../styles/StockBestSeller.css';
 import { FaCrown } from 'react-icons/fa';
 
 function StockBestSeller() {
-
   const [volumeStocks, setVolumeStocks] = useState([]);
   const [marketCapStocks, setMarketCapStocks] = useState([]);
   const [risingStocks, setRisingStocks] = useState([]);
   const [fallingStocks, setFallingStocks] = useState([]);
   
-   useEffect(() => {
+  useEffect(() => {
     fetch('http://localhost:8080/api/stocks/volume-top10')
       .then(res => res.json())
       .then(data => setVolumeStocks(data))
@@ -93,8 +92,8 @@ function StockBestSeller() {
             <thead>
               <tr>
                 <th>순위</th>
-                <th>이름</th>
-                <th>지금 가격</th>
+                <th>종목명</th>
+                <th>현재가</th>
                 <th>등락률</th>
               </tr>
             </thead>

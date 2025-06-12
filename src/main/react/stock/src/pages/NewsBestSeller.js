@@ -60,7 +60,7 @@ function NewsBestSeller() {
   const handleRowClick = (type) => {
     switch(type) {
       case 'popular':
-        window.open('https://news.naver.com/main/main.naver?mode=LSD&mid=shm&sid1=100', '_blank');
+        window.open('https://news.einfomax.co.kr/news/articleList.html?view_type=sm', '_blank');
         break;
       case 'latest':
         window.open('https://news.naver.com/main/main.naver?mode=LSD&mid=shm&sid1=100', '_blank');
@@ -132,7 +132,12 @@ function NewsBestSeller() {
                     <td className="rank-cell">
                       {renderRank(index)}
                     </td>
-                    <td>{item.title || item}</td>
+                    <td>
+                      {type === 'popular' ? 
+                        (item.title ? item.title.substring(2).trim() : item) 
+                        : (item.title || item)
+                      }
+                    </td>
                     <td>{item.publisher || '-'}</td>
                     <td>{item.date || '-'}</td>
                   </tr>

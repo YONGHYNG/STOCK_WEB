@@ -7,6 +7,7 @@
 .news-best-seller h1 {
   text-align: center;
   margin-bottom: 30px;
+  font-size: 24px;
   color: #333;
 }
 
@@ -19,35 +20,47 @@
 .news-table-section {
   background: white;
   border-radius: 8px;
-  padding: 20px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  padding: 15px;
 }
 
 .news-table-section h2 {
+  font-size: 18px;
   margin-bottom: 15px;
   color: #333;
-  font-size: 1.2em;
+  text-align: center;
 }
 
 .news-table-container {
   overflow-x: auto;
+  max-width: 100%;
 }
 
 .news-table {
   width: 100%;
   border-collapse: collapse;
-  text-align: left;
+  font-size: 14px;
 }
 
 .news-table th,
 .news-table td {
-  padding: 12px;
+  padding: 8px;
+  text-align: center;
   border-bottom: 1px solid #eee;
+}
+
+.news-table th:nth-child(2),
+.news-table td:nth-child(2) {
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .news-table th {
   background-color: #f8f9fa;
   font-weight: 600;
+  color: #333;
 }
 
 .news-table tr:hover {
@@ -63,15 +76,16 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 4px;
 }
 
 .crown-icon {
-  font-size: 1.2em;
+  font-size: 16px;
 }
 
 .rank-number {
   font-weight: bold;
+  font-size: 14px;
 }
 
 .gold {
@@ -89,5 +103,9 @@
 @media (max-width: 768px) {
   .news-tables-grid {
     grid-template-columns: 1fr;
+  }
+  
+  .news-table-section {
+    margin-bottom: 20px;
   }
 } 

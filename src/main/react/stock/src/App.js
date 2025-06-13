@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { HashRouter as Router, Routes, Route } from 'react-router-dom';
-import ImageSlider from './components/ImageSlider';
 import ProductList from './components/ProductList';
 import CategoryList from './components/CategoryList';
 import LoginModal from './components/LoginModal';
 import StockPage from './pages/StockPage';
 import StockBestSeller from './pages/StockBestSeller';
 import NewsBestSeller from './pages/NewsBestSeller';
+import StockIndices from './components/StockIndices';
 import './styles/App.css';
 
 function App() {
@@ -16,14 +16,13 @@ function App() {
     <Router>
       <div className="App">
         <header className="App-header">
-          <h1>랭킹한눈</h1>
-          <button className="login-btn" onClick={() => setIsLoginModalOpen(true)}>로그인</button>
+          <StockIndices />
         </header>
         <main>
           <Routes>
             <Route path="/" element={
               <>
-                <ImageSlider />
+                <h1 className="main-title">랭킹한눈</h1>
                 <CategoryList />
                 <ProductList />
               </>

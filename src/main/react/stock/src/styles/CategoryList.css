@@ -1,10 +1,14 @@
 .category-list {
-  display: flex;
-  justify-content: center;
-  gap: 2%;
-  padding: 2% 4%;
-  max-width: 1200px;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4%;
+  row-gap: 10%;
+  padding: 3% 6%;
+  max-width: 1400px;
   margin: 0 auto;
+  background: linear-gradient(135deg, #f5f7fa 0%, #e4e8f0 100%);
+  border-radius: 2vw;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
 }
 
 .category-item {
@@ -13,65 +17,70 @@
   align-items: center;
   justify-content: center;
   background-color: white;
-  border-radius: 1vw;
-  padding: 3%;
+  border-radius: 1.2vw;
+  padding: 4%;
   text-decoration: none;
   color: #333;
-  box-shadow: 0 0.2% 1% rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
   transition: all 0.3s ease;
-  width: 18%;
+  width: 100%;
+  backdrop-filter: blur(5px);
 }
 
 .category-item:hover {
   transform: translateY(-2%);
-  box-shadow: 0 0.4% 2% rgba(0, 0, 0, 0.15);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
 }
 
 .category-icon {
-  font-size: 2.5vw;
-  margin-bottom: 1%;
+  font-size: 3.3vw;
+  margin-bottom: 2%;
 }
 
 .category-name {
-  font-size: 1.1vw;
+  font-size: 1.3vw;
   font-weight: 500;
 }
 
 @media screen and (max-width: 768px) {
   .category-list {
-    flex-wrap: wrap;
-    gap: 3%;
-    padding: 3% 4%;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4%;
+    row-gap: 10%;
+    padding: 4% 6%;
   }
 
   .category-item {
-    width: 30%;
+    width: 100%;
   }
 
   .category-icon {
-    font-size: 3.5vw;
+    font-size: 4.6vw;
   }
 
   .category-name {
-    font-size: 1.5vw;
+    font-size: 1.8vw;
   }
 }
 
 @media screen and (max-width: 480px) {
   .category-list {
-    gap: 4%;
-    padding: 4% 5%;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 5%;
+    row-gap: 12%;
+    padding: 5% 6%;
   }
 
   .category-item {
-    width: 45%;
+    width: 100%;
   }
 
   .category-icon {
-    font-size: 4.5vw;
+    font-size: 5.9vw;
   }
 
   .category-name {
-    font-size: 1.8vw;
+    font-size: 2.2vw;
   }
 } 

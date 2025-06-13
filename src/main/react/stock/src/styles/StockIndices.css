@@ -1,0 +1,84 @@
+.stock-indices-container {
+  background: #f8f9fa;
+  padding: 0.5rem 0;
+  margin: 0.5rem 0;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+  white-space: nowrap;
+  position: relative;
+  width: 100%;
+}
+
+.indices-grid {
+  display: inline-flex;
+  animation: scroll 230s linear infinite;
+  padding: 0 1rem;
+  will-change: transform;
+}
+
+.indices-grid:hover {
+  animation-play-state: paused;
+}
+
+@keyframes scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.index-item {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 1.5rem;
+  background: white;
+  margin: 0 0.5rem;
+  border-radius: 0.4rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  min-width: 200px;
+}
+
+.index-name {
+  font-weight: 600;
+  color: #333;
+  font-size: 0.95rem;
+  margin-right: 1rem;
+}
+
+.index-value {
+  font-weight: 500;
+  color: #444;
+  font-size: 0.95rem;
+  margin-right: 1rem;
+}
+
+.index-change {
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.3rem;
+}
+
+.index-change.positive {
+  color: #e53935;
+  background: rgba(229, 57, 53, 0.1);
+}
+
+.index-change.negative {
+  color: #1e88e5;
+  background: rgba(30, 136, 229, 0.1);
+}
+
+@media screen and (max-width: 768px) {
+  .indices-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .indices-grid {
+    grid-template-columns: 1fr;
+  }
+} 

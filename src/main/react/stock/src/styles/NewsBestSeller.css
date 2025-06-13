@@ -119,15 +119,32 @@
 }
 
 .gold {
-  color: #FFD700;
+  color: #daa520;
 }
 
 .silver {
-  color: #C0C0C0;
+  color: #a9a9a9;
 }
 
 .bronze {
-  color: #CD7F32;
+  color: #b87333;
+}
+
+.news-table tr:nth-child(1) td:nth-child(2) {
+  color: #daa520;  font-size: calc(0.85em * 1.30 );
+  font-weight: bold;
+}
+
+.news-table tr:nth-child(2) td:nth-child(2) {
+  color: #a9a9a9;
+  font-size: calc(0.85em * 1.18);
+  font-weight: bold;
+}
+
+.news-table tr:nth-child(3) td:nth-child(2) {
+  color: #b87333;
+  font-size: calc(0.85em * 1.15);
+  font-weight: bold;
 }
 
 @media (max-width: 768px) {

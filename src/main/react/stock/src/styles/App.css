@@ -86,3 +86,11 @@ main {
     font-size: 2.5vw;
   }
 }
+
+.main-title {
+  text-align: center;
+  margin: 2rem 0;
+  font-size: 2.5rem;
+  color: #333;
+  font-weight: bold;
+}

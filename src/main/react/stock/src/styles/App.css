@@ -94,3 +94,9 @@ main {
   color: #333;
   font-weight: bold;
 }
+
+.main-title span.large {
+  font-size: 2em;
+  display: inline-block;
+  line-height: 1;
+}

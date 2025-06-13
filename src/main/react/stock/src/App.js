@@ -22,7 +22,7 @@ function App() {
           <Routes>
             <Route path="/" element={
               <>
-                <h1 className="main-title">랭킹한눈</h1>
+                <h1 className="main-title"><span className="large">오</span>늘의 <span className="large">리</span>스트</h1>
                 <CategoryList />
                 <ProductList />
               </>

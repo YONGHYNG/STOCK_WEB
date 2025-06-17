@@ -6,6 +6,8 @@ import {
   FaCar, FaPlane, FaShip, FaTrain, FaTruck
 } from 'react-icons/fa';
 import '../styles/CategoryList.css';
+import { CiSettings } from 'react-icons/ci';
+import { IoSettings } from 'react-icons/io5';
 
 const categories = [
   // First Row - Main Categories
@@ -23,9 +25,9 @@ const categories = [
   },
   {
     id: 3,
-    name: '가방',
-    icon: <FaShoppingBag />,
-    path: '/bags'
+    name: '커뮤니티',
+    icon: <FaUsers />,
+    path: '/community-best-seller'
   },
   {
     id: 4,
@@ -35,9 +37,9 @@ const categories = [
   },
   {
     id: 5,
-    name: '커뮤니티',
-    icon: <FaUsers />,
-    path: '/community'
+    name: '설정',
+    icon: <IoSettings />,
+    path: '/community-best-seller'
   },
   // Second Row - Financial Categories
   {

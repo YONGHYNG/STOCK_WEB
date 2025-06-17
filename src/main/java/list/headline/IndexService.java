@@ -9,7 +9,7 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 
 @Service
-public class IndexService {
+public class  IndexService {
 
     public String getIndexHtml() throws IOException {
         String url = "https://news.einfomax.co.kr/news/articleList.html?view_type=sm";

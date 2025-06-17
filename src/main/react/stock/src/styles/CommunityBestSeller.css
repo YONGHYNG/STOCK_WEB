@@ -1,0 +1,212 @@
+.community-best-seller {
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+  font-family: 'Arial', sans-serif;
+  color: #333;
+}
+
+.title-container {
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+.title-container h1 {
+  font-size: 24px;
+  color: #333;
+  font-weight: bold;
+  position: relative;
+  display: inline-block;
+  padding-bottom: 10px;
+}
+
+.title-container h1::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    transform: translateX(-50%);
+    width: 80%;
+    height: 3px;
+    background: linear-gradient(to right, #6dd5ed, #2193b0);
+    border-radius: 5px;
+}
+
+.community-tables-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr); /* Two tables side-by-side */
+  gap: 20px;
+}
+
+@media (max-width: 768px) {
+  .community-tables-grid {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+}
+
+.community-table-section {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+}
+
+.community-table-section h2 {
+  font-size: 18px;
+  margin-bottom: 15px;
+  color: #333;
+  text-align: center;
+  font-weight: bold;
+}
+
+.community-table-container {
+  overflow-x: auto;
+  max-width: 100%;
+  flex-grow: 1;
+}
+
+.community-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  table-layout: fixed; /* Ensures consistent column widths */
+}
+
+.community-table th,
+.community-table td {
+  padding: 8px;
+  text-align: center;
+  border-bottom: 1px solid #eee;
+  white-space: nowrap; /* Prevent text wrapping */
+  overflow: hidden; /* Hide overflow content */
+  text-overflow: ellipsis; /* Display ellipsis for overflowed text */
+}
+
+.community-table th {
+  background-color: #f8f9fa;
+  font-weight: 600;
+  color: #333;
+  text-transform: uppercase;
+}
+
+.community-table tbody tr:hover {
+  background-color: #f8f9fa;
+}
+
+/* 1,2,3등 행 텍스트 스타일 (StockBestSeller와 동일하게) */
+.community-table tbody tr:nth-child(1) td {
+  color: #daa520;
+  font-size: 1.1em;
+  font-weight: 800;
+}
+
+.community-table tbody tr:nth-child(2) td {
+  color: #a9a9a9;
+  font-size: 1.06em;
+  font-weight: 700;
+}
+
+.community-table tbody tr:nth-child(3) td {
+  color: #b87333;
+  font-size: 1.05em;
+  font-weight: 600;
+}
+
+.rank-cell {
+  width: 60px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.title-cell {
+  text-align: left;
+  width: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hits-cell,
+.likes-cell {
+  width: 15%;
+}
+
+/* Rank specific styles (StockBestSeller와 동일하게) */
+.crown-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 1.1em;
+  line-height: 1;
+}
+
+.crown-icon {
+  font-size: 16px;
+  margin-left: 0; /* Remove extra margin if any */
+}
+
+.rank-number {
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.gold {
+  color: #FFD700;
+}
+
+.silver {
+  color: #C0C0C0;
+}
+
+.bronze {
+  color: #CD7F32;
+}
+
+/* Media Queries from StockBestSeller */
+@media screen and (max-width: 768px) {
+  .community-best-seller h1 {
+    font-size: 3vw;
+  }
+
+  .community-table-section h2 {
+    font-size: 2vw;
+  }
+
+  .community-table-container {
+    width: 90%;
+  }
+  
+  .community-table th,
+  .community-table td {
+    padding: 3%;
+    font-size: 1.8vw;
+  }
+
+  .crown-icon {
+    font-size: 1.8vw;
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .community-best-seller h1 {
+    font-size: 4vw;
+  }
+
+  .community-table-section h2 {
+    font-size: 2.5vw;
+  }
+
+  .community-table th,
+  .community-table td {
+    padding: 2% 2.5%;
+    font-size: 2.2vw;
+  }
+
+  .crown-icon {
+    font-size: 1.8vw;
+  }
+} 

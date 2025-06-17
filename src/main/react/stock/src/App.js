@@ -6,6 +6,7 @@ import LoginModal from './components/LoginModal';
 import StockPage from './pages/StockPage';
 import StockBestSeller from './pages/StockBestSeller';
 import NewsBestSeller from './pages/NewsBestSeller';
+import CommunityBestSeller from './pages/CommunityBestSeller';
 import StockIndices from './components/StockIndices';
 import './styles/App.css';
 
@@ -33,6 +34,7 @@ function App() {
             <Route path="/accessories" element={<div className="category-page"><h1>액세서리 페이지</h1></div>} />
             <Route path="/community" element={<div className="category-page"><h1>커뮤니티 페이지</h1></div>} />
             <Route path="/stock" element={<StockPage />} />
+            <Route path="/community-best-seller" element={<CommunityBestSeller />} />
           </Routes>
         </main>
         <LoginModal 

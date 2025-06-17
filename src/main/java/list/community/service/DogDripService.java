@@ -36,7 +36,15 @@ public class DogDripService {
                     String likes = likeElement.text();
                     String replys = replyElement != null ? replyElement.text().replaceAll("[()]", "") : "0";
 
-                    posts.add(new DogdripPost(title, likes, replys));
+                    DogdripPost post = new DogdripPost(title, likes, replys);
+                    posts.add(post);
+
+                    // 콘솔 출력 추가
+                    System.out.println("제목: " + title);
+                    System.out.println("좋아요: " + likes);
+                    System.out.println("댓글 수: " + replys);
+                    System.out.println("----------------------");
+
                     count++;
                 }
 
@@ -44,9 +52,14 @@ public class DogDripService {
             }
 
         } catch(Exception e) {
+            System.out.println("크롤링 중 오류 발생:");
             e.printStackTrace();
         }
+
+        // 크롤링된 게시글 수 확인용 출력
+        System.out.println("총 크롤링된 게시글 수: " + posts.size());
 
         return posts;
     }
 }
+

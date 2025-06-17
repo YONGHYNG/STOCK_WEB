@@ -1,42 +1,54 @@
-.news-section-container {
+.news-best-seller {
   padding: 2%;
   max-width: 85%;
   margin: 0 auto;
 }
 
-.news-section-title {
+.title-container {
   display: flex;
   flex-direction: column;
   align-items: center;
   margin-bottom: 3%;
 }
 
-.news-section-title h1 {
+.title-container h1 {
   margin-bottom: 1%;
   font-size: 1.7em;
   color: #333;
 }
 
-.news-section-grid {
+.date-display {
+  font-size: 1em;
+  color: #666;
+  font-weight: 500;
+}
+
+.news-tables-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 2%;
-  max-width: 85%;
-  margin: 0 auto;
+  grid-template-rows: repeat(2, 1fr);
+  gap: 40px 20px;
+  width: 100%;
+  background: #f5f5f5;
+  padding: 20px;
+  border-radius: 10px;
 }
 
 .news-table-section {
   background: white;
   border-radius: 8px;
-  padding: 2%;
+  padding: 11px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  height: 100%;
 }
 
 .news-table-section h2 {
-  margin-bottom: 2%;
+  margin-bottom: 15px;
   color: #333;
   font-size: 1.1em;
   text-align: center;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eee;
 }
 
 .news-table-container {
@@ -53,7 +65,7 @@
 
 .news-table th,
 .news-table td {
-  padding: 1%;
+  padding: 8px;
   text-align: left;
   border-bottom: 1px solid #eee;
 }
@@ -62,7 +74,6 @@
   background-color: #f8f9fa;
   font-weight: 600;
   color: #333;
-  text-align: left;
 }
 
 .news-table tr:hover {
@@ -85,12 +96,11 @@
 .crown-container {
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 5px;
 }
 
 .crown-icon {
-  font-size: 1.2em;
+  font-size: 1.1em;
 }
 
 .crown-icon.gold {
@@ -102,7 +112,7 @@
 }
 
 .rank-number {
-  font-weight: bold;
+  font-weight: 600;
 }
 
 .rank-number.gold {
@@ -144,10 +154,16 @@
 }
 
 @media (max-width: 768px) {
-  .news-section-grid {
+  .news-tables-grid {
     grid-template-columns: 1fr;
-    gap: 3%;
-    max-width: 90%;
+    grid-template-rows: auto;
+    gap: 30px;
+    padding: 15px;
+  }
+  
+  .news-best-seller {
+    padding: 3%;
+    max-width: 95%;
   }
   
   .news-table {
@@ -156,11 +172,6 @@
   
   .news-table th,
   .news-table td {
-    padding: 1.5%;
-  }
-
-  .news-section-container {
-    padding: 3%;
-    max-width: 80%;
+    padding: 10px;
   }
 } 

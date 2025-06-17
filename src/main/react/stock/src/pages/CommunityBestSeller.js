@@ -45,7 +45,7 @@ function CommunityBestSeller() {
   }, []);
 
   useEffect(() => {
-    fetch('http://localhost:8080/api/community/dogdrip/popular')
+    fetch('http://localhost:8080/api/community/dogdrip')
       .then(res => res.json())
       .then(data => {
         setDogdripPosts(Array.isArray(data) ? data : []);

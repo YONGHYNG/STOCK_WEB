@@ -46,7 +46,7 @@ const categories = [
     id: 6,
     name: '해외 주식',
     icon: <FaMoneyBillWave />,
-    path: '/finance'
+    path: '/global-stock'
   },
   {
     id: 7,

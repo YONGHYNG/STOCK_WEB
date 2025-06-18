@@ -10,6 +10,7 @@ import CommunityBestSeller from './pages/CommunityBestSeller';
 import StockIndices from './components/StockIndices';
 import IndexPage from './pages/IndexPage';
 import InvestmentPage from './pages/InvestmentPage';
+import GlobalStock from './pages/GlobalStock';
 import './styles/App.css';
 
 function App() {
@@ -39,6 +40,7 @@ function App() {
             <Route path="/community-best-seller" element={<CommunityBestSeller />} />
             <Route path="/investment" element={<InvestmentPage />} />
             <Route path="/index" element={<IndexPage />} />
+            <Route path="/global-stock" element={<GlobalStock />} />
           </Routes>
         </main>
         <LoginModal 

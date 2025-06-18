@@ -15,7 +15,7 @@ public class DogDripService {
 
     public List<DogdripPost> getPopularPosts() {
         List<DogdripPost> posts = new ArrayList<>();
-        String url = "https://www.dogdrip.net/?mid=dogdrip&sort_index=popular";
+        String url = "https://www.dogdrip.net/dogdrip";
 
         try {
             Document doc = Jsoup.connect(url)
@@ -23,43 +23,26 @@ public class DogDripService {
                     .timeout(10000)
                     .get();
 
-            Elements items = doc.select("li.ed.flex.flex-left.flex-middle.webzine");
+            Elements titles = doc.select("a.ed.title-link");
+            Elements metas = doc.select("div.ed.flex.list-meta");
 
-            int count = 0;
-            for(Element item : items) {
-                Element titleElement = item.selectFirst("a.ed.overlay");
-                Element replyElement = item.selectFirst("span.replyNum");
-                Element likeElement = item.selectFirst("span.unicon-up");
+            for (int i = 0; i < Math.min(10, titles.size()); i++) {
+                String title = titles.get(i).text();
 
-                if(titleElement != null && likeElement != null) {
-                    String title = titleElement.text();
-                    String likes = likeElement.text();
-                    String replys = replyElement != null ? replyElement.text().replaceAll("[()]", "") : "0";
+                // 댓글과 공감수 span 가져오기
+                Elements counts = metas.get(i).select("span.ed.text-xxsmall.text-primary");
+                String replys = counts.size() > 0 ? counts.get(0).text().trim() : "0";
+                String likes = counts.size() > 1 ? counts.get(1).text().trim() : "0";
 
-                    DogdripPost post = new DogdripPost(title, likes, replys);
-                    posts.add(post);
-
-                    // 콘솔 출력 추가
-                    System.out.println("제목: " + title);
-                    System.out.println("좋아요: " + likes);
-                    System.out.println("댓글 수: " + replys);
-                    System.out.println("----------------------");
-
-                    count++;
-                }
-
-                if(count >= 10) break;
+                posts.add(new DogdripPost(title, likes, replys));
             }
 
-        } catch(Exception e) {
-            System.out.println("크롤링 중 오류 발생:");
+        } catch (Exception e) {
             e.printStackTrace();
         }
 
-        // 크롤링된 게시글 수 확인용 출력
-        System.out.println("총 크롤링된 게시글 수: " + posts.size());
-
         return posts;
     }
+
 }
 

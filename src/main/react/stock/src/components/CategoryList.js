@@ -13,7 +13,7 @@ const categories = [
   // First Row - Main Categories
   {
     id: 1,
-    name: '주식',
+    name: '국내 주식',
     icon: <FaChartLine />,
     path: '/clothing'
   },
@@ -44,13 +44,13 @@ const categories = [
   // Second Row - Financial Categories
   {
     id: 6,
-    name: '금융',
+    name: '해외 주식',
     icon: <FaMoneyBillWave />,
     path: '/finance'
   },
   {
     id: 7,
-    name: '투자',
+    name: '주식 리포트',
     icon: <FaChartPie />,
     path: '/investment'
   },

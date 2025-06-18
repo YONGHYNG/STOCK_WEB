@@ -1,25 +1,27 @@
-package list.headline;
+package list.headline.controller;
 
+import list.headline.service.IndexService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.IOException;
+import java.util.List;
+import java.util.Map;
+
 @RestController
+@RequestMapping("/api/headline")
 public class IndexController {
 
     private final IndexService indexService;
 
-    @Autowired
     public IndexController(IndexService indexService) {
         this.indexService = indexService;
     }
 
     @GetMapping("/index")
-    public String getIndexData() {
-        try {
-            return indexService.getIndexHtml();
-        } catch (Exception e) {
-            return "지수 정보를 가져오는 중 오류 발생: " + e.getMessage();
-        }
+    public List<Map<String, String>> getIndices() throws IOException {
+        return indexService.getIndices();
     }
 }

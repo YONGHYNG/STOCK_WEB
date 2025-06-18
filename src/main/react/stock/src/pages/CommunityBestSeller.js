@@ -243,7 +243,7 @@ function CommunityBestSeller() {
                   dogdripPosts.map((post, index) => (
                     <tr 
                       key={index} 
-                      onClick={() => handleRowClick('https://www.dogdrip.net/?mid=dogdrip&sort_index=popular')}
+                      onClick={() => handleRowClick('https://www.dogdrip.net/dogdrip')}
                       style={{ cursor: 'pointer' }}
                     >
                       <td className="rank-cell">

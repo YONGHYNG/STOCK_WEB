@@ -8,6 +8,8 @@ import StockBestSeller from './pages/StockBestSeller';
 import NewsBestSeller from './pages/NewsBestSeller';
 import CommunityBestSeller from './pages/CommunityBestSeller';
 import StockIndices from './components/StockIndices';
+import IndexPage from './pages/IndexPage';
+import InvestmentPage from './pages/InvestmentPage';
 import './styles/App.css';
 
 function App() {
@@ -35,6 +37,8 @@ function App() {
             <Route path="/community" element={<div className="category-page"><h1>커뮤니티 페이지</h1></div>} />
             <Route path="/stock" element={<StockPage />} />
             <Route path="/community-best-seller" element={<CommunityBestSeller />} />
+            <Route path="/investment" element={<InvestmentPage />} />
+            <Route path="/index" element={<IndexPage />} />
           </Routes>
         </main>
         <LoginModal 

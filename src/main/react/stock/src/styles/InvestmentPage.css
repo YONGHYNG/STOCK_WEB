@@ -1,0 +1,196 @@
+.investment-page {
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+  font-family: 'Arial', sans-serif;
+  color: #333;
+}
+
+.title-container {
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+.title-container h1 {
+  font-size: 24px;
+  color: #333;
+  font-weight: bold;
+  position: relative;
+  display: inline-block;
+  padding-bottom: 10px;
+}
+
+.title-container h1::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: 80%;
+  height: 3px;
+  background: linear-gradient(to right, #6dd5ed, #2193b0);
+  border-radius: 5px;
+}
+
+.investment-tables-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  margin-top: 2rem;
+}
+
+@media (max-width: 1199px) {
+  .investment-tables-grid {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .investment-tables-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+}
+
+.investment-table-section {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+}
+
+.investment-table-section h2 {
+  font-size: 18px;
+  margin-bottom: 15px;
+  color: #333;
+  text-align: center;
+  font-weight: bold;
+}
+
+.investment-table-container {
+  overflow-x: auto;
+  max-width: 100%;
+  flex-grow: 1;
+}
+
+.investment-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  table-layout: fixed;
+}
+
+.investment-table th,
+.investment-table td {
+  padding: 8px;
+  text-align: center;
+  border-bottom: 1px solid #eee;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.investment-table th {
+  background-color: #f8f9fa;
+  font-weight: 600;
+  color: #333;
+  text-transform: uppercase;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.investment-table tbody tr:hover {
+  background-color: #f8f9fa;
+}
+
+.investment-table th.rank-cell,
+.investment-table td.rank-cell {
+  text-align: center;
+}
+
+.investment-table th.name-cell,
+.investment-table td.name-cell {
+  max-width: none;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.investment-table th.title-cell,
+.investment-table td.title-cell {
+  text-align: left;
+}
+
+.price-cell,
+.change-cell,
+.volume-cell,
+.market-cap-cell {
+  width: 15%;
+}
+
+.change-cell.positive {
+  color: #ff4444;
+}
+
+.change-cell.negative {
+  color: #2196f3;
+}
+
+.crown-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 1.1em;
+  line-height: 1;
+}
+
+.crown-icon {
+  font-size: 16px;
+  margin-left: 0;
+}
+
+.rank-number {
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.gold {
+  color: #FFD700;
+}
+
+.silver {
+  color: #C0C0C0;
+}
+
+.bronze {
+  color: #CD7F32;
+}
+
+@media screen and (max-width: 768px) {
+  .investment-page h1 {
+    font-size: 3vw;
+  }
+
+  .investment-table-section h2 {
+    font-size: 2vw;
+  }
+
+  .investment-table-container {
+    width: 90%;
+  }
+  
+  .investment-table th,
+  .investment-table td {
+    padding: 3%;
+    font-size: 1.8vw;
+  }
+
+  .crown-icon {
+    font-size: 1.8vw;
+  }
+} 

@@ -6,7 +6,7 @@ function InvestmentPage() {
   const [stockReports, setStockReports] = useState([]);
   const [industryReports, setIndustryReports] = useState([]);
   const [investmentReports, setInvestmentReports] = useState([]);
-  const [topMarketCap, setTopMarketCap] = useState([]);
+  const [marketReports, setMarketReports] = useState([]);
 
   useEffect(() => {
     fetch('http://localhost:8080/api/reports/stocks')
@@ -45,14 +45,14 @@ function InvestmentPage() {
   }, []);
 
   useEffect(() => {
-    fetch('http://localhost:8080/api/stock/top-market-cap')
+    fetch('http://localhost:8080/api/reports/market')
       .then(res => res.json())
       .then(data => {
-        setTopMarketCap(Array.isArray(data) ? data : []);
+        setMarketReports(Array.isArray(data) ? data : []);
       })
       .catch(err => {
-        console.error('Error fetching top market cap:', err);
-        setTopMarketCap([]);
+        console.error('Error fetching market reports:', err);
+        setMarketReports([]);
       });
   }, []);
 
@@ -185,37 +185,21 @@ function InvestmentPage() {
         </div>
 
         <div className="investment-table-section">
-          <h2>시가총액 상위 종목</h2>
+          <h2>시장 리포트</h2>
           <div className="investment-table-container">
             <table className="investment-table">
               <thead>
                 <tr>
                   <th>순위</th>
-                  <th>종목명</th>
-                  <th>현재가</th>
-                  <th>시가총액</th>
+                  <th colSpan="3">제목</th>
                 </tr>
               </thead>
               <tbody>
-                {topMarketCap.length > 0 ? (
-                  topMarketCap.map((stock, index) => (
-                    <tr 
-                      key={index} 
-                      onClick={() => handleRowClick(stock.code)}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <td className="rank-cell">
-                        {renderRank(index)}
-                      </td>
-                      <td className="name-cell">
-                        {stock.name}
-                      </td>
-                      <td className="price-cell">
-                        {stock.price}
-                      </td>
-                      <td className="market-cap-cell">
-                        {stock.marketCap}
-                      </td>
+                {marketReports.length > 0 ? (
+                  marketReports.map((report, index) => (
+                    <tr key={index}>
+                      <td className="rank-cell">{renderRank(index)}</td>
+                      <td className="title-cell" colSpan="3">{report.title}</td>
                     </tr>
                   ))
                 ) : (

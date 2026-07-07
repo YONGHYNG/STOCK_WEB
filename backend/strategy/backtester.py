@@ -9,18 +9,13 @@
     result = Backtester().run(cfg)
 
 알고리즘:
-  - 지표: EMA(9), EMA(21), RSI(14), ATR(14)
-  - 진입 신호:
-      LONG  : EMA9 > EMA21 and RSI > 55 and RSI < 75
-      SHORT : EMA9 < EMA21 and RSI < 45 and RSI > 25
-  - SL = 진입가 ± ATR × 1.5
-  - TP1 = 진입가 ± ATR × 3.0
-  - TP2 = 진입가 ± ATR × 4.5
+  - 현재 운영 엔진(`TradingAIEngine`)과 동일한 선물 단타 판단 기준 사용
+  - 5m/15m/30m 중심 시장 모드, 점수, 등급, 리스크 필터를 통과한 A/B 신호만 진입
+  - SL/TP는 운영 엔진이 반환한 ATR 기반 가격 사용
   - 시뮬레이션은 캔들 단위(오픈/하이/로우/클로즈 순)로 TP/SL 체크
 """
 
 from __future__ import annotations
-import math
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -40,10 +35,6 @@ class BacktestConfig:
     fee_rate: float = 0.0005   # 편도 수수료
     slippage: float = 0.0002   # 슬리피지
     order_size_pct: float = 10.0   # 자본 대비 주문 비율 (%)
-    atr_period: int = 14
-    ema_fast: int = 9
-    ema_slow: int = 21
-    rsi_period: int = 14
 
 
 # ── 결과 ────────────────────────────────────────────────────────────────────
@@ -95,20 +86,14 @@ class Backtester:
     def run(self, cfg: BacktestConfig) -> BacktestResult:
         """백테스트를 실행하고 결과를 반환합니다."""
         candles = self._load_candles(cfg)
-        if len(candles) < cfg.atr_period + cfg.ema_slow + 5:
+        if len(candles) < 80:
             r = BacktestResult()
             r.final_capital = cfg.initial_capital
             return r
 
-        closes  = [c["close"] for c in candles]
         highs   = [c["high"]  for c in candles]
         lows    = [c["low"]   for c in candles]
         opens   = [c["open"]  for c in candles]
-
-        ema_f = self._ema(closes, cfg.ema_fast)
-        ema_s = self._ema(closes, cfg.ema_slow)
-        rsi   = self._rsi(closes, cfg.rsi_period)
-        atr   = self._atr(highs, lows, closes, cfg.atr_period)
 
         capital     = cfg.initial_capital
         peak_cap    = capital
@@ -121,15 +106,12 @@ class Backtester:
         sl_count   = 0
         engine = TradingAIEngine()
 
-        start = cfg.ema_slow + cfg.rsi_period + 5
+        start = 80
 
         for i in range(start, len(candles)):
             c = candles[i]
             ts    = c["timestamp"]
-            o, h, l, cl = opens[i], highs[i], lows[i], closes[i]
-            ef, es = ema_f[i], ema_s[i]
-            ri     = rsi[i]
-            at     = atr[i]
+            o, h, l, cl = opens[i], highs[i], lows[i], c["close"]
 
             # TP/SL 체크 (현재 캔들 내에서)
             if position:
@@ -158,9 +140,10 @@ class Backtester:
                     position = None
 
             # 새 진입 시그널
-            if position is None and at is not None:
+            if position is None:
                 market = self._synthetic_market(cl, cfg.slippage)
-                signal = engine.analyze(candles[: i + 1], market=market, account_equity=cfg.initial_capital).to_dict()
+                frames = self._build_backtest_frames(candles[: i + 1])
+                signal = engine.analyze_multi_timeframe(frames, market=market, account_equity=cfg.initial_capital).to_dict()
                 direction = signal.get("direction")
                 if direction in ("LONG", "SHORT") and signal.get("entry_grade") in ("A", "B"):
                     entry = signal["entry_price"]
@@ -219,14 +202,9 @@ class Backtester:
         return get_candles_between(SYMBOL, cfg.timeframe, cfg.start_ts, cfg.end_ts)
 
     @staticmethod
-    def _signal(ef: Optional[float], es: Optional[float], ri: Optional[float]) -> Optional[str]:
-        if ef is None or es is None or ri is None:
-            return None
-        if ef > es and 55 < ri < 75:
-            return "LONG"
-        if ef < es and 25 < ri < 45:
-            return "SHORT"
-        return None
+    def _build_backtest_frames(candles: list[dict]) -> dict[str, list[dict]]:
+        # 단일 시간봉 백테스트 데이터만 있을 때도 운영 엔진의 동일한 기준을 사용한다.
+        return {tf: candles for tf in ("5m", "15m", "30m", "1H", "6H", "1D")}
 
     @staticmethod
     def _synthetic_market(close: float, slippage: float) -> dict:
@@ -269,58 +247,3 @@ class Backtester:
             gross = (entry - exit_px) / entry * 100
         cost = (cfg.fee_rate + cfg.slippage) * 2 * 100
         return gross - cost
-
-    # ── 지표 계산 ─────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _ema(values: list[float], period: int) -> list[Optional[float]]:
-        result: list[Optional[float]] = [None] * len(values)
-        if len(values) < period:
-            return result
-        k = 2 / (period + 1)
-        ema = sum(values[:period]) / period
-        result[period - 1] = ema
-        for i in range(period, len(values)):
-            ema = values[i] * k + ema * (1 - k)
-            result[i] = ema
-        return result
-
-    @staticmethod
-    def _rsi(closes: list[float], period: int) -> list[Optional[float]]:
-        result: list[Optional[float]] = [None] * len(closes)
-        if len(closes) < period + 1:
-            return result
-        gains, losses = [], []
-        for i in range(1, period + 1):
-            d = closes[i] - closes[i - 1]
-            gains.append(max(d, 0))
-            losses.append(max(-d, 0))
-        avg_g = sum(gains)  / period
-        avg_l = sum(losses) / period
-        for i in range(period, len(closes)):
-            if i > period:
-                d = closes[i] - closes[i - 1]
-                avg_g = (avg_g * (period - 1) + max(d, 0))  / period
-                avg_l = (avg_l * (period - 1) + max(-d, 0)) / period
-            rs = avg_g / avg_l if avg_l else float("inf")
-            result[i] = 100 - 100 / (1 + rs)
-        return result
-
-    @staticmethod
-    def _atr(highs: list[float], lows: list[float], closes: list[float],
-              period: int) -> list[Optional[float]]:
-        result: list[Optional[float]] = [None] * len(highs)
-        if len(highs) < period + 1:
-            return result
-        trs = []
-        for i in range(1, len(highs)):
-            tr = max(highs[i] - lows[i],
-                     abs(highs[i] - closes[i - 1]),
-                     abs(lows[i]  - closes[i - 1]))
-            trs.append(tr)
-        atr = sum(trs[:period]) / period
-        result[period] = atr
-        for i in range(period + 1, len(highs)):
-            atr = (atr * (period - 1) + trs[i - 1]) / period
-            result[i] = atr
-        return result

@@ -308,4 +308,4 @@ class TradingAIEngine:
 
 # Futures engine override.
 # Keep this module path stable for the GUI/API while replacing the strategy model.
-from backend.app.futures_ai_engine import TradingAIEngine, TradingResult
+from backend.strategy.multi_timeframe_strategy import TradingAIEngine, TradingResult

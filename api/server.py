@@ -11,13 +11,13 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from backend.app.ai_engine import TradingAIEngine
+from backend.strategy.multi_timeframe_strategy import TradingAIEngine
 from backend.app.backtester import Backtester, BacktestConfig
-from backend.app.bitget_client import BitgetClient
-from backend.app.bitget_private_client import BitgetPrivateClient
+from backend.bitget.market_api import BitgetClient
+from backend.bitget.client import BitgetPrivateClient
 import backend.app.credentials as creds_store
 from backend.app.paper_trader import PaperTrader
-from backend.app.risk_manager import RiskManager
+from backend.risk.risk_manager import RiskManager
 import backend.app.risk_settings as risk_settings_store
 from backend.app.risk_settings import RiskSettings
 from backend.app.trading_modes import TradingMode

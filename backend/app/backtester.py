@@ -25,7 +25,7 @@ from typing import Optional
 
 from backend.app.database import get_candles_between
 from backend.app.config import SYMBOL
-from backend.app.ai_engine import TradingAIEngine
+from backend.strategy.multi_timeframe_strategy import TradingAIEngine
 
 
 # ── 설정 ────────────────────────────────────────────────────────────────────

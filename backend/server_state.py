@@ -1,3 +1,4 @@
+# 역할: 서버와 자동매매 실행 상태를 공유하는 파일.
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime

@@ -1,3 +1,4 @@
+// 역할: 누적 손익 흐름을 차트로 표시하는 컴포넌트.
 export function ProfitChart({ trades }) {
   const closed = trades.filter((t) => t.pnl_pct != null).slice().reverse()
   let equity = 0

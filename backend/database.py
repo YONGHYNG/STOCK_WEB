@@ -1,3 +1,4 @@
+# 역할: 매매 기록과 상태 저장용 데이터베이스를 관리하는 파일.
 import json
 import sqlite3
 from typing import Iterable, Optional

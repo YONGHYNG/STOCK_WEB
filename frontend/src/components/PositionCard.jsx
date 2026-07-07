@@ -1,3 +1,4 @@
+// 역할: 현재 포지션과 진입 정보를 표시하는 컴포넌트.
 import { tradingApi } from '../api/tradingApi'
 
 function num(v) {

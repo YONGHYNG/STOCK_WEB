@@ -1,3 +1,4 @@
+// 역할: 프론트엔드 화면 구성과 주요 상태 관리를 담당하는 파일.
 import { useCallback, useEffect, useReducer, useRef } from 'react'
 import { tradingApi } from './api/tradingApi'
 import { Dashboard } from './pages/Dashboard'

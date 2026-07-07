@@ -1,3 +1,4 @@
+// 역할: 자동매매 실행 상태를 표시하는 카드 컴포넌트.
 export function TradingStatusCard({ status, updatedAt, onModeChange, onEmergencyStop }) {
   const mode = status?.trading_mode ?? 'SIGNAL_ONLY'
   return (

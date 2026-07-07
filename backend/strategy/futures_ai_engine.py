@@ -1,3 +1,4 @@
+# 역할: 매매 조건과 방향 점수를 계산하는 전략 엔진.
 from dataclasses import dataclass
 from typing import Optional
 

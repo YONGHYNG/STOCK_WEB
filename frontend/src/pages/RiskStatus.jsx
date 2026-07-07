@@ -1,3 +1,4 @@
+// 역할: 리스크 상태와 보호 조건을 보여주는 화면.
 function money(v) {
   return v != null ? `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '-'
 }

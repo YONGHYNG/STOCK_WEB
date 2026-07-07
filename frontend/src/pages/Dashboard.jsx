@@ -1,3 +1,4 @@
+// 역할: 실시간 매매 현황을 보여주는 대시보드 화면.
 import { PositionCard } from '../components/PositionCard'
 import { ProfitChart } from '../components/ProfitChart'
 import { SignalCard } from '../components/SignalCard'

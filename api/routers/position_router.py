@@ -1,3 +1,4 @@
+# 역할: HTTP API 경로를 백엔드 서비스에 연결하는 라우터.
 from fastapi import APIRouter
 
 from api.schemas.position_schema import OrderPayload

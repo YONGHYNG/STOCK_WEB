@@ -1,3 +1,4 @@
+# 역할: 매매 신호 산정과 진입 판단을 담당하는 서비스.
 from backend.strategy.multi_timeframe_strategy import TradingAIEngine, TradingResult
 
 

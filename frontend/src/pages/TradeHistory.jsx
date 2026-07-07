@@ -1,3 +1,4 @@
+// 역할: 매매 기록과 손익 내역을 보여주는 화면.
 import { ProfitChart } from '../components/ProfitChart'
 import { TradeLogTable } from '../components/TradeLogTable'
 

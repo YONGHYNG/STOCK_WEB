@@ -1,3 +1,4 @@
+# 역할: Python 백엔드 실행에 필요한 패키지 목록.
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 pandas>=2.0.0

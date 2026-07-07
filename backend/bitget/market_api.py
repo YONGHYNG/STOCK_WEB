@@ -1,3 +1,4 @@
+# 역할: Bitget 선물 API 연동을 담당하는 파일.
 import random
 import time
 from dataclasses import dataclass, asdict

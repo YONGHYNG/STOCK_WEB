@@ -1,3 +1,4 @@
+# 역할: 데스크톱 매매 화면과 사용자 조작을 담당하는 파일.
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 

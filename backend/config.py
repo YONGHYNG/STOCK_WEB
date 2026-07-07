@@ -1,3 +1,4 @@
+# 역할: 거래 심볼, 시간봉, 기본 설정값을 정의하는 파일.
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[2]

@@ -1,3 +1,4 @@
+# 역할: 현재 포지션 상태와 진입 정보를 관리하는 파일.
 from backend.bitget.client import BitgetPrivateClient
 from backend.config import SYMBOL
 

@@ -1,3 +1,4 @@
+# 역할: 거래소 인증 정보 로딩을 담당하는 파일.
 """API 자격증명 저장/로드 (data/credentials.json)"""
 import json
 from dataclasses import dataclass

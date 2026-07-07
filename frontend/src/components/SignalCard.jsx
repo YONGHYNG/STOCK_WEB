@@ -1,3 +1,4 @@
+// 역할: LONG, SHORT, HOLD 신호와 점수를 표시하는 컴포넌트.
 const DIR_COLOR = { LONG: 'var(--green)', SHORT: 'var(--red)', HOLD: 'var(--yellow)' }
 
 function money(v) {

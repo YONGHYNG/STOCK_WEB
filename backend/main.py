@@ -1,3 +1,4 @@
+# 역할: 백엔드 프로그램 실행 진입점.
 import uvicorn
 
 from backend.database import init_db

@@ -1,3 +1,4 @@
+// 역할: 프론트엔드에서 백엔드 매매 API를 호출하는 파일.
 const BASE = '/api'
 
 async function post(path, body = {}) {

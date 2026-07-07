@@ -1,3 +1,4 @@
+# 역할: 프로젝트 기능을 구성하는 소스 파일.
 """
 Future training entry point.
 Current project uses a rule-based TradingAIEngine first.

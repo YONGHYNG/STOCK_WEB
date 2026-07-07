@@ -1,3 +1,4 @@
+# 역할: Bitget 선물 API 연동을 담당하는 파일.
 """
 Bitget USDT-Futures 인증 클라이언트
 - API Key / Secret / Passphrase 기반 HMAC-SHA256 서명

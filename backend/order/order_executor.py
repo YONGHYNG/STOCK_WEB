@@ -1,3 +1,4 @@
+# 역할: 매매 주문 실행과 체결 흐름을 담당하는 파일.
 from backend.bitget.client import BitgetPrivateClient
 
 

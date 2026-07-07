@@ -1,3 +1,4 @@
+# 역할: 연속 손실과 일일 손실 제한을 관리하는 보호 장치.
 class ConsecutiveLossGuard:
     def __init__(self, limit: int):
         self.limit = limit

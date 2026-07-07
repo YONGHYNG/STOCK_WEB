@@ -1,3 +1,4 @@
+// 역할: 체결 기록과 매매 로그를 표로 보여주는 컴포넌트.
 function money(v) {
   return v != null ? `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '-'
 }

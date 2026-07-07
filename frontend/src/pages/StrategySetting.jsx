@@ -1,3 +1,4 @@
+// 역할: 매매 전략 설정과 조건값을 조정하는 화면.
 import { useEffect, useState } from 'react'
 import { tradingApi } from '../api/tradingApi'
 

@@ -1,3 +1,4 @@
+# 역할: 자동매매 시작, 중지, 새로고침을 제어하는 서비스.
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime

@@ -1,3 +1,4 @@
+# 역할: FastAPI 서버 실행과 라우터 등록을 담당하는 진입점.
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

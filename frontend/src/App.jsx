@@ -45,7 +45,6 @@ function reducer(state, action) {
 }
 
 const PAGES = [
-  ['dashboard', '대시보드'],
   ['strategy', '전략 설정'],
   ['history', '거래 기록'],
   ['risk', '리스크 상태'],
@@ -114,17 +113,6 @@ export default function App() {
               <h2>Trading Workspace</h2>
               <p>Bitget BTCUSDT USDT-M futures</p>
             </div>
-            <div className="tab-bar">
-              {PAGES.map(([key, label]) => (
-                <button
-                  key={key}
-                  className={state.page === key ? 'tab-button tab-button--active' : 'tab-button'}
-                  onClick={() => dispatch({ type: 'PAGE', page: key })}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
           </div>
         </div>
 
@@ -139,6 +127,18 @@ export default function App() {
         {state.page === 'strategy' && <StrategySetting settings={state.riskSettings} onSaved={(s) => dispatch({ type: 'RISK_SETTINGS', settings: s })} />}
         {state.page === 'history' && <TradeHistory trades={state.trades} />}
         {state.page === 'risk' && <RiskStatus signal={state.signal} />}
+
+        <nav className="bottom-tab-bar" aria-label="하단 화면 전환">
+          {PAGES.map(([key, label]) => (
+            <button
+              key={key}
+              className={state.page === key ? 'tab-button tab-button--active' : 'tab-button'}
+              onClick={() => dispatch({ type: 'PAGE', page: key })}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
       </main>
     </div>
   )

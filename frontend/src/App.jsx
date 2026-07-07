@@ -45,8 +45,8 @@ function reducer(state, action) {
 }
 
 const PAGES = [
-  ['strategy', '전략 설정'],
   ['history', '거래 기록'],
+  ['strategy', '전략 설정'],
   ['risk', '리스크 상태'],
 ]
 

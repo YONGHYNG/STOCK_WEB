@@ -108,12 +108,15 @@ export default function App() {
         </div>
 
         {state.page === 'dashboard' && (
-          <Dashboard
-            state={state}
-            setStatusPatch={(patch) => dispatch({ type: 'STATUS', data: patch })}
-            onModeChange={setMode}
-            onEmergencyStop={emergencyStop}
-          />
+          <>
+            <Dashboard
+              state={state}
+              setStatusPatch={(patch) => dispatch({ type: 'STATUS', data: patch })}
+              onModeChange={setMode}
+              onEmergencyStop={emergencyStop}
+            />
+            <TradeHistory trades={state.trades} />
+          </>
         )}
         {state.page === 'strategy' && <StrategySetting settings={state.riskSettings} onSaved={(s) => dispatch({ type: 'RISK_SETTINGS', settings: s })} />}
         {state.page === 'history' && <TradeHistory trades={state.trades} />}

@@ -1,0 +1,56 @@
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parents[2]
+DATA_DIR = BASE_DIR / "data"
+MODEL_DIR = BASE_DIR / "models"
+DB_PATH = DATA_DIR / "trading.db"
+
+SYMBOL = "BTCUSDT"
+PRODUCT_TYPE = "USDT-FUTURES"
+
+# 분석 대상 시간봉: DB는 하나의 candles 테이블을 사용하고 timeframe 컬럼으로 구분합니다.
+TIMEFRAMES = ["5m", "15m", "30m", "1H", "6H", "1D", "1W", "1M"]
+DEFAULT_TIMEFRAME = "5m"
+TIMEFRAME = DEFAULT_TIMEFRAME
+
+# 실시간 판단 시 전체 6년치를 매번 분석하지 않고 각 시간봉의 최근 캔들만 사용합니다.
+RECENT_CANDLE_LIMIT_BY_TIMEFRAME = {
+    "5m": 300,
+    "15m": 300,
+    "30m": 300,
+    "1H": 300,
+    "6H": 200,
+    "1D": 200,
+    "1W": 100,
+    "1M": 72,
+}
+RECENT_CANDLE_LIMIT = RECENT_CANDLE_LIMIT_BY_TIMEFRAME[DEFAULT_TIMEFRAME]
+
+BITGET_REST_BASE = "https://api.bitget.com"
+BITGET_WS_PUBLIC = "wss://ws.bitget.com/v2/ws/public"
+USE_DEMO_DATA = False
+API_TIMEOUT_SECONDS = 8
+REFRESH_INTERVAL_MS = 15000
+INITIAL_CANDLE_LIMIT = 120
+REFRESH_CANDLE_LIMIT = 2
+
+# Risk settings
+ATR_PERIOD = 14
+ATR_STOP_MULTIPLIER = 1.5
+TAKE_PROFIT_R_MULTIPLIER = 1.5
+TAKE_PROFIT_1R = 1.5
+TAKE_PROFIT_2R = 2.5
+TAKE_PROFIT_3R = 3.5
+ATH_LOOKBACK_YEARS = 6
+
+# Futures execution model
+SLIPPAGE_BUFFER = 0.0003
+SPREAD_NORMAL_RATE = 0.0003
+SPREAD_CAUTION_RATE = 0.0007
+MAKER_FEE_RATE = 0.0002
+TAKER_FEE_RATE = 0.0006
+FUNDING_NORMAL_RATE = 0.0001
+FUNDING_CAUTION_RATE = 0.0003
+FUNDING_BLOCK_RATE = 0.0005
+MIN_NET_RISK_REWARD = 1.5
+MIN_TP1_COST_MULTIPLE = 2.0

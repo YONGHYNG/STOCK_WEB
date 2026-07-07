@@ -1,0 +1,222 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0b0f14;
+  --panel: #111820;
+  --card: #17202a;
+  --card2: #1d2630;
+  --border: #2b3744;
+  --border-soft: rgba(255, 255, 255, 0.07);
+  --text: #edf3f8;
+  --text2: #93a1ad;
+  --muted: #61717f;
+  --green: #33d17a;
+  --green-dim: #0d2b1d;
+  --red: #ff5c5c;
+  --red-dim: #351414;
+  --yellow: #f0c454;
+  --yellow-dim: #332811;
+  --blue: #65b7ff;
+  --blue-dim: #10283d;
+  --purple: #b48cff;
+  --shadow: 0 18px 42px rgba(0, 0, 0, 0.32);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  color-scheme: dark;
+}
+
+body {
+  background:
+    radial-gradient(circle at 12% 0%, rgba(51, 209, 122, 0.08), transparent 30%),
+    linear-gradient(180deg, #0d1218 0%, var(--bg) 52%);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+button {
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
+  padding: 6px 14px;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+button:hover { border-color: var(--blue); transform: translateY(-1px); }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+input, select {
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 10px;
+  font-family: inherit;
+  font-size: 13px;
+}
+input:focus, select:focus { outline: none; border-color: var(--blue); }
+
+hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.dashboard {
+  width: min(1480px, calc(100% - 36px));
+  margin: 0 auto;
+  padding: 18px 0 28px;
+}
+
+.dashboard__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text2);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+  margin: 2px 2px 12px;
+  text-transform: uppercase;
+}
+
+.top-grid,
+.middle-grid {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.top-grid {
+  grid-template-columns: minmax(360px, 1.55fr) minmax(280px, 0.95fr) minmax(300px, 1fr);
+  align-items: stretch;
+}
+
+.middle-grid {
+  grid-template-columns: minmax(520px, 1.45fr) minmax(360px, 1fr);
+}
+
+.panel,
+.workspace-panel {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 120px), var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+
+.panel {
+  padding: 16px;
+}
+
+.panel--hero {
+  background:
+    linear-gradient(135deg, rgba(101, 183, 255, 0.12), transparent 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 120px),
+    var(--panel);
+}
+
+.panel__header,
+.workspace-panel__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.panel h2,
+.workspace-panel h2 {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0;
+  color: var(--text);
+}
+
+.workspace-panel {
+  padding: 16px;
+}
+
+.workspace-panel p {
+  color: var(--text2);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.tab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.tab-button {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text2);
+  min-height: 32px;
+  white-space: nowrap;
+}
+
+.tab-button--active {
+  background: var(--blue-dim);
+  border-color: rgba(101, 183, 255, 0.55);
+  color: var(--text);
+}
+
+.tab-content {
+  min-height: 260px;
+}
+
+.data-table-wrap {
+  overflow-x: auto;
+  max-height: 360px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+@media (max-width: 1180px) {
+  .top-grid,
+  .middle-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .panel--hero,
+  .panel--account,
+  .workspace-panel {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  .dashboard {
+    width: min(100% - 20px, 1480px);
+    padding-top: 12px;
+  }
+
+  .dashboard__meta,
+  .workspace-panel__top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .top-grid,
+  .middle-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .panel,
+  .workspace-panel {
+    padding: 13px;
+  }
+
+  .tab-bar {
+    justify-content: flex-start;
+  }
+}

@@ -1,15 +1,9 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
-import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from fastapi import WebSocket, WebSocketDisconnect
 
 from backend.strategy.multi_timeframe_strategy import TradingAIEngine
 from backend.strategy.backtester import Backtester, BacktestConfig
@@ -44,15 +38,13 @@ from backend.database import (
     purge_unaligned_candles,
 )
 from backend.server_state import state
-
-app = FastAPI(title="Trading AI Dashboard")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+from api.schemas.trading_schema import (
+    AutoTradePayload,
+    BacktestPayload,
+    CredentialsPayload,
+    ModePayload,
+    OrderPayload,
+    RiskSettingsPayload,
 )
 
 # ── Singletons ─────────────────────────────────────────────────────────────────
@@ -557,7 +549,6 @@ async def account_loop():
 # ── Startup ────────────────────────────────────────────────────────────────────
 
 
-@app.on_event("startup")
 async def startup_event():
     existing = get_open_trade(SYMBOL, trade_type="LIVE")
     if existing:
@@ -576,7 +567,6 @@ async def startup_event():
 # ── WebSocket ──────────────────────────────────────────────────────────────────
 
 
-@app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await manager.connect(ws)
     if state.last_result:
@@ -609,39 +599,25 @@ def _status_payload() -> dict:
     }
 
 
-@app.get("/api/signal")
 async def get_signal():
     return state.last_result or {}
 
 
-@app.get("/api/trades")
 async def get_trades():
     return get_recent_trades(SYMBOL, 50)
 
 
-@app.get("/api/status")
 async def get_status():
     return _status_payload()
 
 
-@app.get("/api/risk-settings")
 async def get_risk_settings():
     from dataclasses import asdict
     return asdict(risk_settings_store.load())
 
 
-class RiskSettingsPayload(BaseModel):
-    order_size_btc: float
-    max_loss_pct: float
-    daily_max_loss_pct: float
-    consecutive_loss_limit: int
-    confidence_threshold: float
-    reentry_wait_seconds: int
-    max_leverage: int
-    live_trading_allowed: bool
 
 
-@app.post("/api/risk-settings")
 async def save_risk_settings(payload: RiskSettingsPayload):
     global risk_cfg, risk_mgr
     s = RiskSettings(**payload.model_dump())
@@ -654,11 +630,8 @@ async def save_risk_settings(payload: RiskSettingsPayload):
     return {"ok": True}
 
 
-class ModePayload(BaseModel):
-    mode: str
 
 
-@app.post("/api/mode")
 async def set_mode(payload: ModePayload):
     state.trading_mode = payload.mode
     msg = state.add_log(f"[모드변경] {payload.mode}")
@@ -667,12 +640,8 @@ async def set_mode(payload: ModePayload):
     return {"ok": True}
 
 
-class AutoTradePayload(BaseModel):
-    enabled: bool
-    threshold: Optional[float] = None
 
 
-@app.post("/api/auto-trade")
 async def set_auto_trade(payload: AutoTradePayload):
     global risk_cfg
     state.auto_trade_enabled = payload.enabled
@@ -685,7 +654,6 @@ async def set_auto_trade(payload: AutoTradePayload):
     return {"ok": True}
 
 
-@app.post("/api/emergency-stop")
 async def emergency_stop():
     risk_mgr.activate_emergency_stop()
     state.auto_trade_enabled = False
@@ -697,7 +665,6 @@ async def emergency_stop():
     return {"ok": True, "has_position": has_pos}
 
 
-@app.post("/api/emergency-close")
 async def emergency_close():
     if private_client:
         for p in state.cached_positions:
@@ -724,12 +691,8 @@ async def emergency_close():
     return {"ok": True}
 
 
-class OrderPayload(BaseModel):
-    side: str
-    size: float
 
 
-@app.post("/api/order")
 async def place_order(payload: OrderPayload):
     if not private_client:
         return {"ok": False, "error": "API 키가 설정되지 않았습니다"}
@@ -743,7 +706,6 @@ async def place_order(payload: OrderPayload):
         return {"ok": False, "error": str(exc)}
 
 
-@app.post("/api/close-position")
 async def close_position():
     if not private_client:
         return {"ok": False, "error": "API 키가 설정되지 않았습니다"}
@@ -758,19 +720,13 @@ async def close_position():
         return {"ok": False, "error": str(exc)}
 
 
-@app.get("/api/credentials")
 async def get_credentials():
     c = creds_store.load()
     return {"api_key": c.api_key, "has_secret": bool(c.secret_key), "has_passphrase": bool(c.passphrase)}
 
 
-class CredentialsPayload(BaseModel):
-    api_key: str
-    secret_key: str
-    passphrase: str
 
 
-@app.post("/api/credentials")
 async def save_credentials(payload: CredentialsPayload):
     global private_client
     creds_store.save(payload.api_key, payload.secret_key, payload.passphrase)
@@ -780,17 +736,8 @@ async def save_credentials(payload: CredentialsPayload):
     return {"ok": True, "connected": private_client is not None}
 
 
-class BacktestPayload(BaseModel):
-    start_ts: int
-    end_ts: int
-    timeframe: str
-    initial_capital: float
-    fee_rate: float
-    slippage: float
-    order_size_pct: float
 
 
-@app.post("/api/backtest")
 async def run_backtest(payload: BacktestPayload):
     cfg = BacktestConfig(
         start_ts=payload.start_ts, end_ts=payload.end_ts,
@@ -807,11 +754,3 @@ async def run_backtest(payload: BacktestPayload):
 
 # ── Serve React frontend (production build) ────────────────────────────────────
 
-FRONTEND_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
-
-if FRONTEND_DIST.exists():
-    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
-
-    @app.get("/{full_path:path}")
-    async def serve_spa(full_path: str):
-        return FileResponse(str(FRONTEND_DIST / "index.html"))

@@ -9,8 +9,8 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-from backend.app.bitget_client import BitgetClient
-from backend.app.config import API_TIMEOUT_SECONDS, BITGET_REST_BASE, PRODUCT_TYPE, SYMBOL
+from backend.bitget.market_api import BitgetClient
+from backend.config import API_TIMEOUT_SECONDS, BITGET_REST_BASE, PRODUCT_TYPE, SYMBOL
 
 
 def _timeframe_to_step_ms(timeframe: str, limit: int) -> int:

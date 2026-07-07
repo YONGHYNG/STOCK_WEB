@@ -1,6 +1,6 @@
 import uvicorn
 
-from backend.app.database import init_db
+from backend.database import init_db
 
 
 def main() -> None:

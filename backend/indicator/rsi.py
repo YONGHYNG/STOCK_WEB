@@ -1,3 +1,3 @@
-from backend.app.indicator import rsi
+from backend.indicator.core import rsi
 
 __all__ = ["rsi"]

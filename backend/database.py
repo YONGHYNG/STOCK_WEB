@@ -2,7 +2,7 @@ import json
 import sqlite3
 from typing import Iterable, Optional
 
-from backend.app.config import DB_PATH, DATA_DIR
+from backend.config import DB_PATH, DATA_DIR
 
 
 def get_connection() -> sqlite3.Connection:

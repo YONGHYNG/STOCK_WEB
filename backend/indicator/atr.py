@@ -1,3 +1,3 @@
-from backend.app.indicator import atr
+from backend.indicator.core import atr
 
 __all__ = ["atr"]

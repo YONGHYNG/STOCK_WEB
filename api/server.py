@@ -12,16 +12,16 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from backend.strategy.multi_timeframe_strategy import TradingAIEngine
-from backend.app.backtester import Backtester, BacktestConfig
+from backend.strategy.backtester import Backtester, BacktestConfig
 from backend.bitget.market_api import BitgetClient
 from backend.bitget.client import BitgetPrivateClient
-import backend.app.credentials as creds_store
-from backend.app.paper_trader import PaperTrader
+import backend.credentials as creds_store
+from backend.order.paper_trader import PaperTrader
 from backend.risk.risk_manager import RiskManager
-import backend.app.risk_settings as risk_settings_store
-from backend.app.risk_settings import RiskSettings
-from backend.app.trading_modes import TradingMode
-from backend.app.config import (
+import backend.risk.settings as risk_settings_store
+from backend.risk.settings import RiskSettings
+from backend.trading_modes import TradingMode
+from backend.config import (
     DEFAULT_TIMEFRAME,
     INITIAL_CANDLE_LIMIT,
     RECENT_CANDLE_LIMIT_BY_TIMEFRAME,
@@ -31,7 +31,7 @@ from backend.app.config import (
     TIMEFRAMES,
     USE_DEMO_DATA,
 )
-from backend.app.database import (
+from backend.database import (
     close_trade,
     get_all_time_high,
     get_all_time_low,
@@ -43,7 +43,7 @@ from backend.app.database import (
     open_trade,
     purge_unaligned_candles,
 )
-from backend.app.server_state import state
+from backend.server_state import state
 
 app = FastAPI(title="Trading AI Dashboard")
 

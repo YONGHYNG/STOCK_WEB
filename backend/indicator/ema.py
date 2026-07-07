@@ -1,3 +1,3 @@
-from backend.app.indicator import ema
+from backend.indicator.core import ema
 
 __all__ = ["ema"]

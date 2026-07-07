@@ -90,7 +90,7 @@ python main.py
 ## 파일 구조
 
 ```
-backend/app/
+backend/
   gui.py              - 데스크톱 GUI
   ai_engine.py        - 멀티타임프레임 분석 엔진
   bitget_client.py    - Bitget 공개 API
@@ -223,7 +223,7 @@ RSI 과열            → LONG 감점
 상위 시간봉 SHORT   → SHORT 점수 보정
 ```
 
-나중에 `backend/app/ai_engine.py`의 `TradingAIEngine` 내부를 PyTorch, LightGBM, XGBoost 모델로 교체하면 됩니다.
+나중에 `backend/ai_engine.py`의 `TradingAIEngine` 내부를 PyTorch, LightGBM, XGBoost 모델로 교체하면 됩니다.
 
 ### 6. 손절가 / 익절가
 
@@ -332,27 +332,27 @@ python -m api.main
 6년치 CSV 다운로드:
 
 ```cmd
-python -m backend.app.download_bitget_6y 5m 6
-python -m backend.app.download_bitget_6y 1H 6
+python -m backend.market.download_bitget_6y 5m 6
+python -m backend.market.download_bitget_6y 1H 6
 ```
 
 CSV 임포트:
 
 ```cmd
-python -m backend.app.import_csv_to_sqlite data/bitget_BTCUSDT_5m_6y.csv 5m
+python -m backend.market.import_csv_to_sqlite data/bitget_BTCUSDT_5m_6y.csv 5m
 ```
 
-`backend/app/config.py`의 `USE_DEMO_DATA`가 `False`이면 Bitget API 실패 시 데모 데이터로 조용히 대체하지 않고 GUI에 오류 상태를 표시합니다.
+`backend/config.py`의 `USE_DEMO_DATA`가 `False`이면 Bitget API 실패 시 데모 데이터로 조용히 대체하지 않고 GUI에 오류 상태를 표시합니다.
 
 ## 주요 파일
 
 ```text
-backend/app/config.py       멀티 시간봉, DB 경로, 리스크 설정
-backend/app/database.py     SQLite 테이블 생성/조회/저장
-backend/app/indicator.py    RSI, EMA, MACD, ATR 계산
-backend/app/ai_engine.py    LONG/SHORT 점수, 손절/익절, 신고가/신저가 처리
-backend/app/gui.py          PySide6 블랙 대시보드 화면
-backend/app/bitget_client.py Bitget API/데모 모드 분리 구조
+backend/config.py       멀티 시간봉, DB 경로, 리스크 설정
+backend/database.py     SQLite 테이블 생성/조회/저장
+backend/indicator.py    RSI, EMA, MACD, ATR 계산
+backend/ai_engine.py    LONG/SHORT 점수, 손절/익절, 신고가/신저가 처리
+backend/gui.py          PySide6 블랙 대시보드 화면
+backend/bitget_client.py Bitget API/데모 모드 분리 구조
 docs/CODEX_PROMPT.md Codex에게 시킬 작업 프롬프트
 ```
 

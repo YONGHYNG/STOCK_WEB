@@ -6,8 +6,8 @@
 """
 
 from typing import Optional
-from backend.app import database as db
-from backend.app.config import SYMBOL
+import backend.database as db
+from backend.config import SYMBOL
 
 
 class PaperTrader:

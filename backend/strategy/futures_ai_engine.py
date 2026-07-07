@@ -3,7 +3,7 @@ from typing import Optional
 
 import pandas as pd
 
-from backend.app.config import (
+from backend.config import (
     ATR_STOP_MULTIPLIER,
     FUNDING_BLOCK_RATE,
     FUNDING_CAUTION_RATE,
@@ -18,7 +18,7 @@ from backend.app.config import (
     TAKE_PROFIT_2R,
     TAKE_PROFIT_3R,
 )
-from backend.app.indicator import add_indicators, to_dataframe
+from backend.indicator.core import add_indicators, to_dataframe
 
 
 @dataclass

@@ -1,8 +1,8 @@
 import csv
 import sys
 
-from backend.app.config import SYMBOL, TIMEFRAME
-from backend.app.database import init_db, insert_candles
+from backend.config import SYMBOL, TIMEFRAME
+from backend.database import init_db, insert_candles
 
 
 def import_csv(path: str, timeframe: str = TIMEFRAME):
@@ -18,7 +18,7 @@ def import_csv(path: str, timeframe: str = TIMEFRAME):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python -m backend.app.import_csv_to_sqlite data/bitget_BTCUSDT_5m_6y.csv 5m")
+        print("Usage: python -m backend.market.import_csv_to_sqlite data/bitget_BTCUSDT_5m_6y.csv 5m")
         sys.exit(1)
     tf = sys.argv[2] if len(sys.argv) > 2 else TIMEFRAME
     import_csv(sys.argv[1], tf)

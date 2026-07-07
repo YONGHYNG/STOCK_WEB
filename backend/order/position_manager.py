@@ -1,5 +1,5 @@
 from backend.bitget.client import BitgetPrivateClient
-from backend.app.config import SYMBOL
+from backend.config import SYMBOL
 
 
 class PositionManager:

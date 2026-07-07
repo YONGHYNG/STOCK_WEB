@@ -2,7 +2,7 @@
 백테스터 - 저장된 캔들 데이터를 기반으로 단순 시뮬레이션을 수행합니다.
 
 사용법:
-    from backend.app.backtester import Backtester, BacktestConfig, BacktestResult
+    from backend.strategy.backtester import Backtester, BacktestConfig, BacktestResult
     cfg = BacktestConfig(start_ts=..., end_ts=..., timeframe="1H",
                          initial_capital=10000, fee_rate=0.0005, slippage=0.0002)
     result = Backtester().run(cfg)
@@ -23,8 +23,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Optional
 
-from backend.app.database import get_candles_between
-from backend.app.config import SYMBOL
+from backend.database import get_candles_between
+from backend.config import SYMBOL
 from backend.strategy.multi_timeframe_strategy import TradingAIEngine
 
 

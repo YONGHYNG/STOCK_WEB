@@ -4,7 +4,7 @@
 
 import json
 from dataclasses import dataclass, asdict
-from backend.app.config import DATA_DIR
+from backend.config import DATA_DIR
 
 _RISK_FILE = DATA_DIR / "risk_settings.json"
 

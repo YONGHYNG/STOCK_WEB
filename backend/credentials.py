@@ -1,7 +1,7 @@
 """API 자격증명 저장/로드 (data/credentials.json)"""
 import json
 from dataclasses import dataclass
-from backend.app.config import DATA_DIR
+from backend.config import DATA_DIR
 
 _CREDS_FILE = DATA_DIR / "credentials.json"
 

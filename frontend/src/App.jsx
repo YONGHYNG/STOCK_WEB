@@ -32,8 +32,9 @@ const INITIAL = {
 
 function reducer(state, action) {
   switch (action.type) {
-    case 'SIGNAL': return { ...state, signal: action.data, updatedAt: new Date().toLocaleTimeString('ko-KR') }
-    case 'PRICE': return { ...state, price: action.price, updatedAt: new Date().toLocaleTimeString('ko-KR') }
+    // timeZone을 명시해 컴퓨터 시스템 시간대와 무관하게 항상 한국 시간으로 표시
+    case 'SIGNAL': return { ...state, signal: action.data, updatedAt: new Date().toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul' }) }
+    case 'PRICE': return { ...state, price: action.price, updatedAt: new Date().toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul' }) }
     case 'LOG': return { ...state, logs: [...state.logs.slice(-499), action.message] }
     case 'ACCOUNT': return { ...state, account: action.account, positions: action.positions }
     case 'STATUS': return { ...state, status: { ...state.status, ...action.data } }
@@ -47,7 +48,7 @@ function reducer(state, action) {
 const PAGES = [
   ['history', '거래 기록'],
   ['strategy', '전략 설정'],
-  ['risk', '리스크 상태'],
+  ['risk', '시장가 진입'],
 ]
 
 export default function App() {
@@ -114,8 +115,8 @@ export default function App() {
           onEmergencyStop={emergencyStop}
         />
         {state.page === 'strategy' && <StrategySetting settings={state.riskSettings} onSaved={(s) => dispatch({ type: 'RISK_SETTINGS', settings: s })} />}
-        {state.page === 'history' && <TradeHistory trades={state.trades} />}
-        {state.page === 'risk' && <RiskStatus signal={state.signal} />}
+        {state.page === 'history' && <TradeHistory trades={state.trades} signal={state.signal} />}
+        {state.page === 'risk' && <RiskStatus signal={state.signal} account={state.account} positions={state.positions} />}
 
         <nav className="bottom-tab-bar" aria-label="하단 화면 전환">
           {PAGES.map(([key, label]) => (

@@ -1,4 +1,6 @@
 // 역할: 체결 기록과 매매 로그를 표로 보여주는 컴포넌트.
+import { toKst } from '../utils/time'
+
 function money(v) {
   return v != null ? `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '-'
 }
@@ -19,7 +21,7 @@ export function TradeLogTable({ trades }) {
             return (
               <tr key={t.id}>
                 <td style={S.td}>{t.trade_type}</td>
-                <td style={S.td}>{String(t.entry_time ?? '').slice(0, 16)}</td>
+                <td style={S.td}>{toKst(t.entry_time)}</td>
                 <td style={{ ...S.td, color: dirColor }}>{t.direction}</td>
                 <td style={S.td}>{money(t.entry_price)}</td>
                 <td style={{ ...S.td, color: 'var(--red)' }}>{money(t.stop_loss)}</td>

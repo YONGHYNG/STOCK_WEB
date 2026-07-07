@@ -1,4 +1,4 @@
-// 역할: 리스크 상태와 보호 조건을 보여주는 화면.
+// 역할: 시장가 진입 상황(실제 보유 포지션 또는 진입 시뮬레이션)과 보호 조건을 보여주는 화면.
 function money(v) {
   return v != null ? `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '-'
 }
@@ -7,7 +7,94 @@ function pct(v) {
   return v != null ? `${(Number(v) * 100).toFixed(3)}%` : '-'
 }
 
-export function RiskStatus({ signal }) {
+function num(v) {
+  const n = Number(v)
+  return Number.isFinite(n) && v != null && v !== '' ? n : null
+}
+
+export function RiskStatus({ signal, account, positions }) {
+  const btcPosition = (positions ?? []).find((p) => p.symbol === 'BTCUSDT' && Number(p.total ?? 0) > 0)
+
+  return btcPosition
+    ? <OpenPositionRisk position={btcPosition} signal={signal} />
+    : <PlannedEntryRisk signal={signal} />
+}
+
+// 실제로 보유 중인 포지션이 있을 때: 거래소가 알려주는 진짜 숫자를 그대로 보여줌
+function OpenPositionRisk({ position, signal }) {
+  const direction = (position.holdSide ?? '').toUpperCase()
+  const size = num(position.total)
+  const leverage = num(position.leverage)
+  const entry = num(position.openPriceAvg)
+  const mark = num(position.markPrice) ?? num(signal?.mark_price) ?? num(signal?.last_price)
+  const liq = num(position.liquidationPrice)
+  const pnl = num(position.unrealizedPL) ?? 0
+  const margin = num(position.marginSize) ?? (entry && leverage && size ? (entry * size) / leverage : null)
+  const pnlPct = margin ? (pnl / margin) * 100 : null
+  const liqBuffer = mark && liq ? Math.abs(mark - liq) / mark : null
+  const warnings = signal?.risk_warnings ?? []
+
+  const danger = liqBuffer != null && liqBuffer < 0.1
+  const losing = pnl < 0
+
+  const positionMetrics = [
+    ['평균 진입가', money(entry), 'var(--text)', '이 포지션을 처음 잡았을 때 평균적으로 체결된 가격이에요'],
+    ['현재가(마크가)', money(mark), 'var(--text)', '지금 이 순간 손익 계산의 기준이 되는 실시간 가격이에요'],
+    ['레버리지', leverage != null ? `${leverage}배` : '-', 'var(--text)', '원금 대비 몇 배로 베팅했는지예요. 높을수록 청산 위험도 커요'],
+    ['보유 수량', size != null ? `${size} BTC` : '-', 'var(--text)', '지금 실제로 들고 있는 BTC 수량이에요'],
+    ['사용 증거금', margin != null ? money(margin) : '-', 'var(--text2)', '이 포지션을 유지하려고 실제로 묶여 있는 내 돈이에요'],
+    ['청산가', money(liq), 'var(--red)', '이 가격에 닿으면 포지션이 강제로 종료되고 손실이 확정돼요'],
+  ]
+
+  return (
+    <section className="workspace-panel">
+      <div className="workspace-panel__top">
+        <div>
+          <h2>시장가 진입 상황 · 보유 중</h2>
+          <p>지금 실제로 들고 있는 포지션을 거래소 기준 실시간 값으로 보여줘요</p>
+        </div>
+      </div>
+
+      <div style={{ ...S.hero, borderColor: danger ? 'rgba(255,92,92,0.4)' : losing ? 'rgba(240,196,84,0.4)' : 'rgba(51,209,122,0.35)', background: danger ? 'var(--red-dim)' : losing ? 'var(--yellow-dim)' : 'var(--green-dim)' }}>
+        <div style={{ ...S.heroBadge, color: direction === 'SHORT' ? 'var(--red)' : 'var(--green)' }}>
+          {direction === 'SHORT' ? '하락(SHORT)' : '상승(LONG)'} 포지션 보유 중 · {size ?? '-'} BTC
+        </div>
+        <div style={S.heroSub}>
+          <div>
+            미실현 손익 <strong style={{ color: pnl >= 0 ? 'var(--green)' : 'var(--red)' }}>
+              {pnl >= 0 ? '+' : ''}{money(pnl)}{pnlPct != null ? ` (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)` : ''}
+            </strong>
+            {' '}— 지금 청산하면 실제로 얻거나 잃는 금액이에요
+          </div>
+          {danger && <div>· 청산가까지 {(liqBuffer * 100).toFixed(1)}%밖에 안 남았어요 — 급락/급등에 취약해요</div>}
+        </div>
+      </div>
+
+      <RiskGroup title="포지션 상세" note="거래소가 실시간으로 알려주는 실제 보유 정보">
+        <MetricGrid items={positionMetrics} />
+        {liqBuffer != null && (
+          <div style={S.bufferNote}>
+            현재가에서 청산가까지 <strong style={{ color: danger ? 'var(--red)' : 'var(--text)' }}>{(liqBuffer * 100).toFixed(1)}%</strong> 여유가 있어요
+            {danger ? ' — 여유가 적어 위험해요' : ' — 아직은 안전한 편이에요'}
+          </div>
+        )}
+      </RiskGroup>
+
+      <RiskGroup title="보유 중 위험 경고" note="포지션을 유지하는 동안에도 계속 감시하는 시장 위험">
+        {warnings.length === 0 ? (
+          <div style={S.clearBox}>현재 표시된 위험 경고 없음</div>
+        ) : (
+          <div style={S.warningList}>
+            {warnings.map((warning) => <div key={warning} style={S.warning}>{warning}</div>)}
+          </div>
+        )}
+      </RiskGroup>
+    </section>
+  )
+}
+
+// 보유 중인 포지션이 없을 때: 다음 신호가 뜨면 적용될 예정 진입 계획(아직 실제 돈은 안 걸린 상태)
+function PlannedEntryRisk({ signal }) {
   const direction = signal?.direction ?? 'HOLD'
   const grade = signal?.entry_grade ?? '-'
   const warnings = signal?.risk_warnings ?? []
@@ -21,43 +108,52 @@ export function RiskStatus({ signal }) {
   ]
 
   const costPlan = [
-    ['순손익비', signal?.net_risk_reward ? `1 : ${signal.net_risk_reward}` : '-', 'var(--yellow)'],
-    ['스프레드', pct(signal?.spread_rate), 'var(--text)'],
-    ['펀딩비', pct(signal?.funding_rate), 'var(--text)'],
-    ['포지션 수량', signal?.position_size_btc ? `${signal.position_size_btc} BTC` : '-', 'var(--text)'],
-    ['예상 수수료', signal?.estimated_fee != null ? `$${Number(signal.estimated_fee).toFixed(4)}` : '-', 'var(--text2)'],
-    ['청산가', money(signal?.liquidation_price), 'var(--red)'],
+    ['순손익비', signal?.net_risk_reward ? `1 : ${signal.net_risk_reward}` : '-', 'var(--yellow)', '위험 1 대비 기대 보상 배수예요. 숫자가 클수록 잃을 위험보다 벌 수 있는 금액이 커요'],
+    ['스프레드', pct(signal?.spread_rate), 'var(--text)', '사려는 가격과 팔려는 가격의 차이예요. 클수록 사고팔 때 손해가 더 생겨요'],
+    ['펀딩비', pct(signal?.funding_rate), 'var(--text)', '포지션을 계속 들고 있는 동안 주기적으로 내거나 받는 비용이에요'],
+    ['포지션 수량', signal?.position_size_btc ? `${signal.position_size_btc} BTC` : '-', 'var(--text)', '이번 거래에서 실제로 사고파는 BTC 수량이에요'],
+    ['예상 수수료', signal?.estimated_fee != null ? `$${Number(signal.estimated_fee).toFixed(4)}` : '-', 'var(--text2)', '주문이 체결될 때 거래소에 내야 하는 수수료 예상치예요'],
+    ['청산가', money(signal?.liquidation_price), 'var(--red)', '이 가격에 닿으면 포지션이 강제로 종료되고 손실이 확정돼요'],
   ]
 
   return (
     <section className="workspace-panel">
       <div className="workspace-panel__top">
         <div>
-          <h2>리스크 상태</h2>
-          <p>현재 신호가 실제 진입 가능한 자리인지 확인</p>
+          <h2>시장가 진입 상황 · 진입 시뮬레이션</h2>
+          <p>지금은 보유 중인 포지션이 없어요 — 아래는 신호가 뜨면 적용될 예정 진입 계획이에요</p>
         </div>
+      </div>
+
+      <div style={S.noPositionNote}>
+        포지션을 잡기 전이라 아직 실제 돈은 걸려 있지 않아요. 아래 숫자는 시세가 바뀔 때마다 AI가 다시 계산한 "만약 지금 진입한다면"의 예상치라서 새로고침마다 조금씩 바뀌는 게 정상이에요.
       </div>
 
       <div style={S.summary}>
         <div style={S.summaryItem}>
           <span style={S.label}>현재 판단</span>
-          <strong style={{ ...S.summaryValue, color: direction === 'LONG' ? 'var(--green)' : direction === 'SHORT' ? 'var(--red)' : 'var(--yellow)' }}>{direction}</strong>
+          <strong style={{ ...S.summaryValue, color: direction === 'LONG' ? 'var(--green)' : direction === 'SHORT' ? 'var(--red)' : 'var(--yellow)' }}>
+            {direction === 'LONG' ? '상승(매수)' : direction === 'SHORT' ? '하락(매도)' : '관망(대기)'}
+          </strong>
+          <span style={S.itemHint}>지금 시장을 분석해서 내린 방향이에요. LONG=상승 베팅, SHORT=하락 베팅, HOLD=관망</span>
         </div>
         <div style={S.summaryItem}>
           <span style={S.label}>진입 등급</span>
           <strong style={S.summaryValue}>{grade}</strong>
+          <span style={S.itemHint}>A~B는 진입 가능, C~D~F는 조건이 나빠 자동 진입이 막혀요</span>
         </div>
         <div style={S.summaryItem}>
           <span style={S.label}>자동 진입</span>
           <strong style={{ ...S.summaryValue, color: canEnter ? 'var(--green)' : 'var(--red)' }}>{canEnter ? '가능' : '차단/관망'}</strong>
+          <span style={S.itemHint}>방향·등급·아래 위험 경고를 모두 통과해야 자동매매가 실제로 진입해요</span>
         </div>
       </div>
 
-      <RiskGroup title="가격 계획" note="진입 후 손절과 분할 익절 기준">
+      <RiskGroup title="예정 가격 계획" note="실제 진입이 일어나면 적용될 손절과 분할 익절 기준">
         <MetricGrid items={pricePlan} />
       </RiskGroup>
 
-      <RiskGroup title="비용 및 청산 위험" note="수수료, 펀딩비, 청산가 안전거리 확인">
+      <RiskGroup title="예정 비용 및 청산 위험" note="실제 진입 시 예상되는 수수료, 펀딩비, 청산가">
         <MetricGrid items={costPlan} />
       </RiskGroup>
 
@@ -89,10 +185,11 @@ function RiskGroup({ title, note, children }) {
 function MetricGrid({ items }) {
   return (
     <div style={S.grid}>
-      {items.map(([label, value, color]) => (
+      {items.map(([label, value, color, hint]) => (
         <div key={label} style={S.card}>
           <div style={S.label}>{label}</div>
           <div style={{ ...S.value, color }}>{value}</div>
+          {hint && <div style={S.cardHint}>{hint}</div>}
         </div>
       ))}
     </div>
@@ -100,15 +197,22 @@ function MetricGrid({ items }) {
 }
 
 const S = {
-  summary: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8, marginBottom: 12 },
+  hero: { display: 'grid', gap: 6, border: '1px solid', borderRadius: 8, padding: '14px 16px', marginBottom: 12 },
+  heroBadge: { fontSize: 18, fontWeight: 900 },
+  heroSub: { fontSize: 12, color: 'var(--text2)', display: 'grid', gap: 2 },
+  noPositionNote: { fontSize: 12, color: 'var(--text2)', border: '1px solid var(--border-soft)', borderRadius: 8, padding: '10px 12px', background: 'rgba(255,255,255,0.024)', marginBottom: 12, lineHeight: 1.5 },
+  summary: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 8, marginBottom: 12 },
   summaryItem: { background: 'var(--card)', border: '1px solid var(--border-soft)', borderRadius: 8, padding: '12px 14px' },
   summaryValue: { display: 'block', fontSize: 22, marginTop: 5 },
+  itemHint: { display: 'block', fontSize: 11, color: 'var(--muted)', lineHeight: 1.4, marginTop: 6 },
   group: { border: '1px solid var(--border-soft)', borderRadius: 8, background: 'rgba(255,255,255,0.024)', overflow: 'hidden', marginTop: 12 },
   groupHeader: { display: 'grid', gap: 4, padding: '12px 14px', borderBottom: '1px solid var(--border-soft)', background: 'rgba(101,183,255,0.055)' },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8, padding: 10 },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 8, padding: 10 },
   card: { background: 'var(--card)', border: '1px solid var(--border-soft)', borderRadius: 8, padding: '12px 14px' },
   label: { fontSize: 11, color: 'var(--text2)', marginBottom: 6 },
   value: { fontSize: 17, fontWeight: 850, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  cardHint: { fontSize: 11, color: 'var(--muted)', lineHeight: 1.4, marginTop: 6, whiteSpace: 'normal' },
+  bufferNote: { margin: '0 10px 10px', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'var(--card)', fontSize: 12, color: 'var(--text2)' },
   clearBox: { margin: 10, padding: '12px 14px', borderRadius: 8, border: '1px solid rgba(51,209,122,0.28)', color: 'var(--green)', background: 'var(--green-dim)' },
   warningList: { display: 'grid', gap: 8, padding: 10 },
   warning: { padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(255,92,92,0.28)', color: 'var(--red)', background: 'var(--red-dim)' },

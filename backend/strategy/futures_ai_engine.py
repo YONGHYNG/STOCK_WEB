@@ -112,23 +112,37 @@ class TradingAIEngine:
         timestamp = int(last["timestamp"])
         atr = float(last.get("atr14") or 0)
 
+        # 1. 기본 점수 LONG 50 / SHORT 50에서 시작
+        # 2. 5분봉(기준 시간봉)으로 1차 방향 판단
         long_score, short_score, reasons, warnings = self._score_frame(base_df)
         tf_dirs, tf_strengths = self._timeframe_summary(frames)
-        long_score, short_score = self._adjust_timeframes(long_score, short_score, tf_dirs, tf_strengths, reasons, warnings)
+        # 3. 15분봉/30분봉으로 확인 (일치하면 가점, 충돌하면 중립화)
+        long_score, short_score = self._confirm_short_term(long_score, short_score, tf_dirs, reasons, warnings)
+        # 4. 1시간봉으로 방향 필터 (같은 방향이면 가점, 반대면 감점)
+        long_score, short_score = self._apply_1h_filter(long_score, short_score, tf_dirs, reasons, warnings)
         long_score, short_score = self._adjust_funding(long_score, short_score, market, reasons, warnings)
+        # 5. 6시간봉/1일봉은 리스크 필터 — 반대라고 무조건 막지 않고, 둘 다 강하게 반대일 때만 보류
+        long_score, short_score = self._apply_long_term_risk_filter(long_score, short_score, tf_dirs, tf_strengths, reasons, warnings)
         long_score, short_score = self._adjust_extremes(
             long_score, short_score, analysis_price, all_time_high, all_time_low, base_df, reasons, warnings
         )
 
         long_score = max(0.0, min(100.0, long_score))
         short_score = max(0.0, min(100.0, short_score))
-        direction = self._decide_direction(long_score, short_score)
-        pricing = self._pricing(analysis_price, direction, market)
+
+        # 6·7. LONG/SHORT 최종 조건 후보: 점수 임계값 + 5m·15m 방향 일치
+        candidate = self._candidate_direction(long_score, short_score, tf_dirs)
+        pricing = self._pricing(analysis_price, candidate, market)
         self._spread_filter(pricing.get("spread_rate"), warnings)
         self._atr_filter(atr, analysis_price, warnings)
 
-        stop_loss, tp1, tp2, tp3, rr = self._risk_prices(direction, pricing["entry_price"], atr)
-        risk_plan = self._risk_plan(direction, pricing["entry_price"], stop_loss, tp1, tp2, market, account_equity, warnings)
+        stop_loss, tp1, tp2, tp3, rr = self._risk_prices(candidate, pricing["entry_price"], atr)
+        risk_plan = self._risk_plan(candidate, pricing["entry_price"], stop_loss, tp1, tp2, market, account_equity, warnings)
+        # 6·7. 스프레드 정상 + 손익비 1:1.5 이상까지 통과해야 최종 확정, 아니면 8. 그 외는 전부 HOLD
+        direction = self._finalize_direction(candidate, pricing.get("spread_rate"), risk_plan.get("net_risk_reward"), warnings)
+        if direction != candidate:
+            reasons.append(f"{candidate} 후보였지만 스프레드·손익비 조건 미충족으로 HOLD 전환")
+
         grade = self._entry_grade(direction, long_score, short_score, tf_dirs, warnings, pricing.get("spread_rate"))
         if grade in ("C", "D", "F"):
             direction = "HOLD"
@@ -221,84 +235,68 @@ class TradingAIEngine:
         reasons: list[str] = []
         warnings: list[str] = []
 
+        # EMA20 vs EMA60: 5분봉 1차 방향(추세) 판단
         trend_strength = abs(ema20 - ema60) / atr if atr > 0 else 0.0
         if trend_strength < 0.3:
+            trend = "HOLD"
             reasons.append(f"EMA 간격이 ATR 대비 작아 추세 약함({trend_strength:.2f})으로 봅니다.")
         elif ema20 > ema60:
+            trend = "LONG"
             boost = 14 if trend_strength >= 0.8 else 10
             long_score += boost
             short_score -= boost
-            reasons.append(f"EMA 상승 추세와 추세 강도 {trend_strength:.2f}를 반영했습니다.")
+            reasons.append(f"EMA20>EMA60 상승 추세, 강도 {trend_strength:.2f}: LONG 가점")
         else:
+            trend = "SHORT"
             boost = 14 if trend_strength >= 0.8 else 10
             short_score += boost
             long_score -= boost
-            reasons.append(f"EMA 하락 추세와 추세 강도 {trend_strength:.2f}를 반영했습니다.")
+            reasons.append(f"EMA20<EMA60 하락 추세, 강도 {trend_strength:.2f}: SHORT 가점")
 
-        if 30 <= rsi < 45:
-            long_score += 3
-            short_score += 2
-        elif 20 <= rsi < 30:
-            long_score += 6
-            short_score -= 5
-        elif rsi < 20:
-            long_score += 2
-            short_score -= 10
-            warnings.append(f"RSI {rsi:.1f}: 투매 및 숏 추격 위험")
-        elif 55 < rsi <= 70:
-            long_score += 3
-            short_score -= 2
-        elif 70 < rsi < 80:
-            long_score -= 5
-            short_score += 4
-        elif rsi >= 80:
-            long_score -= 12
-            short_score += 6
-            warnings.append(f"RSI {rsi:.1f}: 추격매수 위험")
-        reasons.append(f"RSI {rsi:.1f}를 중립 가산 없이 LONG/SHORT에 반영했습니다.")
+        # RSI는 추세와 같이 판단: 추세와 같은 방향일 때만 가점, 반대면 경고만 남김
+        if trend == "LONG":
+            if rsi >= 80:
+                long_score -= 6
+                warnings.append(f"RSI {rsi:.1f}: 상승 추세 중 과열, 추격매수 위험")
+            elif rsi >= 50:
+                long_score += 6
+                reasons.append(f"RSI {rsi:.1f}: 상승 추세와 같은 방향")
+            else:
+                warnings.append(f"RSI {rsi:.1f}: 상승 추세와 RSI 방향 불일치")
+        elif trend == "SHORT":
+            if rsi <= 20:
+                short_score -= 6
+                warnings.append(f"RSI {rsi:.1f}: 하락 추세 중 과매도, 추격매도 위험")
+            elif rsi <= 50:
+                short_score += 6
+                reasons.append(f"RSI {rsi:.1f}: 하락 추세와 같은 방향")
+            else:
+                warnings.append(f"RSI {rsi:.1f}: 하락 추세와 RSI 방향 불일치")
+        else:
+            reasons.append(f"추세가 약해 RSI {rsi:.1f}는 참고만 합니다.")
 
-        if macd_hist > 0 and macd_delta > 0:
+        # MACD 히스토그램 증가/감소
+        if macd_delta > 0:
             long_score += 8
-            short_score -= 8
-            reasons.append("MACD 상승 모멘텀 강화")
-        elif macd_hist > 0 and macd_delta < 0:
-            long_score += 2
-            short_score -= 2
-            reasons.append("MACD 상승 모멘텀 둔화")
-        elif macd_hist < 0 and macd_delta < 0:
-            long_score -= 8
+            short_score -= 4
+            reasons.append("MACD 히스토그램 증가: LONG 가점")
+        elif macd_delta < 0:
             short_score += 8
-            reasons.append("MACD 하락 모멘텀 강화")
-        elif macd_hist < 0 and macd_delta > 0:
-            long_score -= 2
-            short_score += 2
-            reasons.append("MACD 하락 모멘텀 둔화")
+            long_score -= 4
+            reasons.append("MACD 히스토그램 감소: SHORT 가점")
 
-        high, low = float(last["high"]), float(last["low"])
-        open_, close = float(last["open"]), float(last["close"])
-        candle_range = max(high - low, 1e-9)
-        upper_wick = high - max(open_, close)
-        lower_wick = min(open_, close) - low
+        # 거래량 부족은 양쪽 감점, 거래량 급증 + 추세 방향이면 해당 방향만 가점
         if volume_ratio < 0.8:
             long_score -= 4
             short_score -= 4
             warnings.append(f"거래량 비율 {volume_ratio:.2f}: 거래량 부족")
         elif volume_ratio >= 1.8:
-            if ema20 > ema60 and macd_delta > 0:
+            if trend == "LONG":
                 long_score += 8
-            elif ema20 < ema60 and macd_delta < 0:
+                reasons.append(f"거래량 급증({volume_ratio:.2f}) + 상승 추세: LONG 가점")
+            elif trend == "SHORT":
                 short_score += 8
-            if upper_wick / candle_range > 0.45:
-                long_score -= 6
-                warnings.append("거래량 급증 + 긴 윗꼬리: LONG 감점")
-            if lower_wick / candle_range > 0.45:
-                short_score -= 6
-                warnings.append("거래량 급증 + 긴 아랫꼬리: SHORT 감점")
-        elif volume_ratio >= 1.2:
-            if ema20 > ema60:
-                long_score += 4
-            elif ema20 < ema60:
-                short_score += 4
+                reasons.append(f"거래량 급증({volume_ratio:.2f}) + 하락 추세: SHORT 가점")
         reasons.append(f"거래량 비율 {volume_ratio:.2f} 반영")
         return long_score, short_score, reasons, warnings
 
@@ -330,7 +328,52 @@ class TradingAIEngine:
         return directions, strengths
 
     @staticmethod
-    def _adjust_timeframes(
+    def _confirm_short_term(
+        long_score: float,
+        short_score: float,
+        dirs: dict[str, str],
+        reasons: list[str],
+        warnings: list[str],
+    ) -> tuple[float, float]:
+        """15분봉/30분봉 확인: 5m·15m·30m이 모두 같으면 강한 가점, 서로 충돌하면 중립 쪽으로 완화."""
+        trio = [dirs.get("5m"), dirs.get("15m"), dirs.get("30m")]
+        if trio[0] and trio[0] != "HOLD" and trio[0] == trio[1] == trio[2]:
+            bonus = 12
+            if trio[0] == "LONG":
+                long_score += bonus
+            else:
+                short_score += bonus
+            reasons.append(f"5m/15m/30m 방향 일치({trio[0]}): 확인 가점 +{bonus}")
+        elif "LONG" in trio and "SHORT" in trio:
+            long_score = (long_score + 50.0) / 2
+            short_score = (short_score + 50.0) / 2
+            warnings.append("5m/15m/30m 방향 충돌: 점수를 중립 쪽으로 완화하여 HOLD 가능성 증가")
+        reasons.append(f"단기 시간봉 방향: {dict(zip(['5m', '15m', '30m'], trio))}")
+        return long_score, short_score
+
+    @staticmethod
+    def _apply_1h_filter(
+        long_score: float,
+        short_score: float,
+        dirs: dict[str, str],
+        reasons: list[str],
+        warnings: list[str],
+    ) -> tuple[float, float]:
+        """1시간봉 방향 필터: 같은 방향이면 신뢰도 가점, 반대면 감점."""
+        weight = 8
+        h1 = dirs.get("1H")
+        if h1 == "LONG":
+            long_score += weight
+            short_score -= weight
+            reasons.append("1H 상승과 방향 일치: 신뢰도 가점")
+        elif h1 == "SHORT":
+            short_score += weight
+            long_score -= weight
+            reasons.append("1H 하락과 방향 일치: 신뢰도 가점")
+        return long_score, short_score
+
+    @staticmethod
+    def _apply_long_term_risk_filter(
         long_score: float,
         short_score: float,
         dirs: dict[str, str],
@@ -338,25 +381,21 @@ class TradingAIEngine:
         reasons: list[str],
         warnings: list[str],
     ) -> tuple[float, float]:
-        for tf, weight in {"1H": 8, "30m": 5, "15m": 4, "5m": 3}.items():
-            if dirs.get(tf) == "LONG":
-                long_score += weight
-                short_score -= weight
-            elif dirs.get(tf) == "SHORT":
-                short_score += weight
-                long_score -= weight
-        for tf in ("1D", "6H"):
-            if dirs.get(tf) == "SHORT" and strengths.get(tf, 0) >= 0.8:
-                long_score -= 18
-                warnings.append(f"{tf} 강한 하락: LONG 제한")
-            if dirs.get(tf) == "LONG" and strengths.get(tf, 0) >= 0.8:
-                short_score -= 18
-                warnings.append(f"{tf} 강한 상승: SHORT 제한")
-        if ("LONG" in [dirs.get("5m"), dirs.get("15m")] and "SHORT" in [dirs.get("1H"), dirs.get("6H"), dirs.get("1D")]) or (
-            "SHORT" in [dirs.get("5m"), dirs.get("15m")] and "LONG" in [dirs.get("1H"), dirs.get("6H"), dirs.get("1D")]
-        ):
-            warnings.append("상위 시간봉과 하위 시간봉 충돌")
-        reasons.append(f"시간봉 방향 필터: {dirs}")
+        """6H/1D는 리스크 필터: 반대 방향이라고 무조건 막지 않고, 둘 다 강하게 반대일 때만 진입 보류."""
+        provisional = "LONG" if long_score > short_score else "SHORT" if short_score > long_score else "HOLD"
+        if provisional == "HOLD":
+            return long_score, short_score
+        opposite = "SHORT" if provisional == "LONG" else "LONG"
+        six_h_opposed = dirs.get("6H") == opposite and strengths.get("6H", 0) >= 0.8
+        one_d_opposed = dirs.get("1D") == opposite and strengths.get("1D", 0) >= 0.8
+        if six_h_opposed and one_d_opposed:
+            warnings.append(f"6H·1D 모두 강한 {opposite} 추세: {provisional} 진입 보류")
+            if provisional == "LONG":
+                long_score -= 20
+            else:
+                short_score -= 20
+        elif six_h_opposed or one_d_opposed:
+            reasons.append("장기 시간봉 중 한쪽만 반대 방향 — 진입을 막지 않고 참고만 함")
         return long_score, short_score
 
     @staticmethod
@@ -516,11 +555,34 @@ class TradingAIEngine:
         }
 
     @staticmethod
-    def _decide_direction(long_score: float, short_score: float) -> str:
-        if long_score >= 65 and short_score <= 35:
+    def _candidate_direction(long_score: float, short_score: float, dirs: dict[str, str]) -> str:
+        """6·7. LONG/SHORT 후보 조건: 점수 임계값 + 5m/15m 방향이 둘 다 같은 쪽이어야 함."""
+        long_aligned = dirs.get("5m") == "LONG" and dirs.get("15m") == "LONG"
+        short_aligned = dirs.get("5m") == "SHORT" and dirs.get("15m") == "SHORT"
+        if long_score >= 65 and short_score <= 35 and long_aligned:
             return "LONG"
-        if short_score >= 65 and long_score <= 35:
+        if short_score >= 65 and long_score <= 35 and short_aligned:
             return "SHORT"
+        return "HOLD"
+
+    @staticmethod
+    def _finalize_direction(
+        candidate: str,
+        spread: Optional[float],
+        net_risk_reward: Optional[float],
+        warnings: list[str],
+    ) -> str:
+        """6·7. 스프레드 정상 + 손익비 1:1.5 이상까지 통과해야 확정. 8. 그 외에는 전부 HOLD."""
+        if candidate == "HOLD":
+            return "HOLD"
+        spread_ok = spread is not None and spread <= SPREAD_NORMAL_RATE
+        rr_ok = net_risk_reward is not None and net_risk_reward >= MIN_NET_RISK_REWARD
+        if spread_ok and rr_ok:
+            return candidate
+        if not spread_ok:
+            warnings.append("스프레드 기준 미충족으로 최종 HOLD 전환")
+        if not rr_ok:
+            warnings.append(f"손익비 기준(1:{MIN_NET_RISK_REWARD}) 미충족으로 최종 HOLD 전환")
         return "HOLD"
 
     @staticmethod

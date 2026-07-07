@@ -1,6 +1,6 @@
 // 역할: 실시간 매매 현황을 보여주는 대시보드 화면.
 import { PositionCard } from '../components/PositionCard'
-import { ProfitChart } from '../components/ProfitChart'
+import { ProfitSummary } from '../components/ProfitSummary'
 import { SignalCard } from '../components/SignalCard'
 import { TradingStatusCard } from '../components/TradingStatusCard'
 
@@ -28,8 +28,8 @@ export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop
             onEmergencyStop={onEmergencyStop}
           />
         </Panel>
-        <Panel title="수익 곡선">
-          <ProfitChart trades={state.trades} />
+        <Panel title="수익률">
+          <ProfitSummary trades={state.trades} directions={state.signal?.timeframe_directions} />
         </Panel>
       </div>
       <div className="middle-grid">

@@ -107,15 +107,6 @@ export default function App() {
           <span>{state.status.demo_mode ? 'Demo data' : state.status.trading_mode.replace('_', ' ')}</span>
         </div>
 
-        <div className="workspace-panel" style={{ marginBottom: 14 }}>
-          <div className="workspace-panel__top">
-            <div>
-              <h2>Trading Workspace</h2>
-              <p>Bitget BTCUSDT USDT-M futures</p>
-            </div>
-          </div>
-        </div>
-
         {state.page === 'dashboard' && (
           <Dashboard
             state={state}

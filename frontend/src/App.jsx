@@ -26,7 +26,7 @@ const INITIAL = {
   trades: [],
   riskSettings: null,
   status: DEFAULT_STATUS,
-  page: 'dashboard',
+  page: 'history',
   updatedAt: '-',
 }
 
@@ -107,17 +107,12 @@ export default function App() {
           <span>{state.status.demo_mode ? 'Demo data' : state.status.trading_mode.replace('_', ' ')}</span>
         </div>
 
-        {state.page === 'dashboard' && (
-          <>
-            <Dashboard
-              state={state}
-              setStatusPatch={(patch) => dispatch({ type: 'STATUS', data: patch })}
-              onModeChange={setMode}
-              onEmergencyStop={emergencyStop}
-            />
-            <TradeHistory trades={state.trades} />
-          </>
-        )}
+        <Dashboard
+          state={state}
+          setStatusPatch={(patch) => dispatch({ type: 'STATUS', data: patch })}
+          onModeChange={setMode}
+          onEmergencyStop={emergencyStop}
+        />
         {state.page === 'strategy' && <StrategySetting settings={state.riskSettings} onSaved={(s) => dispatch({ type: 'RISK_SETTINGS', settings: s })} />}
         {state.page === 'history' && <TradeHistory trades={state.trades} />}
         {state.page === 'risk' && <RiskStatus signal={state.signal} />}

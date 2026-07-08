@@ -18,6 +18,7 @@ export function TradeLogTable({ trades }) {
             const pnl = t.pnl_pct
             const dirTone = t.direction === 'LONG' ? 'tone-long' : 'tone-short'
             const pnlTone = pnl == null ? 'tone-info' : pnl >= 0 ? 'tone-long' : 'tone-short'
+            const resultTone = pnl == null ? 'tone-info' : pnl >= 0 ? 'tone-long' : 'tone-short'
             return (
               <tr key={t.id}>
                 <td>{t.trade_type}</td>
@@ -28,7 +29,7 @@ export function TradeLogTable({ trades }) {
                 <td className="tone-long">{money(t.take_profit_1)}</td>
                 <td className="tone-long">{money(t.take_profit_2)}</td>
                 <td>{money(t.exit_price)}</td>
-                <td>{t.result ?? 'OPEN'}</td>
+                <td className={resultTone}>{t.result ?? 'OPEN'}</td>
                 <td className={pnlTone}>{pnl == null ? '진행중' : `${pnl >= 0 ? '+' : ''}${Number(pnl).toFixed(2)}%`}</td>
               </tr>
             )

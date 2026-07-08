@@ -100,14 +100,12 @@ export default function App() {
   return (
     <div className="app-shell">
       <main className="dashboard">
-        {state.page !== 'history' && (
-          <Dashboard
-            state={state}
-            setStatusPatch={(patch) => dispatch({ type: 'STATUS', data: patch })}
-            onModeChange={setMode}
-            onEmergencyStop={emergencyStop}
-          />
-        )}
+        <Dashboard
+          state={state}
+          setStatusPatch={(patch) => dispatch({ type: 'STATUS', data: patch })}
+          onModeChange={setMode}
+          onEmergencyStop={emergencyStop}
+        />
         {state.page === 'strategy' && <StrategySetting settings={state.riskSettings} onSaved={(s) => dispatch({ type: 'RISK_SETTINGS', settings: s })} />}
         {state.page === 'history' && <TradeHistory trades={state.trades} signal={state.signal} />}
         {state.page === 'risk' && <RiskStatus signal={state.signal} account={state.account} positions={state.positions} />}

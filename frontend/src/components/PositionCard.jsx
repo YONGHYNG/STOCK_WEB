@@ -24,19 +24,19 @@ export function PositionCard({ account, positions, status, onStatusPatch }) {
 
   return (
     <div style={S.grid}>
-      <div style={S.box}>
+      <div className="stat-box" style={S.box}>
         <div style={S.label}>계정</div>
         <div style={S.big}>{account ? `$${equity.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '연동 안 됨'}</div>
         <div style={S.sub}>가용 {account ? `$${available.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '-'}</div>
       </div>
-      <div style={S.box}>
+      <div className="stat-box" style={S.box}>
         <div style={S.label}>포지션</div>
         <div style={{ ...S.big, color: btc?.holdSide?.toUpperCase() === 'SHORT' ? 'var(--red)' : 'var(--green)' }}>
           {btc ? `${btc.holdSide?.toUpperCase()} ${btc.total} BTC` : '-'}
         </div>
         <div style={S.sub}>{btc ? `레버리지 ${btc.leverage ?? '-'}x` : 'No BTCUSDT position'}</div>
       </div>
-      <div style={S.box}>
+      <div className="stat-box" style={S.box}>
         <div style={S.label}>수동 주문</div>
         <div style={S.buttons}>
           <button onClick={() => place('LONG')} disabled={!account} style={{ color: 'var(--green)', borderColor: 'var(--green)' }}>LONG</button>
@@ -44,7 +44,7 @@ export function PositionCard({ account, positions, status, onStatusPatch }) {
           <button onClick={() => tradingApi.closePosition()} disabled={!account}>청산</button>
         </div>
       </div>
-      <div style={S.box}>
+      <div className="stat-box" style={S.box}>
         <div style={S.label}>자동매매</div>
         <label style={S.check}>
           <input type="checkbox" checked={Boolean(status?.auto_trade_enabled)} onChange={toggleAuto} />
@@ -57,7 +57,7 @@ export function PositionCard({ account, positions, status, onStatusPatch }) {
 
 const S = {
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 },
-  box: { background: 'rgba(255,255,255,0.026)', border: '1px solid var(--border-soft)', borderRadius: 8, padding: 12 },
+  box: { background: 'rgba(255,255,255,0.026)', border: '1px solid var(--border-soft)', borderRadius: 10, padding: 12 },
   label: { fontSize: 11, fontWeight: 800, color: 'var(--text2)', marginBottom: 8 },
   big: { fontSize: 18, fontWeight: 850 },
   sub: { color: 'var(--text2)', fontSize: 12, marginTop: 5 },

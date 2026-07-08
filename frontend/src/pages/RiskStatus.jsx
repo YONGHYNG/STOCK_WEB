@@ -130,19 +130,19 @@ function PlannedEntryRisk({ signal }) {
       </div>
 
       <div style={S.summary}>
-        <div style={S.summaryItem}>
+        <div className="stat-box" style={S.summaryItem}>
           <span style={S.label}>현재 판단</span>
           <strong style={{ ...S.summaryValue, color: direction === 'LONG' ? 'var(--green)' : direction === 'SHORT' ? 'var(--red)' : 'var(--yellow)' }}>
             {direction === 'LONG' ? '상승(매수)' : direction === 'SHORT' ? '하락(매도)' : '관망(대기)'}
           </strong>
           <span style={S.itemHint}>지금 시장을 분석해서 내린 방향이에요. LONG=상승 베팅, SHORT=하락 베팅, HOLD=관망</span>
         </div>
-        <div style={S.summaryItem}>
+        <div className="stat-box" style={S.summaryItem}>
           <span style={S.label}>진입 등급</span>
           <strong style={S.summaryValue}>{grade}</strong>
           <span style={S.itemHint}>A~B는 진입 가능, C~D~F는 조건이 나빠 자동 진입이 막혀요</span>
         </div>
-        <div style={S.summaryItem}>
+        <div className="stat-box" style={S.summaryItem}>
           <span style={S.label}>자동 진입</span>
           <strong style={{ ...S.summaryValue, color: canEnter ? 'var(--green)' : 'var(--red)' }}>{canEnter ? '가능' : '차단/관망'}</strong>
           <span style={S.itemHint}>방향·등급·아래 위험 경고를 모두 통과해야 자동매매가 실제로 진입해요</span>
@@ -186,7 +186,7 @@ function MetricGrid({ items }) {
   return (
     <div style={S.grid}>
       {items.map(([label, value, color, hint]) => (
-        <div key={label} style={S.card}>
+        <div key={label} className="stat-box" style={S.card}>
           <div style={S.label}>{label}</div>
           <div style={{ ...S.value, color }}>{value}</div>
           {hint && <div style={S.cardHint}>{hint}</div>}
@@ -197,20 +197,20 @@ function MetricGrid({ items }) {
 }
 
 const S = {
-  hero: { display: 'grid', gap: 6, border: '1px solid', borderRadius: 8, padding: '14px 16px', marginBottom: 12 },
+  hero: { display: 'grid', gap: 6, border: '1px solid', borderRadius: 10, padding: '14px 16px', marginBottom: 12 },
   heroBadge: { fontSize: 18, fontWeight: 900 },
   heroSub: { fontSize: 12, color: 'var(--text2)', display: 'grid', gap: 2 },
   noPositionNote: { fontSize: 12, color: 'var(--text2)', border: '1px solid var(--border-soft)', borderRadius: 8, padding: '10px 12px', background: 'rgba(255,255,255,0.024)', marginBottom: 12, lineHeight: 1.5 },
   summary: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 8, marginBottom: 12 },
-  summaryItem: { background: 'var(--card)', border: '1px solid var(--border-soft)', borderRadius: 8, padding: '12px 14px' },
+  summaryItem: { background: 'var(--card)', border: '1px solid var(--border-soft)', borderRadius: 10, padding: '12px 14px' },
   summaryValue: { display: 'block', fontSize: 22, marginTop: 5 },
   itemHint: { display: 'block', fontSize: 11, color: 'var(--muted)', lineHeight: 1.4, marginTop: 6 },
-  group: { border: '1px solid var(--border-soft)', borderRadius: 8, background: 'rgba(255,255,255,0.024)', overflow: 'hidden', marginTop: 12 },
+  group: { border: '1px solid var(--border-soft)', borderRadius: 10, background: 'rgba(255,255,255,0.024)', overflow: 'hidden', marginTop: 12 },
   groupHeader: { display: 'grid', gap: 4, padding: '12px 14px', borderBottom: '1px solid var(--border-soft)', background: 'rgba(101,183,255,0.055)' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 8, padding: 10 },
-  card: { background: 'var(--card)', border: '1px solid var(--border-soft)', borderRadius: 8, padding: '12px 14px' },
+  card: { background: 'var(--card)', border: '1px solid var(--border-soft)', borderRadius: 10, padding: '12px 14px' },
   label: { fontSize: 11, color: 'var(--text2)', marginBottom: 6 },
-  value: { fontSize: 17, fontWeight: 850, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  value: { fontSize: 17, fontWeight: 850, whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.3 },
   cardHint: { fontSize: 11, color: 'var(--muted)', lineHeight: 1.4, marginTop: 6, whiteSpace: 'normal' },
   bufferNote: { margin: '0 10px 10px', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'var(--card)', fontSize: 12, color: 'var(--text2)' },
   clearBox: { margin: 10, padding: '12px 14px', borderRadius: 8, border: '1px solid rgba(51,209,122,0.28)', color: 'var(--green)', background: 'var(--green-dim)' },

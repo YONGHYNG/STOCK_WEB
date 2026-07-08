@@ -38,22 +38,24 @@ button {
   cursor: pointer;
   font-family: inherit;
   font-size: 13px;
+  font-weight: 650;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--card);
   color: var(--text);
-  padding: 6px 14px;
+  padding: 7px 16px;
   transition: border-color 0.15s, background 0.15s, transform 0.15s;
 }
 button:hover { border-color: var(--blue); transform: translateY(-1px); }
-button:disabled { opacity: 0.4; cursor: not-allowed; }
+button:active { transform: translateY(0); }
+button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
 
 input, select {
   background: var(--card);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 5px 10px;
+  border-radius: 7px;
+  padding: 6px 10px;
   font-family: inherit;
   font-size: 13px;
 }
@@ -103,9 +105,24 @@ hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
 .workspace-panel {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 120px), var(--panel);
   border: 1px solid var(--border-soft);
-  border-radius: 8px;
+  border-radius: 12px;
   box-shadow: var(--shadow);
   min-width: 0;
+  transition: border-color 0.2s ease;
+}
+
+.panel:hover,
+.workspace-panel:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.stat-box {
+  transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease;
+}
+
+.stat-box:hover {
+  border-color: rgba(101, 183, 255, 0.4);
+  transform: translateY(-1px);
 }
 
 .panel {
@@ -159,12 +176,14 @@ hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
   color: var(--text2);
   min-height: 32px;
   white-space: nowrap;
+  border-radius: 999px;
 }
 
 .tab-button--active {
   background: var(--blue-dim);
   border-color: rgba(101, 183, 255, 0.55);
   color: var(--text);
+  box-shadow: 0 0 0 1px rgba(101, 183, 255, 0.18) inset;
 }
 
 .bottom-tab-bar {
@@ -178,7 +197,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
   width: min(520px, calc(100% - 28px));
   padding: 10px;
   border: 1px solid var(--border-soft);
-  border-radius: 8px;
+  border-radius: 999px;
   background: rgba(17, 24, 32, 0.96);
   box-shadow: var(--shadow);
   transform: translateX(-50%);
@@ -197,7 +216,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
   overflow-x: auto;
   max-height: 360px;
   border: 1px solid var(--border-soft);
-  border-radius: 8px;
+  border-radius: 10px;
 }
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }

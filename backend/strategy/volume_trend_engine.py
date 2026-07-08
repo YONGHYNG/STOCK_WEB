@@ -117,6 +117,7 @@ class TradingAIEngine:
 
         long_score = 75.0 if direction == "LONG" else 25.0 if direction == "SHORT" else 50.0
         short_score = 75.0 if direction == "SHORT" else 25.0 if direction == "LONG" else 50.0
+        confidence = 100.0 if final_direction in ("LONG", "SHORT") else 0.0
         reasons = decision.reasons + [f"전략 신호: {decision.signal}", "모든 판단은 확정 캔들 기준"]
         if warnings:
             reasons += [f"경고: {w}" for w in warnings]
@@ -137,7 +138,7 @@ class TradingAIEngine:
             direction=final_direction,
             long_probability=long_score,
             short_probability=short_score,
-            confidence=abs(long_score - short_score),
+            confidence=confidence,
             stop_loss=round(stop_loss, 2) if stop_loss else None,
             take_profit_1=round(tp1, 2) if tp1 else None,
             take_profit_2=round(tp2, 2) if tp2 else None,

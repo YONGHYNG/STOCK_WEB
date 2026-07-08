@@ -41,7 +41,7 @@ export function StrategySetting({ settings, onSaved }) {
 
   const leverageWarn = form.max_leverage > 5
   const dailyLossWarn = form.daily_max_loss_pct > 10
-  const confidenceWarn = form.confidence_threshold < 20
+  const confidenceWarn = form.confidence_threshold > 100
 
   return (
     <section className="workspace-panel">
@@ -64,7 +64,7 @@ export function StrategySetting({ settings, onSaved }) {
       <div style={S.summary}>
         <div style={S.summaryTitle}>지금 설정을 말로 풀면</div>
         <ul style={S.summaryList}>
-          <li>신뢰도 <b>{form.confidence_threshold}%</b> 이상일 때만, 최대 <b>{form.max_leverage}배</b> 레버리지로 <b>{form.order_size_btc} BTC</b>씩 자동 진입해요</li>
+          <li>확정 진입 신호가 나온 뒤 리스크 검사를 통과할 때만, 최대 <b>{form.max_leverage}배</b> 레버리지로 <b>{form.order_size_btc} BTC</b>씩 자동 진입해요</li>
           <li>한 번에 <b>{form.max_loss_pct}%</b> 넘게 잃거나 하루 합계로 <b>{form.daily_max_loss_pct}%</b> 잃으면 그날은 더 이상 진입하지 않아요</li>
           <li>손실이 <b>{form.consecutive_loss_limit}번</b> 연속되면 잠시 멈추고, 다음 진입까지는 <b>{minutesLabel(form.reentry_wait_seconds)}</b> 기다려요</li>
           <li>실거래 주문은 지금 <b style={{ color: form.live_trading_allowed ? 'var(--red)' : 'var(--green)' }}>{form.live_trading_allowed ? '허용됨 (실제 돈이 움직여요)' : '차단됨 (신호만 보여줘요)'}</b></li>
@@ -95,10 +95,10 @@ export function StrategySetting({ settings, onSaved }) {
           />
         </SettingGroup>
 
-        <SettingGroup title="진입 조건" note="신호가 떠도 아래 기준을 넘어야 실제로 자동 진입해요">
+        <SettingGroup title="진입 조건" note="WAIT 상태에서는 진입하지 않고, 확정 신호만 자동 진입 후보가 돼요">
           <Field
-            label="신뢰도 기준"
-            hint="AI가 이 확신도(%) 이상일 때만 진입해요. 낮추면 진입은 잦아지지만 예측 정확도는 떨어져요"
+            label="확정 신호 기준"
+            hint="현재 전략은 점수 예측이 아니라 WAIT 이후 SHORT/LONG 확정 신호가 나와야 진입해요"
             value={form.confidence_threshold}
             step="5"
             min="0"
@@ -106,7 +106,7 @@ export function StrategySetting({ settings, onSaved }) {
             suffix="%"
             onChange={(v) => set('confidence_threshold', v)}
             warn={confidenceWarn}
-            warnText="20% 미만이면 근거가 약한 신호에도 진입할 수 있어요"
+            warnText="100%를 넘으면 확정 신호도 차단될 수 있어요"
           />
           <Field
             label="재진입 대기"
@@ -183,7 +183,7 @@ function SettingGroup({ title, note, children }) {
 
 function Field({ label, hint, value, step, min, max, suffix, onChange, warn, warnText }) {
   return (
-    <div style={{ ...S.row, ...(warn ? S.rowWarn : null) }}>
+    <div className="stat-box" style={{ ...S.row, ...(warn ? S.rowWarn : null) }}>
       <label style={S.rowInner}>
         <span>
           <strong style={S.mainLabel}>{label}</strong>
@@ -214,13 +214,13 @@ const S = {
   },
   summaryTitle: { fontSize: 12, fontWeight: 800, color: 'var(--blue)' },
   summaryList: { display: 'grid', gap: 6, paddingLeft: 18, fontSize: 12.5, color: 'var(--text)', lineHeight: 1.5 },
-  group: { border: '1px solid var(--border-soft)', borderRadius: 8, background: 'rgba(255,255,255,0.024)', overflow: 'hidden' },
+  group: { border: '1px solid var(--border-soft)', borderRadius: 10, background: 'rgba(255,255,255,0.024)', overflow: 'hidden' },
   groupHeader: { display: 'grid', gap: 4, padding: '12px 14px', borderBottom: '1px solid var(--border-soft)', background: 'rgba(101,183,255,0.055)', color: 'var(--text)' },
   groupBody: { display: 'grid', gap: 8, padding: 10 },
-  row: { border: '1px solid var(--border-soft)', borderRadius: 8, padding: '10px 12px', background: 'var(--card)' },
+  row: { border: '1px solid var(--border-soft)', borderRadius: 10, padding: '10px 12px', background: 'var(--card)' },
   rowWarn: { border: '1px solid rgba(240,196,84,0.45)', background: 'var(--yellow-dim)' },
   rowInner: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
-  switchRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, border: '1px solid rgba(101,183,255,0.32)', borderRadius: 8, padding: '12px', background: 'var(--blue-dim)' },
+  switchRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, border: '1px solid rgba(101,183,255,0.32)', borderRadius: 10, padding: '12px', background: 'var(--blue-dim)' },
   switchRowOn: { border: '1px solid rgba(255,92,92,0.45)', background: 'var(--red-dim)' },
   mainLabel: { display: 'block', color: 'var(--text)', fontSize: 13, marginBottom: 3 },
   hint: { display: 'block', color: 'var(--text2)', fontSize: 11, lineHeight: 1.4, maxWidth: 320 },

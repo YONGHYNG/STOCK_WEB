@@ -9,21 +9,16 @@ DB_PATH = DATA_DIR / "trading.db"
 SYMBOL = "BTCUSDT"
 PRODUCT_TYPE = "USDT-FUTURES"
 
-# 분석 대상 시간봉: DB는 하나의 candles 테이블을 사용하고 timeframe 컬럼으로 구분합니다.
-TIMEFRAMES = ["5m", "15m", "30m", "1H", "6H", "1D", "1W", "1M"]
-DEFAULT_TIMEFRAME = "5m"
+# 분석 대상 시간봉: 새 전략은 1분 확정 캔들을 우선 사용하고 5분봉을 보조로 유지합니다.
+TIMEFRAMES = ["1m", "5m"]
+DEFAULT_TIMEFRAME = "1m"
 TIMEFRAME = DEFAULT_TIMEFRAME
 
-# 실시간 판단 시 전체 6년치를 매번 분석하지 않고 각 시간봉의 최근 캔들만 사용합니다.
+# MA200/RSI/ATR/거래량 지표 안정화를 위해 최근 660개 확정 캔들을 유지합니다.
+CANDLE_ANALYSIS_LIMIT = 660
 RECENT_CANDLE_LIMIT_BY_TIMEFRAME = {
-    "5m": 300,
-    "15m": 300,
-    "30m": 300,
-    "1H": 300,
-    "6H": 200,
-    "1D": 200,
-    "1W": 100,
-    "1M": 72,
+    "1m": CANDLE_ANALYSIS_LIMIT,
+    "5m": CANDLE_ANALYSIS_LIMIT,
 }
 RECENT_CANDLE_LIMIT = RECENT_CANDLE_LIMIT_BY_TIMEFRAME[DEFAULT_TIMEFRAME]
 
@@ -32,7 +27,7 @@ BITGET_WS_PUBLIC = "wss://ws.bitget.com/v2/ws/public"
 USE_DEMO_DATA = False
 API_TIMEOUT_SECONDS = 8
 REFRESH_INTERVAL_MS = 15000
-INITIAL_CANDLE_LIMIT = 120
+INITIAL_CANDLE_LIMIT = CANDLE_ANALYSIS_LIMIT
 REFRESH_CANDLE_LIMIT = 2
 
 # Futures execution model

@@ -107,12 +107,10 @@ def _worker_seed() -> list[str]:
 
     fetch_limits = {}
     for tf in TIMEFRAMES:
-        if len(get_recent_candles(SYMBOL, tf, 80)) >= 80:
+        required = RECENT_CANDLE_LIMIT_BY_TIMEFRAME.get(tf, INITIAL_CANDLE_LIMIT)
+        if len(get_recent_candles(SYMBOL, tf, required)) >= required:
             continue
-        fetch_limits[tf] = min(
-            RECENT_CANDLE_LIMIT_BY_TIMEFRAME.get(tf, INITIAL_CANDLE_LIMIT),
-            INITIAL_CANDLE_LIMIT,
-        )
+        fetch_limits[tf] = required
 
     if fetch_limits:
         fmap = {
@@ -151,7 +149,7 @@ def _worker_analyze() -> tuple[Optional[dict], list[str]]:
             errors.append(f"{tf}: {err}")
 
     candles_by_tf = {
-        tf: get_recent_candles(SYMBOL, tf, RECENT_CANDLE_LIMIT_BY_TIMEFRAME.get(tf, 300))
+        tf: get_recent_candles(SYMBOL, tf, RECENT_CANDLE_LIMIT_BY_TIMEFRAME.get(tf, INITIAL_CANDLE_LIMIT))
         for tf in TIMEFRAMES
     }
     usable = {tf: c for tf, c in candles_by_tf.items() if c}
@@ -442,7 +440,7 @@ async def _auto_paper_trade(direction: str, r: dict):
 
     trade_id = paper_trader.open_trade(direction, r)
     risk_mgr.record_order_placed()
-    msg = state.add_log(f"[모의매매] {direction} 진입  #{trade_id}  신뢰도={r.get('confidence', 0):.1f}%")
+    msg = state.add_log(f"[모의매매] {direction} 진입  #{trade_id}  전략신호={r.get('strategy_signal', direction)}")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "trade_update"})
 
@@ -469,7 +467,7 @@ async def _auto_live_trade(direction: str, r: dict):
         res = private_client.place_market_order(side, size, "open")
         risk_mgr.record_order_placed()
         msg = state.add_log(
-            f"[자동매매 LIVE] {direction} {size} BTC  신뢰도={r.get('confidence', 0):.1f}%  orderId={res.get('orderId', '?')}"
+            f"[자동매매 LIVE] {direction} {size} BTC  전략신호={r.get('strategy_signal', direction)}  orderId={res.get('orderId', '?')}"
         )
         await manager.broadcast({"type": "log", "data": {"message": msg}})
     except Exception as exc:

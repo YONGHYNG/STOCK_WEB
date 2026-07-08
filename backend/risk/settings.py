@@ -21,7 +21,7 @@ class RiskSettings:
     consecutive_loss_limit: int = 3     # 연속 손실 정지 횟수
 
     # 진입 조건
-    confidence_threshold: float = 30.0  # 자동매매 신뢰도 기준 (%)
+    confidence_threshold: float = 30.0  # 자동매매 확정 신호 기준 (%)
     reentry_wait_seconds: int = 300     # 재진입 대기 시간 (초)
 
     # 레버리지

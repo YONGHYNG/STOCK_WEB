@@ -365,14 +365,14 @@ class TradingMainWindow(QMainWindow):
         main.addLayout(self._make_header())
         main.addWidget(Divider())
 
-        # Hero: price + direction + confidence + modes
+        # Hero: price + direction + strategy state
         main.addLayout(self._make_hero())
         main.addWidget(Divider())
 
-        # Signal strength bars
-        main.addWidget(SectionHeader("SIGNAL STRENGTH"))
-        self._long_bar  = ScoreBar("LONG    50.0%", "longBar")
-        self._short_bar = ScoreBar("SHORT   50.0%", "shortBar")
+        # Strategy context bars
+        main.addWidget(SectionHeader("STRATEGY CONTEXT"))
+        self._long_bar  = ScoreBar("RSI14       —", "longBar")
+        self._short_bar = ScoreBar("VOLUME      —", "shortBar")
         main.addWidget(self._long_bar)
         main.addWidget(self._short_bar)
         main.addWidget(Divider())
@@ -490,25 +490,31 @@ class TradingMainWindow(QMainWindow):
         self._dir_badge = QLabel("—")
         self._dir_badge.setObjectName("dirBadge")
         self._dir_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._dir_badge.setFixedSize(130, 52)
+        self._dir_badge.setMinimumSize(150, 52)
         dir_col.addWidget(self._dir_badge)
 
-        # Confidence
+        # Strategy signal
         conf_col = QVBoxLayout()
         conf_col.setSpacing(4)
-        conf_col.addWidget(SectionHeader("CONFIDENCE"))
+        conf_col.addWidget(SectionHeader("STRATEGY"))
         self._conf_lbl = QLabel("—")
         self._conf_lbl.setObjectName("confLbl")
+        self._conf_lbl.setMinimumWidth(260)
+        self._conf_lbl.setWordWrap(True)
         conf_col.addWidget(self._conf_lbl)
 
-        # ATH / ATL
+        # Wait state / levels
         mode_col = QVBoxLayout()
         mode_col.setSpacing(4)
-        mode_col.addWidget(SectionHeader("SPECIAL MODES"))
-        self._ath_lbl = QLabel("ATH Mode: OFF")
+        mode_col.addWidget(SectionHeader("WAIT / LEVELS"))
+        self._ath_lbl = QLabel("State: HOLD")
         self._ath_lbl.setObjectName("modeLbl")
-        self._atl_lbl = QLabel("ATL Mode: OFF")
+        self._ath_lbl.setMinimumWidth(220)
+        self._ath_lbl.setWordWrap(True)
+        self._atl_lbl = QLabel("Level: —")
         self._atl_lbl.setObjectName("modeLbl")
+        self._atl_lbl.setMinimumWidth(220)
+        self._atl_lbl.setWordWrap(True)
         mode_col.addWidget(self._ath_lbl)
         mode_col.addWidget(self._atl_lbl)
 
@@ -582,7 +588,7 @@ class TradingMainWindow(QMainWindow):
         form.addRow("1회 최대 손실률 (%):",   self._rs_max_loss)
         form.addRow("일일 최대 손실률 (%):",  self._rs_daily_loss)
         form.addRow("연속 손실 정지 횟수:",    self._rs_consec_loss)
-        form.addRow("자동매매 신뢰도 기준 (%):", self._rs_confidence)
+        form.addRow("확정 신호 기준 (%):", self._rs_confidence)
         form.addRow("재진입 대기 시간 (초):",  self._rs_reentry_wait)
         form.addRow("최대 레버리지:",          self._rs_max_lev)
         form.addRow("",                        self._rs_live_allow)
@@ -878,7 +884,7 @@ class TradingMainWindow(QMainWindow):
 
         thresh_row = QHBoxLayout()
         thresh_row.setSpacing(6)
-        thresh_lbl = QLabel("신뢰도 임계")
+        thresh_lbl = QLabel("확정신호")
         thresh_lbl.setObjectName("acctSub")
         self._auto_spin = QDoubleSpinBox()
         self._auto_spin.setObjectName("acctSpin")
@@ -980,7 +986,7 @@ class TradingMainWindow(QMainWindow):
                 errors.append(f"{tf}: {err}")
 
         candles_by_tf = {
-            tf: get_recent_candles(SYMBOL, tf, RECENT_CANDLE_LIMIT_BY_TIMEFRAME.get(tf, 300))
+            tf: get_recent_candles(SYMBOL, tf, RECENT_CANDLE_LIMIT_BY_TIMEFRAME.get(tf, INITIAL_CANDLE_LIMIT))
             for tf in TIMEFRAMES
         }
         usable = {tf: c for tf, c in candles_by_tf.items() if c}
@@ -1021,14 +1027,12 @@ class TradingMainWindow(QMainWindow):
 
         fetch_limits = {}
         for tf in TIMEFRAMES:
-            if len(get_recent_candles(SYMBOL, tf, 80)) >= 80:
+            required = RECENT_CANDLE_LIMIT_BY_TIMEFRAME.get(tf, INITIAL_CANDLE_LIMIT)
+            if len(get_recent_candles(SYMBOL, tf, required)) >= required:
                 if emit:
                     self._signals.progress.emit(f"  ✓ {tf:<4}  캐시 데이터 사용")
                 continue
-            fetch_limits[tf] = min(
-                RECENT_CANDLE_LIMIT_BY_TIMEFRAME.get(tf, INITIAL_CANDLE_LIMIT),
-                INITIAL_CANDLE_LIMIT,
-            )
+            fetch_limits[tf] = required
 
         if not fetch_limits:
             return logs
@@ -1121,25 +1125,29 @@ class TradingMainWindow(QMainWindow):
             f"font-size: 18px; font-weight: 800;"
         )
 
-        # Confidence
-        conf = r.get("confidence", 0)
-        self._conf_lbl.setText(f"{conf:.1f}%")
-        conf_color = GREEN if conf >= 60 else YELLOW if conf >= 30 else TEXT2
-        self._conf_lbl.setStyleSheet(f"color: {conf_color};")
+        # Strategy / wait state
+        strategy_signal = r.get("strategy_signal", "HOLD")
+        strategy_color = YELLOW if strategy_signal.startswith("WAIT") else d_color if direction in ("LONG", "SHORT") else TEXT2
+        self._conf_lbl.setText(strategy_signal)
+        self._conf_lbl.setStyleSheet(f"color: {strategy_color};")
 
-        # ATH / ATL
-        ath_on = r.get("all_time_high_mode", False)
-        atl_on = r.get("all_time_low_mode", False)
-        self._ath_lbl.setText(f"ATH Mode: {'ON' if ath_on else 'OFF'}")
-        self._ath_lbl.setStyleSheet(f"color: {YELLOW if ath_on else TEXT2};")
-        self._atl_lbl.setText(f"ATL Mode: {'ON' if atl_on else 'OFF'}")
-        self._atl_lbl.setStyleSheet(f"color: {RED if atl_on else TEXT2};")
+        strategy_state = r.get("market_mode", "HOLD")
+        self._ath_lbl.setText(f"State: {strategy_state}")
+        self._ath_lbl.setStyleSheet(f"color: {YELLOW if str(strategy_state).startswith('WAIT') else TEXT2};")
+        summary = (r.get("timeframe_summary") or {}).get("1m") or (r.get("timeframe_summary") or {}).get("5m") or {}
+        support = summary.get("support_level")
+        breakout = summary.get("breakout_level")
+        level_text = f"${support:,.2f}" if support is not None else f"${breakout:,.2f}" if breakout is not None else "—"
+        self._atl_lbl.setText(f"Level: {level_text}")
+        self._atl_lbl.setStyleSheet(f"color: {TEXT2};")
 
-        # Score bars
-        long_pct  = r.get("long_probability", 50)
-        short_pct = r.get("short_probability", 50)
-        self._long_bar.update(f"LONG   {long_pct:5.1f}%", int(long_pct))
-        self._short_bar.update(f"SHORT  {short_pct:5.1f}%", int(short_pct))
+        # Strategy context bars
+        rsi = summary.get("rsi14")
+        volume_ratio = summary.get("volume_ratio")
+        rsi_val = float(rsi) if rsi is not None else 0.0
+        vol_val = float(volume_ratio) if volume_ratio is not None else 0.0
+        self._long_bar.update(f"RSI14    {rsi_val:5.1f}", int(max(0, min(100, rsi_val))))
+        self._short_bar.update(f"VOLUME   {vol_val:5.2f}x", int(max(0, min(100, vol_val * 50))))
 
         # Risk cards
         # 포지션이 열려있으면 진입 시점의 값을 고정 표시, 아니면 최신 분석값 표시
@@ -1504,7 +1512,7 @@ class TradingMainWindow(QMainWindow):
                 return
         self._auto_trade_enabled = checked
         state = "ON" if checked else "OFF"
-        self._log(f"[자동매매] {state}  모드={self._trading_mode.value}  임계값={self._auto_threshold:.0f}%")
+        self._log(f"[자동매매] {state}  모드={self._trading_mode.value}  확정신호 기준={self._auto_threshold:.0f}%")
         ok, power_msg = keep_awake.enable() if checked else keep_awake.disable()
         self._log(f"[전원관리] {power_msg}" if ok else f"[전원관리 경고] {power_msg}")
 
@@ -1626,7 +1634,7 @@ class TradingMainWindow(QMainWindow):
         trade_id = self._paper_trader.open_trade(direction, r)
         self._log(
             f"[모의매매] {direction} 진입  #{trade_id}  "
-            f"신뢰도={r.get('confidence', 0):.1f}%"
+            f"전략신호={r.get('strategy_signal', direction)}"
         )
         self._risk_mgr.record_order_placed()
         self._refresh_trade_table()
@@ -1652,7 +1660,7 @@ class TradingMainWindow(QMainWindow):
             order_id = result.get("orderId", "?")
             self._log(
                 f"[자동매매 LIVE] {direction} {size} BTC  "
-                f"신뢰도={r.get('confidence', 0):.1f}%  orderId={order_id}"
+                f"전략신호={r.get('strategy_signal', direction)}  orderId={order_id}"
             )
             self._risk_mgr.record_order_placed()
             QTimer.singleShot(2000, self._fetch_account)
@@ -1919,12 +1927,12 @@ class TradingMainWindow(QMainWindow):
             border-radius: 8px;
         }}
         QLabel#confLbl {{
-            font-size: 30px;
+            font-size: 22px;
             font-weight: 800;
             font-family: "Consolas", "Courier New", monospace;
         }}
         QLabel#modeLbl {{
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 700;
             color: {TEXT2};
         }}

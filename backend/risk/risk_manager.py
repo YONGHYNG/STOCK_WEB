@@ -65,7 +65,7 @@ class RiskManager:
         # 3. 신뢰도 확인
         if confidence < s.confidence_threshold:
             return False, (
-                f"신뢰도 {confidence:.1f}% < 임계값 {s.confidence_threshold:.0f}% "
+                f"확정 신호 기준 {confidence:.1f}% < 임계값 {s.confidence_threshold:.0f}% "
                 f"→ 진입 조건 미충족"
             )
 

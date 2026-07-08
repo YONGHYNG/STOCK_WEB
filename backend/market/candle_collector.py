@@ -1,8 +1,9 @@
-# 역할: 1분봉/5분봉 캔들을 수집하고 테스트용 mock 데이터를 주입할 수 있게 합니다.
+# 역할: 여러 시간봉 캔들을 수집하고 테스트용 mock 데이터를 주입할 수 있게 합니다.
 from collections.abc import Callable
 from typing import Optional
 
 from backend.bitget.market_api import BitgetClient
+from backend.config import TIMEFRAMES
 
 
 MockProvider = Callable[[str, int], list[dict]]
@@ -34,11 +35,11 @@ class CandleCollector:
             self.client.timeframe = timeframe
         return self.client.fetch_recent_or_demo(limit)
 
+    def fetch_timeframes(self, timeframes: list[str] | None = None, limit: int = 240) -> dict[str, list[dict]]:
+        return {tf: self.fetch_recent(tf, limit) for tf in (timeframes or TIMEFRAMES)}
+
     def fetch_1m_5m(self, limit: int = 240) -> dict[str, list[dict]]:
-        return {
-            "1m": self.fetch_recent("1m", limit),
-            "5m": self.fetch_recent("5m", limit),
-        }
+        return self.fetch_timeframes(["1m", "5m"], limit)
 
 
 __all__ = ["CandleCollector"]

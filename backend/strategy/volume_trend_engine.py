@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
-from backend.config import SYMBOL, TAKER_FEE_RATE
+from backend.config import SYMBOL, TAKER_FEE_RATE, TIMEFRAMES
 from backend.strategy.indicator import add_indicators
 from backend.strategy.strategy import VolumeTrendRsiStrategy
 
@@ -94,9 +94,10 @@ class TradingAIEngine:
         candles = candles_by_timeframe.get("1m") or candles_by_timeframe.get("5m") or []
         market = market or {}
         df = add_indicators(candles)
+        frame_info = self._analyze_frames(candles_by_timeframe)
         if len(df) < 220:
             last_price = float(df.iloc[-1]["close"]) if len(df) else 0.0
-            return self._empty(last_price, "MA200 기반 전략 계산을 위한 확정 캔들이 부족합니다.")
+            return self._empty(last_price, "MA200 기반 전략 계산을 위한 확정 캔들이 부족합니다.", frame_info)
 
         decision = self.strategy.evaluate(df)
         last = df.iloc[-1]
@@ -158,7 +159,7 @@ class TradingAIEngine:
             risk_reward_ratio=round(rr, 2) if rr else None,
             all_time_high_mode=bool(all_time_high and entry >= all_time_high),
             all_time_low_mode=bool(all_time_low and entry <= all_time_low),
-            timeframe_directions={"1m": direction, "5m": direction},
+            timeframe_directions=frame_info["directions"],
             reasons=reasons,
             analysis_price=round(price, 2),
             last_price=pricing["last_price"],
@@ -184,7 +185,7 @@ class TradingAIEngine:
             liquidation_price=market.get("liquidation_price"),
             stop_gap=round(abs(entry - stop_loss) / entry, 4) if stop_loss and entry else None,
             market_mode=decision.state,
-            timeframe_summary={"1m": self._summary(last, decision, plan_direction, entry, stop_loss, tp1, tp2), "5m": self._summary(last, decision, plan_direction, entry, stop_loss, tp1, tp2)},
+            timeframe_summary=self._timeframe_summary(frame_info["summaries"], last, decision, plan_direction, entry, stop_loss, tp1, tp2),
             strategy_signal=decision.signal,
             planned_direction=plan_direction,
         )
@@ -255,7 +256,60 @@ class TradingAIEngine:
         }
 
     @staticmethod
-    def _empty(last_price: float, reason: str) -> TradingResult:
+    def _timeframe_direction(last) -> str:
+        ma90 = last.get("ma90")
+        ma200 = last.get("ma200")
+        close = last.get("close")
+        if any(value is None for value in (ma90, ma200, close)):
+            return "HOLD"
+        ma90 = float(ma90)
+        ma200 = float(ma200)
+        close = float(close)
+        if ma90 <= 0 or ma200 <= 0:
+            return "HOLD"
+        if close > ma90 > ma200:
+            return "LONG"
+        if close < ma90 < ma200:
+            return "SHORT"
+        return "HOLD"
+
+    def _analyze_frames(self, candles_by_timeframe: dict[str, list[dict]]) -> dict:
+        directions: dict[str, str] = {}
+        summaries: dict[str, dict] = {}
+        for tf in TIMEFRAMES:
+            candles = candles_by_timeframe.get(tf) or []
+            frame = add_indicators(candles)
+            if len(frame) < 220:
+                directions[tf] = "HOLD"
+                summaries[tf] = {"direction": "HOLD", "data_ready": False, "candles": len(frame)}
+                continue
+            last = frame.iloc[-1]
+            direction = self._timeframe_direction(last)
+            directions[tf] = direction
+            summaries[tf] = {
+                "direction": direction,
+                "data_ready": True,
+                "candles": len(frame),
+                "close": float(last.get("close") or 0),
+                "ma90": float(last.get("ma90") or 0),
+                "ma200": float(last.get("ma200") or 0),
+                "rsi14": float(last.get("rsi14") or 0),
+                "atr14": float(last.get("atr14") or 0),
+                "volume_ratio": float(last.get("volume_ratio") or 0),
+            }
+        return {"directions": directions, "summaries": summaries}
+
+    def _timeframe_summary(self, summaries: dict[str, dict], last, decision, plan_direction: str, entry: float, stop_loss, tp1, tp2) -> dict:
+        merged = dict(summaries)
+        primary = self._summary(last, decision, plan_direction, entry, stop_loss, tp1, tp2)
+        for tf in ("1m", "5m"):
+            existing = merged.get(tf, {})
+            merged[tf] = {**existing, **primary}
+        return merged
+
+    @staticmethod
+    def _empty(last_price: float, reason: str, frame_info: Optional[dict] = None) -> TradingResult:
+        frame_info = frame_info or {"directions": {}, "summaries": {}}
         return TradingResult(
             timestamp=0,
             entry_price=round(last_price, 2),
@@ -269,7 +323,7 @@ class TradingAIEngine:
             risk_reward_ratio=None,
             all_time_high_mode=False,
             all_time_low_mode=False,
-            timeframe_directions={},
+            timeframe_directions=frame_info["directions"],
             reasons=[reason],
             analysis_price=round(last_price, 2),
             last_price=round(last_price, 2),
@@ -278,6 +332,7 @@ class TradingAIEngine:
             entry_grade="F",
             risk_warnings=["데이터 부족"],
             market_mode="HOLD",
+            timeframe_summary=frame_info["summaries"],
             strategy_signal="HOLD",
             planned_direction="HOLD",
         )

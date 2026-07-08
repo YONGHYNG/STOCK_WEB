@@ -8,13 +8,8 @@ function num(v) {
 
 export function PositionCard({ account, positions, status, onStatusPatch }) {
   const btc = positions.find((p) => p.symbol === 'BTCUSDT')
-  const orderSize = status?.order_size_btc ?? 0.001
   const equity = num(account?.accountEquity ?? account?.equity)
   const available = num(account?.available ?? account?.crossMaxAvailable)
-
-  async function place(side) {
-    await tradingApi.placeOrder(side, orderSize)
-  }
 
   async function toggleAuto(e) {
     const enabled = e.target.checked
@@ -44,15 +39,6 @@ export function PositionCard({ account, positions, status, onStatusPatch }) {
       </div>
 
       <div className="stat-box account-position__controls">
-        <div>
-          <div className="eyebrow">수동 주문</div>
-          <div className="btn-row">
-            <button className="btn-long" onClick={() => place('LONG')} disabled={!account}>LONG</button>
-            <button className="btn-short" onClick={() => place('SHORT')} disabled={!account}>SHORT</button>
-            <button onClick={() => tradingApi.closePosition()} disabled={!account}>청산</button>
-          </div>
-        </div>
-
         <div>
           <div className="eyebrow">자동매매</div>
           <label className="switch-inline" style={{ marginTop: 6 }}>

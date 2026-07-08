@@ -9,17 +9,14 @@ DB_PATH = DATA_DIR / "trading.db"
 SYMBOL = "BTCUSDT"
 PRODUCT_TYPE = "USDT-FUTURES"
 
-# 분석 대상 시간봉: 새 전략은 1분 확정 캔들을 우선 사용하고 5분봉을 보조로 유지합니다.
-TIMEFRAMES = ["1m", "5m"]
+# 분석 대상 시간봉: 전략 판단은 1m/5m를 우선 사용하고, 나머지는 화면 표시와 추세 확인용으로 유지합니다.
+TIMEFRAMES = ["1m", "5m", "15m", "30m", "1H", "4H", "6H", "1D"]
 DEFAULT_TIMEFRAME = "1m"
 TIMEFRAME = DEFAULT_TIMEFRAME
 
 # MA200/RSI/ATR/거래량 지표 안정화를 위해 최근 660개 확정 캔들을 유지합니다.
 CANDLE_ANALYSIS_LIMIT = 660
-RECENT_CANDLE_LIMIT_BY_TIMEFRAME = {
-    "1m": CANDLE_ANALYSIS_LIMIT,
-    "5m": CANDLE_ANALYSIS_LIMIT,
-}
+RECENT_CANDLE_LIMIT_BY_TIMEFRAME = {tf: CANDLE_ANALYSIS_LIMIT for tf in TIMEFRAMES}
 RECENT_CANDLE_LIMIT = RECENT_CANDLE_LIMIT_BY_TIMEFRAME[DEFAULT_TIMEFRAME]
 
 BITGET_REST_BASE = "https://api.bitget.com"

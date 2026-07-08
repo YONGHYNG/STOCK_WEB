@@ -1,8 +1,7 @@
 // 역할: 매매 기록과 손익 내역을 보여주는 화면.
-import { ProfitSummary } from '../components/ProfitSummary'
 import { TradeLogTable } from '../components/TradeLogTable'
 
-export function TradeHistory({ trades, signal }) {
+export function TradeHistory({ trades }) {
   return (
     <section className="workspace-panel">
       <div className="workspace-panel__top">
@@ -12,7 +11,6 @@ export function TradeHistory({ trades, signal }) {
         </div>
       </div>
       <div className="stack stack--lg">
-        <ProfitSummary trades={trades} directions={signal?.timeframe_directions} />
         <TradeLogTable trades={trades} />
       </div>
     </section>

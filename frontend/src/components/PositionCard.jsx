@@ -34,7 +34,7 @@ export function PositionCard({ account, positions, status, onStatusPatch }) {
         <div className={`value-lg ${btc?.holdSide?.toUpperCase() === 'SHORT' ? 'tone-short' : 'tone-long'}`}>
           {btc ? `${btc.holdSide?.toUpperCase()} ${btc.total} BTC` : '-'}
         </div>
-        <div className="value-sub">{btc ? `레버리지 ${btc.leverage ?? '-'}x` : 'No BTCUSDT position'}</div>
+        <div className="value-sub">{btc ? `레버리지 ${btc.leverage ?? '-'}x` : '-'}</div>
       </div>
       <div className="stat-box">
         <div className="eyebrow">수동 주문</div>

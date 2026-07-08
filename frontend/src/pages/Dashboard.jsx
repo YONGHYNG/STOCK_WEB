@@ -69,7 +69,7 @@ export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop
         <Panel title="수익률 · 위험 경고" className="panel--profit-risk">
           <div className="panel-stack">
             <SectionBlock title="수익률">
-              <ProfitSummary trades={state.trades} directions={state.signal?.timeframe_directions} />
+              <ProfitSummary trades={state.trades} />
             </SectionBlock>
             <SectionBlock title={`위험 경고 ${warnings.length ? `(${warnings.length})` : ''}`}>
               <WarningList warnings={warnings} />

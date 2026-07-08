@@ -1,19 +1,7 @@
-// 역할: 시간봉별 방향 배지와 청산된 거래의 수익률 표를 보여주는 컴포넌트.
+// 역할: 청산된 거래의 수익률 표를 보여주는 컴포넌트.
 import { toKst } from '../utils/time'
 
-const TF_LABELS = [
-  ['5m', '5분'],
-  ['15m', '15분'],
-  ['30m', '30분'],
-  ['1H', '1시간'],
-  ['6H', '6시간'],
-  ['1D', '1일'],
-]
-
-const DIR_TEXT = { LONG: 'BUY', SHORT: 'SHORT', HOLD: 'HOLD' }
-const DIR_TONE = { LONG: 'tone-long', SHORT: 'tone-short', HOLD: 'tone-hold' }
-
-export function ProfitSummary({ trades, directions }) {
+export function ProfitSummary({ trades }) {
   // 청산 완료(pnl_pct가 있는) 거래만 표와 합계에 반영
   const closed = trades.filter((t) => t.pnl_pct != null).slice().reverse()
   const total = closed.reduce((sum, t) => sum + Number(t.pnl_pct), 0)
@@ -21,17 +9,6 @@ export function ProfitSummary({ trades, directions }) {
 
   return (
     <div>
-      <div className="tf-row">
-        {TF_LABELS.map(([key, label]) => {
-          const dir = directions?.[key] ?? 'HOLD'
-          return (
-            <div key={key} className={`tf-badge ${DIR_TONE[dir] ?? 'tone-hold'}`}>
-              <span className="tf-badge__label">{label}</span>
-              <span>{DIR_TEXT[dir] ?? dir}</span>
-            </div>
-          )
-        })}
-      </div>
       <div className="data-table-wrap">
         <table>
           <thead>

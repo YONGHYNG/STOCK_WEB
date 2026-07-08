@@ -97,23 +97,17 @@ export default function App() {
     dispatch({ type: 'STATUS', data: { auto_trade_enabled: false, emergency_stopped: true } })
   }
 
-  const activePosition = state.positions.find((p) => p.symbol === 'BTCUSDT')
-
   return (
     <div className="app-shell">
       <main className="dashboard">
-        <div className="dashboard__meta">
-          <span>BTCUSDT perpetual</span>
-          <span>{activePosition ? `${activePosition.holdSide?.toUpperCase()} position open` : 'No BTCUSDT position'}</span>
-          <span>{state.status.demo_mode ? 'Demo data' : state.status.trading_mode.replace('_', ' ')}</span>
-        </div>
-
-        <Dashboard
-          state={state}
-          setStatusPatch={(patch) => dispatch({ type: 'STATUS', data: patch })}
-          onModeChange={setMode}
-          onEmergencyStop={emergencyStop}
-        />
+        {state.page !== 'history' && (
+          <Dashboard
+            state={state}
+            setStatusPatch={(patch) => dispatch({ type: 'STATUS', data: patch })}
+            onModeChange={setMode}
+            onEmergencyStop={emergencyStop}
+          />
+        )}
         {state.page === 'strategy' && <StrategySetting settings={state.riskSettings} onSaved={(s) => dispatch({ type: 'RISK_SETTINGS', settings: s })} />}
         {state.page === 'history' && <TradeHistory trades={state.trades} signal={state.signal} />}
         {state.page === 'risk' && <RiskStatus signal={state.signal} account={state.account} positions={state.positions} />}

@@ -6,9 +6,9 @@ export function TradingStatusCard({ status, updatedAt, onModeChange, onEmergency
       <div>
         <div className="eyebrow">MODE</div>
         <select value={mode} onChange={(e) => onModeChange(e.target.value)}>
-          <option value="SIGNAL_ONLY">SIGNAL_ONLY</option>
-          <option value="PAPER_TRADING">PAPER_TRADING</option>
-          <option value="LIVE_TRADING">LIVE_TRADING</option>
+          <option value="SIGNAL_ONLY">신호만</option>
+          <option value="PAPER_TRADING">모의매매</option>
+          <option value="LIVE_TRADING">실거래</option>
         </select>
       </div>
       <div>

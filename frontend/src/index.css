@@ -101,17 +101,6 @@ hr {
   padding: 18px 0 86px;
 }
 
-.dashboard__meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 2px 2px 12px;
-  color: var(--text-2);
-  font-size: 12px;
-  font-weight: 750;
-  text-transform: uppercase;
-}
-
 .top-grid {
   display: grid;
   grid-template-columns: minmax(520px, 1.45fr) minmax(390px, 1fr) minmax(360px, 0.95fr);
@@ -495,35 +484,6 @@ hr {
   white-space: nowrap;
 }
 
-/* ---- timeframe badges (profit summary) ---- */
-
-.tf-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-
-.tf-badge {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding: 4px 8px;
-  border: 1px solid;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.03);
-  font-size: 11px;
-  font-weight: 800;
-  line-height: 1.2;
-}
-
-.tf-badge__label {
-  color: var(--text-2);
-  font-size: 10px;
-  font-weight: 700;
-}
-
 /* ---- risk status hero ---- */
 
 .risk-hero {
@@ -713,7 +673,6 @@ hr {
     padding-top: 12px;
   }
 
-  .dashboard__meta,
   .workspace-panel__top {
     flex-direction: column;
     align-items: stretch;

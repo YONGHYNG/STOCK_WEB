@@ -200,27 +200,24 @@ BTCUSDT / 1D  / 2026-06-29 00:00 / ...
 
 ```text
 RSI 14
-EMA 20
-EMA 60
-MACD
-MACD Signal
-MACD Histogram
+MA 90
+MA 200
 ATR 14
 Volume MA20
+Volume Ratio
 ```
 
-### 5. LONG / SHORT 점수
+### 5. 전략 신호
 
-현재는 딥러닝이 아니라 규칙 기반 분석입니다. 화면의 LONG/SHORT 값은 백테스트로 검증된 확률이 아니라 조건별 가중치를 합산한 신호 점수입니다.
+현재는 딥러닝이 아니라 규칙 기반 분석입니다. 핵심 기준은 거래량, 추세, RSI입니다.
 
 ```text
-EMA20 > EMA60        → LONG 가점
-MACD Histogram 상승 → LONG 가점
-RSI 과매도          → LONG 가점
-RSI 과열            → LONG 감점
-거래량 급증         → 추세 방향에 따라 가점/감점
-상위 시간봉 LONG    → LONG 점수 보정
-상위 시간봉 SHORT   → SHORT 점수 보정
+SHORT_REBOUND       → 하락 추세 중 MA90/MA200 반등 실패
+WAIT_RETEST_SHORT   → 저점 이탈 후 추격 금지, 리테스트 대기
+SHORT_BREAKDOWN     → support_level 리테스트 실패
+LONG_BOUNCE         → 최근 저점 지지 후 RSI 반등
+WAIT_PULLBACK_LONG  → MA90/MA200 돌파 후 추격 금지, 눌림 대기
+LONG_TREND_CHANGE   → 추세 전환 후 눌림 확인
 ```
 
 나중에 `backend/ai_engine.py`의 `TradingAIEngine` 내부를 PyTorch, LightGBM, XGBoost 모델로 교체하면 됩니다.
@@ -232,17 +229,17 @@ ATR 기반으로 계산합니다.
 LONG:
 
 ```text
-손절가 = 진입가 - ATR × 1.5
-1차 익절가 = 진입가 + 손절폭 × 2
-2차 익절가 = 진입가 + 손절폭 × 3
+손절가 = 진입가 - ATR × 1.2
+1차 익절가 = 진입가 + 손절폭 × 1.0
+2차 익절가 = 진입가 + 손절폭 × 1.5
 ```
 
 SHORT:
 
 ```text
-손절가 = 진입가 + ATR × 1.5
-1차 익절가 = 진입가 - 손절폭 × 2
-2차 익절가 = 진입가 - 손절폭 × 3
+손절가 = 진입가 + ATR × 1.2
+1차 익절가 = 진입가 - 손절폭 × 1.0
+2차 익절가 = 진입가 - 손절폭 × 1.5
 ```
 
 ### 7. 역사적 신고가 처리

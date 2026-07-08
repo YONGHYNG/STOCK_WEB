@@ -12,6 +12,7 @@ from backend.bitget.market_api import BitgetClient
 from backend.bitget.client import BitgetPrivateClient
 import backend.credentials as creds_store
 from backend.order.paper_trader import PaperTrader
+from backend.power_keepawake import keep_awake
 from backend.risk.risk_manager import RiskManager
 import backend.risk.settings as risk_settings_store
 from backend.risk.settings import RiskSettings
@@ -597,6 +598,7 @@ def _status_payload() -> dict:
         "last_price": state.last_price,
         "confidence_threshold": risk_cfg.confidence_threshold,
         "order_size_btc": risk_cfg.order_size_btc,
+        "keep_awake_enabled": keep_awake.enabled,
     }
 
 
@@ -649,8 +651,11 @@ async def set_auto_trade(payload: AutoTradePayload):
     if payload.threshold is not None:
         risk_cfg.confidence_threshold = payload.threshold
         risk_mgr.settings.confidence_threshold = payload.threshold
+    ok, power_msg = keep_awake.enable() if payload.enabled else keep_awake.disable()
     msg = state.add_log(f"[자동매매] {'ON' if payload.enabled else 'OFF'}  모드={state.trading_mode}")
+    power_log = state.add_log(f"[전원관리] {power_msg}" if ok else f"[전원관리 경고] {power_msg}")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
+    await manager.broadcast({"type": "log", "data": {"message": power_log}})
     await manager.broadcast({"type": "status", "data": _status_payload()})
     return {"ok": True}
 
@@ -659,6 +664,7 @@ async def emergency_stop():
     risk_mgr.activate_emergency_stop()
     state.auto_trade_enabled = False
     state.emergency_stopped = True
+    keep_awake.disable()
     msg = state.add_log(f"[긴급정지] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} — 자동매매 차단됨")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "status", "data": _status_payload()})

@@ -44,6 +44,7 @@ from backend.bitget.client import BitgetPrivateClient
 import backend.credentials as creds_store
 from backend.order.paper_trader import PaperTrader
 from backend.risk.risk_manager import RiskManager
+from backend.power_keepawake import keep_awake
 import backend.risk.settings as risk_settings_store
 from backend.trading_modes import TradingMode
 from backend.config import (
@@ -1504,6 +1505,8 @@ class TradingMainWindow(QMainWindow):
         self._auto_trade_enabled = checked
         state = "ON" if checked else "OFF"
         self._log(f"[자동매매] {state}  모드={self._trading_mode.value}  임계값={self._auto_threshold:.0f}%")
+        ok, power_msg = keep_awake.enable() if checked else keep_awake.disable()
+        self._log(f"[전원관리] {power_msg}" if ok else f"[전원관리 경고] {power_msg}")
 
     def _on_auto_threshold_changed(self, value: float):
         self._auto_threshold = value
@@ -1536,6 +1539,7 @@ class TradingMainWindow(QMainWindow):
         self._risk_mgr.activate_emergency_stop()
         self._auto_trade_enabled = False
         self._auto_chk.setChecked(False)
+        keep_awake.disable()
         from datetime import datetime
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._log(f"[긴급정지] {now_str} — 자동매매 차단됨")
@@ -1809,6 +1813,7 @@ class TradingMainWindow(QMainWindow):
             QMessageBox.critical(self, "청산 실패", str(exc))
 
     def closeEvent(self, event):
+        keep_awake.disable()
         self._executor.shutdown(wait=False, cancel_futures=True)
         self._price_executor.shutdown(wait=False, cancel_futures=True)
         self._account_executor.shutdown(wait=False, cancel_futures=True)

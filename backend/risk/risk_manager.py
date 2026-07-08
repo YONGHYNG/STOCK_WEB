@@ -8,6 +8,7 @@ check_entry() 가 (allowed: bool, reason: str) 를 반환합니다.
 """
 
 import time
+from dataclasses import dataclass
 from backend.risk.settings import RiskSettings
 from backend.trading_modes import TradingMode
 from backend.config import SYMBOL
@@ -159,3 +160,72 @@ class RiskManager:
             self._daily_pnl_pct = 0.0
             self._consecutive_losses = 0
             self._daily_reset_date = today
+
+
+@dataclass
+class StrategyRiskConfig:
+    account_equity: float = 1000.0
+    max_trade_loss_pct: float = 0.5
+    daily_stop_loss_pct: float = 2.0
+    consecutive_loss_limit: int = 3
+    api_error_limit: int = 3
+    reentry_wait_candles: int = 3
+
+
+class StrategyRiskManager:
+    """거래량/추세/RSI 전략 전용 리스크 관리자."""
+
+    def __init__(self, config: StrategyRiskConfig | None = None):
+        self.config = config or StrategyRiskConfig()
+        self.daily_pnl_pct = 0.0
+        self.consecutive_losses = 0
+        self.api_errors = 0
+        self.auto_trade_stopped = False
+        self._last_stop_by_direction: dict[str, int] = {}
+
+    def can_enter(
+        self,
+        direction: str,
+        entry_price: float,
+        stop_loss: float,
+        candle_index: int,
+    ) -> tuple[bool, str, float]:
+        if self.auto_trade_stopped:
+            return False, "자동매매 정지 상태", 0.0
+        if self.daily_pnl_pct <= -abs(self.config.daily_stop_loss_pct):
+            return False, "하루 손실 -2% 도달, 신규 진입 금지", 0.0
+        if self.consecutive_losses >= self.config.consecutive_loss_limit:
+            self.auto_trade_stopped = True
+            return False, "연속 손실 3회, 자동매매 정지", 0.0
+        if self.api_errors >= self.config.api_error_limit:
+            self.auto_trade_stopped = True
+            return False, "API 오류 3회, 자동매매 정지", 0.0
+        last_stop_index = self._last_stop_by_direction.get(direction)
+        if last_stop_index is not None and candle_index - last_stop_index < self.config.reentry_wait_candles:
+            return False, "손절 후 같은 방향 재진입 대기 중", 0.0
+
+        risk_per_unit = abs(entry_price - stop_loss)
+        if entry_price <= 0 or risk_per_unit <= 0:
+            return False, "진입가 또는 손절가 오류", 0.0
+        max_loss = self.config.account_equity * self.config.max_trade_loss_pct / 100
+        position_size = max_loss / risk_per_unit
+        return True, "진입 가능", position_size
+
+    def record_trade_result(self, pnl_pct: float, direction: str, result: str, candle_index: int) -> None:
+        self.daily_pnl_pct += pnl_pct
+        if pnl_pct < 0:
+            self.consecutive_losses += 1
+            if result == "SL":
+                self._last_stop_by_direction[direction] = candle_index
+        else:
+            self.consecutive_losses = 0
+        if self.consecutive_losses >= self.config.consecutive_loss_limit:
+            self.auto_trade_stopped = True
+
+    def record_api_error(self) -> None:
+        self.api_errors += 1
+        if self.api_errors >= self.config.api_error_limit:
+            self.auto_trade_stopped = True
+
+    def reset_api_errors(self) -> None:
+        self.api_errors = 0

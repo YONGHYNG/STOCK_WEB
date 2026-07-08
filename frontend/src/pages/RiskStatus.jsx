@@ -36,14 +36,15 @@ function OpenPositionRisk({ position, signal }) {
 
   const danger = liqBuffer != null && liqBuffer < 0.1
   const losing = pnl < 0
+  const heroTone = danger ? 'risk-hero--danger' : losing ? 'risk-hero--warn' : 'risk-hero--ok'
 
   const positionMetrics = [
-    ['평균 진입가', money(entry), 'var(--text)', '이 포지션을 처음 잡았을 때 평균적으로 체결된 가격이에요'],
-    ['현재가(마크가)', money(mark), 'var(--text)', '지금 이 순간 손익 계산의 기준이 되는 실시간 가격이에요'],
-    ['레버리지', leverage != null ? `${leverage}배` : '-', 'var(--text)', '원금 대비 몇 배로 베팅했는지예요. 높을수록 청산 위험도 커요'],
-    ['보유 수량', size != null ? `${size} BTC` : '-', 'var(--text)', '지금 실제로 들고 있는 BTC 수량이에요'],
-    ['사용 증거금', margin != null ? money(margin) : '-', 'var(--text2)', '이 포지션을 유지하려고 실제로 묶여 있는 내 돈이에요'],
-    ['청산가', money(liq), 'var(--red)', '이 가격에 닿으면 포지션이 강제로 종료되고 손실이 확정돼요'],
+    ['평균 진입가', money(entry), '', '이 포지션을 처음 잡았을 때 평균적으로 체결된 가격이에요'],
+    ['현재가(마크가)', money(mark), '', '지금 이 순간 손익 계산의 기준이 되는 실시간 가격이에요'],
+    ['레버리지', leverage != null ? `${leverage}배` : '-', '', '원금 대비 몇 배로 베팅했는지예요. 높을수록 청산 위험도 커요'],
+    ['보유 수량', size != null ? `${size} BTC` : '-', '', '지금 실제로 들고 있는 BTC 수량이에요'],
+    ['사용 증거금', margin != null ? money(margin) : '-', 'tone-muted', '이 포지션을 유지하려고 실제로 묶여 있는 내 돈이에요'],
+    ['청산가', money(liq), 'tone-short', '이 가격에 닿으면 포지션이 강제로 종료되고 손실이 확정돼요'],
   ]
 
   return (
@@ -55,13 +56,13 @@ function OpenPositionRisk({ position, signal }) {
         </div>
       </div>
 
-      <div style={{ ...S.hero, borderColor: danger ? 'rgba(255,92,92,0.4)' : losing ? 'rgba(240,196,84,0.4)' : 'rgba(51,209,122,0.35)', background: danger ? 'var(--red-dim)' : losing ? 'var(--yellow-dim)' : 'var(--green-dim)' }}>
-        <div style={{ ...S.heroBadge, color: direction === 'SHORT' ? 'var(--red)' : 'var(--green)' }}>
+      <div className={`risk-hero ${heroTone}`}>
+        <div className={`risk-hero__badge ${direction === 'SHORT' ? 'tone-short' : 'tone-long'}`}>
           {direction === 'SHORT' ? '하락(SHORT)' : '상승(LONG)'} 포지션 보유 중 · {size ?? '-'} BTC
         </div>
-        <div style={S.heroSub}>
+        <div className="risk-hero__sub">
           <div>
-            미실현 손익 <strong style={{ color: pnl >= 0 ? 'var(--green)' : 'var(--red)' }}>
+            미실현 손익 <strong className={pnl >= 0 ? 'tone-long' : 'tone-short'}>
               {pnl >= 0 ? '+' : ''}{money(pnl)}{pnlPct != null ? ` (${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)` : ''}
             </strong>
             {' '}— 지금 청산하면 실제로 얻거나 잃는 금액이에요
@@ -73,8 +74,8 @@ function OpenPositionRisk({ position, signal }) {
       <RiskGroup title="포지션 상세" note="거래소가 실시간으로 알려주는 실제 보유 정보">
         <MetricGrid items={positionMetrics} />
         {liqBuffer != null && (
-          <div style={S.bufferNote}>
-            현재가에서 청산가까지 <strong style={{ color: danger ? 'var(--red)' : 'var(--text)' }}>{(liqBuffer * 100).toFixed(1)}%</strong> 여유가 있어요
+          <div className="buffer-note">
+            현재가에서 청산가까지 <strong className={danger ? 'tone-short' : ''}>{(liqBuffer * 100).toFixed(1)}%</strong> 여유가 있어요
             {danger ? ' — 여유가 적어 위험해요' : ' — 아직은 안전한 편이에요'}
           </div>
         )}
@@ -82,10 +83,10 @@ function OpenPositionRisk({ position, signal }) {
 
       <RiskGroup title="보유 중 위험 경고" note="포지션을 유지하는 동안에도 계속 감시하는 시장 위험">
         {warnings.length === 0 ? (
-          <div style={S.clearBox}>현재 표시된 위험 경고 없음</div>
+          <div className="clear-card">현재 표시된 위험 경고 없음</div>
         ) : (
-          <div style={S.warningList}>
-            {warnings.map((warning) => <div key={warning} style={S.warning}>{warning}</div>)}
+          <div className="warning-list">
+            {warnings.map((warning) => <div key={warning} className="warning-card">{warning}</div>)}
           </div>
         )}
       </RiskGroup>
@@ -96,24 +97,29 @@ function OpenPositionRisk({ position, signal }) {
 // 보유 중인 포지션이 없을 때: 다음 신호가 뜨면 적용될 예정 진입 계획(아직 실제 돈은 안 걸린 상태)
 function PlannedEntryRisk({ signal }) {
   const direction = signal?.direction ?? 'HOLD'
+  const summary = signal?.timeframe_summary?.['1m'] ?? signal?.timeframe_summary?.['5m'] ?? {}
+  const plannedDirection = signal?.planned_direction ?? summary?.plan_direction ?? direction
+  const displayDirection = direction === 'HOLD' && plannedDirection !== 'HOLD' ? `WAIT_${plannedDirection}` : direction
   const grade = signal?.entry_grade ?? '-'
   const warnings = signal?.risk_warnings ?? []
   const canEnter = direction !== 'HOLD' && !['C', 'D', 'F'].includes(grade) && warnings.length === 0
 
+  const judgmentTone = plannedDirection === 'LONG' ? 'tone-long' : plannedDirection === 'SHORT' ? 'tone-short' : 'tone-hold'
+
   const pricePlan = [
-    ['손절가', money(signal?.stop_loss), 'var(--red)'],
-    ['1차 익절가', money(signal?.take_profit_1), 'var(--green)'],
-    ['2차 익절가', money(signal?.take_profit_2), 'var(--green)'],
-    ['3차 익절가', money(signal?.take_profit_3), 'var(--green)'],
+    ['손절가', money(signal?.stop_loss), 'tone-short'],
+    ['1차 익절가', money(signal?.take_profit_1), 'tone-long'],
+    ['2차 익절가', money(signal?.take_profit_2), 'tone-long'],
+    ['3차 익절가', money(signal?.take_profit_3), 'tone-long'],
   ]
 
   const costPlan = [
-    ['순손익비', signal?.net_risk_reward ? `1 : ${signal.net_risk_reward}` : '-', 'var(--yellow)', '위험 1 대비 기대 보상 배수예요. 숫자가 클수록 잃을 위험보다 벌 수 있는 금액이 커요'],
-    ['스프레드', pct(signal?.spread_rate), 'var(--text)', '사려는 가격과 팔려는 가격의 차이예요. 클수록 사고팔 때 손해가 더 생겨요'],
-    ['펀딩비', pct(signal?.funding_rate), 'var(--text)', '포지션을 계속 들고 있는 동안 주기적으로 내거나 받는 비용이에요'],
-    ['포지션 수량', signal?.position_size_btc ? `${signal.position_size_btc} BTC` : '-', 'var(--text)', '이번 거래에서 실제로 사고파는 BTC 수량이에요'],
-    ['예상 수수료', signal?.estimated_fee != null ? `$${Number(signal.estimated_fee).toFixed(4)}` : '-', 'var(--text2)', '주문이 체결될 때 거래소에 내야 하는 수수료 예상치예요'],
-    ['청산가', money(signal?.liquidation_price), 'var(--red)', '이 가격에 닿으면 포지션이 강제로 종료되고 손실이 확정돼요'],
+    ['순손익비', signal?.net_risk_reward ? `1 : ${signal.net_risk_reward}` : '-', 'tone-hold', '위험 1 대비 기대 보상 배수예요. 숫자가 클수록 잃을 위험보다 벌 수 있는 금액이 커요'],
+    ['스프레드', pct(signal?.spread_rate), '', '사려는 가격과 팔려는 가격의 차이예요. 클수록 사고팔 때 손해가 더 생겨요'],
+    ['펀딩비', pct(signal?.funding_rate), '', '포지션을 계속 들고 있는 동안 주기적으로 내거나 받는 비용이에요'],
+    ['포지션 수량', signal?.position_size_btc ? `${signal.position_size_btc} BTC` : '-', '', '이번 거래에서 실제로 사고파는 BTC 수량이에요'],
+    ['예상 수수료', signal?.estimated_fee != null ? `$${Number(signal.estimated_fee).toFixed(4)}` : '-', 'tone-muted', '주문이 체결될 때 거래소에 내야 하는 수수료 예상치예요'],
+    ['청산가', money(signal?.liquidation_price), 'tone-short', '이 가격에 닿으면 포지션이 강제로 종료되고 손실이 확정돼요'],
   ]
 
   return (
@@ -125,27 +131,27 @@ function PlannedEntryRisk({ signal }) {
         </div>
       </div>
 
-      <div style={S.noPositionNote}>
+      <div className="note-box">
         포지션을 잡기 전이라 아직 실제 돈은 걸려 있지 않아요. 아래 숫자는 시세가 바뀔 때마다 AI가 다시 계산한 "만약 지금 진입한다면"의 예상치라서 새로고침마다 조금씩 바뀌는 게 정상이에요.
       </div>
 
-      <div style={S.summary}>
-        <div className="stat-box" style={S.summaryItem}>
-          <span style={S.label}>현재 판단</span>
-          <strong style={{ ...S.summaryValue, color: direction === 'LONG' ? 'var(--green)' : direction === 'SHORT' ? 'var(--red)' : 'var(--yellow)' }}>
-            {direction === 'LONG' ? '상승(매수)' : direction === 'SHORT' ? '하락(매도)' : '관망(대기)'}
+      <div className="grid-auto mini-summary" style={{ '--min-col': '170px' }}>
+        <div className="stat-box">
+          <span className="eyebrow">현재 판단</span>
+          <strong className={`mini-summary__value ${judgmentTone}`}>
+            {displayDirection === 'LONG' ? '상승(매수)' : displayDirection === 'SHORT' ? '하락(매도)' : displayDirection === 'WAIT_LONG' ? '대기 롱' : displayDirection === 'WAIT_SHORT' ? '대기 숏' : '관망(대기)'}
           </strong>
-          <span style={S.itemHint}>지금 시장을 분석해서 내린 방향이에요. LONG=상승 베팅, SHORT=하락 베팅, HOLD=관망</span>
+          <span className="mini-summary__hint">WAIT는 아직 주문하지 않고, 표시된 예상 진입가까지 온 뒤 확인 캔들이 나올 때만 진입한다는 뜻이에요</span>
         </div>
-        <div className="stat-box" style={S.summaryItem}>
-          <span style={S.label}>진입 등급</span>
-          <strong style={S.summaryValue}>{grade}</strong>
-          <span style={S.itemHint}>A~B는 진입 가능, C~D~F는 조건이 나빠 자동 진입이 막혀요</span>
+        <div className="stat-box">
+          <span className="eyebrow">진입 등급</span>
+          <strong className="mini-summary__value">{grade}</strong>
+          <span className="mini-summary__hint">A~B는 진입 가능, C~D~F는 조건이 나빠 자동 진입이 막혀요</span>
         </div>
-        <div className="stat-box" style={S.summaryItem}>
-          <span style={S.label}>자동 진입</span>
-          <strong style={{ ...S.summaryValue, color: canEnter ? 'var(--green)' : 'var(--red)' }}>{canEnter ? '가능' : '차단/관망'}</strong>
-          <span style={S.itemHint}>방향·등급·아래 위험 경고를 모두 통과해야 자동매매가 실제로 진입해요</span>
+        <div className="stat-box">
+          <span className="eyebrow">자동 진입</span>
+          <strong className={`mini-summary__value ${canEnter ? 'tone-long' : 'tone-short'}`}>{canEnter ? '가능' : '차단/관망'}</strong>
+          <span className="mini-summary__hint">방향·등급·아래 위험 경고를 모두 통과해야 자동매매가 실제로 진입해요</span>
         </div>
       </div>
 
@@ -159,10 +165,10 @@ function PlannedEntryRisk({ signal }) {
 
       <RiskGroup title="위험 경고" note="하나라도 강한 경고가 있으면 자동 진입이 막힘">
         {warnings.length === 0 ? (
-          <div style={S.clearBox}>현재 표시된 위험 경고 없음</div>
+          <div className="clear-card">현재 표시된 위험 경고 없음</div>
         ) : (
-          <div style={S.warningList}>
-            {warnings.map((warning) => <div key={warning} style={S.warning}>{warning}</div>)}
+          <div className="warning-list">
+            {warnings.map((warning) => <div key={warning} className="warning-card">{warning}</div>)}
           </div>
         )}
       </RiskGroup>
@@ -172,8 +178,8 @@ function PlannedEntryRisk({ signal }) {
 
 function RiskGroup({ title, note, children }) {
   return (
-    <div style={S.group}>
-      <div style={S.groupHeader}>
+    <div className="group-card">
+      <div className="group-card__header">
         <strong>{title}</strong>
         <span>{note}</span>
       </div>
@@ -184,36 +190,14 @@ function RiskGroup({ title, note, children }) {
 
 function MetricGrid({ items }) {
   return (
-    <div style={S.grid}>
-      {items.map(([label, value, color, hint]) => (
-        <div key={label} className="stat-box" style={S.card}>
-          <div style={S.label}>{label}</div>
-          <div style={{ ...S.value, color }}>{value}</div>
-          {hint && <div style={S.cardHint}>{hint}</div>}
+    <div className="grid-auto group-card__body" style={{ '--min-col': '170px' }}>
+      {items.map(([label, value, tone, hint]) => (
+        <div key={label} className="stat-box">
+          <div className="eyebrow">{label}</div>
+          <div className={`stat-value ${tone ?? ''}`}>{value}</div>
+          {hint && <div className="hint-text">{hint}</div>}
         </div>
       ))}
     </div>
   )
-}
-
-const S = {
-  hero: { display: 'grid', gap: 6, border: '1px solid', borderRadius: 10, padding: '14px 16px', marginBottom: 12 },
-  heroBadge: { fontSize: 18, fontWeight: 900 },
-  heroSub: { fontSize: 12, color: 'var(--text2)', display: 'grid', gap: 2 },
-  noPositionNote: { fontSize: 12, color: 'var(--text2)', border: '1px solid var(--border-soft)', borderRadius: 8, padding: '10px 12px', background: 'rgba(255,255,255,0.024)', marginBottom: 12, lineHeight: 1.5 },
-  summary: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 8, marginBottom: 12 },
-  summaryItem: { background: 'var(--card)', border: '1px solid var(--border-soft)', borderRadius: 10, padding: '12px 14px' },
-  summaryValue: { display: 'block', fontSize: 22, marginTop: 5 },
-  itemHint: { display: 'block', fontSize: 11, color: 'var(--muted)', lineHeight: 1.4, marginTop: 6 },
-  group: { border: '1px solid var(--border-soft)', borderRadius: 10, background: 'rgba(255,255,255,0.024)', overflow: 'hidden', marginTop: 12 },
-  groupHeader: { display: 'grid', gap: 4, padding: '12px 14px', borderBottom: '1px solid var(--border-soft)', background: 'rgba(101,183,255,0.055)' },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 8, padding: 10 },
-  card: { background: 'var(--card)', border: '1px solid var(--border-soft)', borderRadius: 10, padding: '12px 14px' },
-  label: { fontSize: 11, color: 'var(--text2)', marginBottom: 6 },
-  value: { fontSize: 17, fontWeight: 850, whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.3 },
-  cardHint: { fontSize: 11, color: 'var(--muted)', lineHeight: 1.4, marginTop: 6, whiteSpace: 'normal' },
-  bufferNote: { margin: '0 10px 10px', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'var(--card)', fontSize: 12, color: 'var(--text2)' },
-  clearBox: { margin: 10, padding: '12px 14px', borderRadius: 8, border: '1px solid rgba(51,209,122,0.28)', color: 'var(--green)', background: 'var(--green-dim)' },
-  warningList: { display: 'grid', gap: 8, padding: 10 },
-  warning: { padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(255,92,92,0.28)', color: 'var(--red)', background: 'var(--red-dim)' },
 }

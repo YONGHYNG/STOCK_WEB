@@ -52,6 +52,7 @@ class TradingResult:
     position_size_ratio: float = 1.0
     timeframe_summary: Optional[dict[str, dict]] = None
     strategy_signal: str = "HOLD"
+    planned_direction: str = "HOLD"
 
     def to_dict(self) -> dict:
         d = self.__dict__.copy()
@@ -102,14 +103,24 @@ class TradingAIEngine:
         price = float(market.get("last_price") or decision.entry_price)
         pricing = self._pricing(price, market)
         direction = decision.direction
-        entry = pricing["expected_entry_long"] if direction == "LONG" else pricing["expected_entry_short"] if direction == "SHORT" else price
+        plan_direction = self._plan_direction(decision.signal, direction)
+        planned_entry = self._planned_entry(decision.signal, decision.support_level, decision.breakout_level, price)
+        if direction == "LONG":
+            entry = pricing["expected_entry_long"]
+        elif direction == "SHORT":
+            entry = pricing["expected_entry_short"]
+        elif plan_direction in ("LONG", "SHORT") and planned_entry:
+            entry = planned_entry
+        else:
+            entry = price
         atr = float(last.get("atr14") or 0)
-        stop_loss, tp1, tp2, rr = self._risk_prices(direction, entry, atr)
+        stop_loss, tp1, tp2, rr = self._risk_prices(plan_direction, entry, atr)
         warnings = list(decision.warnings)
         entry_grade = "B" if direction in ("LONG", "SHORT") and stop_loss and rr and rr >= 1.5 else "F"
         if decision.signal.startswith("WAIT"):
             entry_grade = "F"
             warnings.append("WAIT 상태: 시장가 추격 진입 금지")
+            warnings.append("표시된 진입가/손절가/익절가는 조건 충족 시 사용할 예상 계획")
         if entry_grade in ("C", "D", "F"):
             final_direction = "HOLD"
         else:
@@ -119,6 +130,8 @@ class TradingAIEngine:
         short_score = 75.0 if direction == "SHORT" else 25.0 if direction == "LONG" else 50.0
         confidence = 100.0 if final_direction in ("LONG", "SHORT") else 0.0
         reasons = decision.reasons + [f"전략 신호: {decision.signal}", "모든 판단은 확정 캔들 기준"]
+        if decision.signal.startswith("WAIT") and plan_direction in ("LONG", "SHORT") and stop_loss and tp1:
+            reasons.append(f"{plan_direction} 대기 계획: 예상 진입 ${entry:,.2f}, SL ${stop_loss:,.2f}, TP1 ${tp1:,.2f}")
         if warnings:
             reasons += [f"경고: {w}" for w in warnings]
 
@@ -171,8 +184,9 @@ class TradingAIEngine:
             liquidation_price=market.get("liquidation_price"),
             stop_gap=round(abs(entry - stop_loss) / entry, 4) if stop_loss and entry else None,
             market_mode=decision.state,
-            timeframe_summary={"1m": self._summary(last, decision), "5m": self._summary(last, decision)},
+            timeframe_summary={"1m": self._summary(last, decision, plan_direction, entry, stop_loss, tp1, tp2), "5m": self._summary(last, decision, plan_direction, entry, stop_loss, tp1, tp2)},
             strategy_signal=decision.signal,
+            planned_direction=plan_direction,
         )
 
     @staticmethod
@@ -203,9 +217,28 @@ class TradingAIEngine:
         return stop, entry - risk, entry - risk * 1.5, 1.5
 
     @staticmethod
-    def _summary(last, decision) -> dict:
+    def _plan_direction(signal: str, direction: str) -> str:
+        if direction in ("LONG", "SHORT"):
+            return direction
+        if signal == "WAIT_RETEST_SHORT":
+            return "SHORT"
+        if signal == "WAIT_PULLBACK_LONG":
+            return "LONG"
+        return "HOLD"
+
+    @staticmethod
+    def _planned_entry(signal: str, support_level: Optional[float], breakout_level: Optional[float], fallback: float) -> float:
+        if signal == "WAIT_RETEST_SHORT" and support_level:
+            return float(support_level)
+        if signal == "WAIT_PULLBACK_LONG" and breakout_level:
+            return float(breakout_level)
+        return fallback
+
+    @staticmethod
+    def _summary(last, decision, plan_direction: str, planned_entry: float, stop_loss, tp1, tp2) -> dict:
         return {
             "direction": decision.direction,
+            "plan_direction": plan_direction,
             "signal": decision.signal,
             "close": float(last.get("close") or 0),
             "ma90": float(last.get("ma90") or 0),
@@ -215,6 +248,10 @@ class TradingAIEngine:
             "volume_ratio": float(last.get("volume_ratio") or 0),
             "support_level": decision.support_level,
             "breakout_level": decision.breakout_level,
+            "planned_entry": planned_entry,
+            "planned_stop_loss": stop_loss,
+            "planned_take_profit_1": tp1,
+            "planned_take_profit_2": tp2,
         }
 
     @staticmethod
@@ -242,6 +279,7 @@ class TradingAIEngine:
             risk_warnings=["데이터 부족"],
             market_mode="HOLD",
             strategy_signal="HOLD",
+            planned_direction="HOLD",
         )
 
     def _calc_risk_prices(self, direction: str, entry: float, candles: list[dict]) -> tuple:

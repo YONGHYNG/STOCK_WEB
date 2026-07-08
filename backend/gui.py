@@ -490,7 +490,7 @@ class TradingMainWindow(QMainWindow):
         self._dir_badge = QLabel("—")
         self._dir_badge.setObjectName("dirBadge")
         self._dir_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._dir_badge.setMinimumSize(150, 52)
+        self._dir_badge.setMinimumSize(190, 52)
         dir_col.addWidget(self._dir_badge)
 
         # Strategy signal
@@ -1109,16 +1109,20 @@ class TradingMainWindow(QMainWindow):
         self._check_auto_trade(r)
 
         direction = r.get("direction", "HOLD")
-        d_color = DIR_COLOR.get(direction, TEXT2)
-        d_bg    = DIR_BG.get(direction, CARD)
-        d_arrow = DIR_ARROW.get(direction, "—")
+        summary = (r.get("timeframe_summary") or {}).get("1m") or (r.get("timeframe_summary") or {}).get("5m") or {}
+        planned_direction = r.get("planned_direction") or summary.get("plan_direction") or direction
+        display_direction = f"WAIT {planned_direction}" if direction == "HOLD" and planned_direction in ("LONG", "SHORT") else direction
+        display_key = planned_direction if direction == "HOLD" and planned_direction in ("LONG", "SHORT") else direction
+        d_color = DIR_COLOR.get(display_key, TEXT2)
+        d_bg    = DIR_BG.get(display_key, CARD)
+        d_arrow = DIR_ARROW.get(display_key, "—")
 
         # Price
-        price = r.get("entry_price", 0)
+        price = r.get("last_price") or r.get("analysis_price") or r.get("entry_price", 0)
         self._price_lbl.setText(f"${price:,.2f}")
 
         # Direction badge
-        self._dir_badge.setText(f"{d_arrow}  {direction}")
+        self._dir_badge.setText(f"{d_arrow}  {display_direction}")
         self._dir_badge.setStyleSheet(
             f"color: {d_color}; background: {d_bg}; "
             f"border: 1px solid {d_color}; border-radius: 8px; "
@@ -1134,11 +1138,10 @@ class TradingMainWindow(QMainWindow):
         strategy_state = r.get("market_mode", "HOLD")
         self._ath_lbl.setText(f"State: {strategy_state}")
         self._ath_lbl.setStyleSheet(f"color: {YELLOW if str(strategy_state).startswith('WAIT') else TEXT2};")
-        summary = (r.get("timeframe_summary") or {}).get("1m") or (r.get("timeframe_summary") or {}).get("5m") or {}
         support = summary.get("support_level")
         breakout = summary.get("breakout_level")
         level_text = f"${support:,.2f}" if support is not None else f"${breakout:,.2f}" if breakout is not None else "—"
-        self._atl_lbl.setText(f"Level: {level_text}")
+        self._atl_lbl.setText(f"Plan: {planned_direction} @ {level_text}")
         self._atl_lbl.setStyleSheet(f"color: {TEXT2};")
 
         # Strategy context bars

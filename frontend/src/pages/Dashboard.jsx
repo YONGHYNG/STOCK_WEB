@@ -13,50 +13,70 @@ function Panel({ title, children, className = '' }) {
   )
 }
 
+function SectionBlock({ title, children }) {
+  return (
+    <div className="section-block">
+      <div className="section-block__title">{title}</div>
+      {children}
+    </div>
+  )
+}
+
+function WarningList({ warnings }) {
+  if (warnings.length === 0) {
+    return <div className="clear-card">현재 표시할 위험 경고가 없습니다.</div>
+  }
+  return (
+    <div className="warning-list">
+      {warnings.map((w, i) => (
+        <div key={`${w}-${i}`} className="warning-card">{w}</div>
+      ))}
+    </div>
+  )
+}
+
 export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop }) {
+  const warnings = state.signal?.risk_warnings ?? []
+
   return (
     <>
       <div className="top-grid">
         <Panel title="실시간 시그널" className="panel--hero">
           <SignalCard signal={state.signal} price={state.price} />
         </Panel>
-        <Panel title="운영 상태">
-          <TradingStatusCard
-            status={state.status}
-            updatedAt={state.updatedAt}
-            onModeChange={onModeChange}
-            onEmergencyStop={onEmergencyStop}
-          />
+
+        <Panel title="운영 · 계정 · 포지션" className="panel--operations">
+          <div className="panel-stack">
+            <SectionBlock title="운영 상태">
+              <TradingStatusCard
+                status={state.status}
+                updatedAt={state.updatedAt}
+                onModeChange={onModeChange}
+                onEmergencyStop={onEmergencyStop}
+              />
+            </SectionBlock>
+            <SectionBlock title="계정 및 포지션">
+              <PositionCard
+                account={state.account}
+                positions={state.positions}
+                status={state.status}
+                onStatusPatch={setStatusPatch}
+              />
+            </SectionBlock>
+          </div>
         </Panel>
-        <Panel title="수익률">
-          <ProfitSummary trades={state.trades} directions={state.signal?.timeframe_directions} />
-        </Panel>
-      </div>
-      <div className="middle-grid">
-        <Panel title="계정 및 포지션" className="panel--account">
-          <PositionCard
-            account={state.account}
-            positions={state.positions}
-            status={state.status}
-            onStatusPatch={setStatusPatch}
-          />
-        </Panel>
-        <Panel title="위험 경고">
-          {(state.signal?.risk_warnings ?? []).length === 0 ? (
-            <div style={{ color: 'var(--text2)' }}>현재 표시할 위험 경고가 없습니다.</div>
-          ) : (
-            <div style={{ display: 'grid', gap: 8 }}>
-              {state.signal.risk_warnings.map((w, i) => (
-                <div key={`${w}-${i}`} style={S.warning}>{w}</div>
-              ))}
-            </div>
-          )}
+
+        <Panel title="수익률 · 위험 경고" className="panel--profit-risk">
+          <div className="panel-stack">
+            <SectionBlock title="수익률">
+              <ProfitSummary trades={state.trades} directions={state.signal?.timeframe_directions} />
+            </SectionBlock>
+            <SectionBlock title={`위험 경고 ${warnings.length ? `(${warnings.length})` : ''}`}>
+              <WarningList warnings={warnings} />
+            </SectionBlock>
+          </div>
         </Panel>
       </div>
     </>
   )
-}
-
-const S = {
-  warning: { border: '1px solid var(--red)', background: 'var(--red-dim)', color: 'var(--text)', borderRadius: 8, padding: '10px 12px' },
 }

@@ -50,28 +50,25 @@ export function StrategySetting({ settings, onSaved }) {
           <h2>전략 및 리스크 설정</h2>
           <p>자동매매가 언제, 얼마나, 어디까지 움직일지 여기서 정해요</p>
         </div>
-        <div style={S.saveArea}>
-          {dirty && !saved && <span style={S.dirtyTag}>저장되지 않은 변경사항</span>}
-          <button
-            onClick={save}
-            style={{ color: saved ? 'var(--green)' : 'var(--blue)', borderColor: saved ? 'var(--green)' : 'var(--blue)' }}
-          >
+        <div className="save-area">
+          {dirty && !saved && <span className="dirty-tag">저장되지 않은 변경사항</span>}
+          <button onClick={save} className={saved ? 'tone-long' : 'tone-info'} style={{ borderColor: 'currentColor' }}>
             {saved ? '저장됨 ✓' : '저장하기'}
           </button>
         </div>
       </div>
 
-      <div style={S.summary}>
-        <div style={S.summaryTitle}>지금 설정을 말로 풀면</div>
-        <ul style={S.summaryList}>
+      <div className="settings-summary">
+        <div className="settings-summary__title">지금 설정을 말로 풀면</div>
+        <ul className="settings-summary__list">
           <li>확정 진입 신호가 나온 뒤 리스크 검사를 통과할 때만, 최대 <b>{form.max_leverage}배</b> 레버리지로 <b>{form.order_size_btc} BTC</b>씩 자동 진입해요</li>
           <li>한 번에 <b>{form.max_loss_pct}%</b> 넘게 잃거나 하루 합계로 <b>{form.daily_max_loss_pct}%</b> 잃으면 그날은 더 이상 진입하지 않아요</li>
           <li>손실이 <b>{form.consecutive_loss_limit}번</b> 연속되면 잠시 멈추고, 다음 진입까지는 <b>{minutesLabel(form.reentry_wait_seconds)}</b> 기다려요</li>
-          <li>실거래 주문은 지금 <b style={{ color: form.live_trading_allowed ? 'var(--red)' : 'var(--green)' }}>{form.live_trading_allowed ? '허용됨 (실제 돈이 움직여요)' : '차단됨 (신호만 보여줘요)'}</b></li>
+          <li>실거래 주문은 지금 <b className={form.live_trading_allowed ? 'tone-short' : 'tone-long'}>{form.live_trading_allowed ? '허용됨 (실제 돈이 움직여요)' : '차단됨 (신호만 보여줘요)'}</b></li>
         </ul>
       </div>
 
-      <div style={S.sections}>
+      <div className="settings-sections">
         <SettingGroup title="주문 크기" note="한 번 진입할 때 실제로 넣는 수량과 레버리지 배수예요">
           <Field
             label="1회 주문 수량"
@@ -152,10 +149,10 @@ export function StrategySetting({ settings, onSaved }) {
         </SettingGroup>
 
         <SettingGroup title="실거래 안전장치" note="꺼두면 LIVE 모드여도 실제 주문은 나가지 않고 신호만 확인돼요">
-          <label style={{ ...S.switchRow, ...(form.live_trading_allowed ? S.switchRowOn : null) }}>
+          <label className={`switch-row ${form.live_trading_allowed ? 'switch-row--on' : ''}`}>
             <span>
-              <strong style={S.mainLabel}>실거래 주문 허용</strong>
-              <span style={S.hint}>
+              <strong className="setting-row__main-label">실거래 주문 허용</strong>
+              <span className="setting-row__hint">
                 {form.live_trading_allowed
                   ? '켜져 있어요 — LIVE 모드에서 실제 돈으로 주문이 나가요'
                   : '꺼져 있어요 — 무슨 모드든 실제 주문은 절대 나가지 않아요'}
@@ -171,61 +168,30 @@ export function StrategySetting({ settings, onSaved }) {
 
 function SettingGroup({ title, note, children }) {
   return (
-    <div style={S.group}>
-      <div style={S.groupHeader}>
+    <div className="group-card">
+      <div className="group-card__header">
         <strong>{title}</strong>
         <span>{note}</span>
       </div>
-      <div style={S.groupBody}>{children}</div>
+      <div className="stack group-card__body">{children}</div>
     </div>
   )
 }
 
 function Field({ label, hint, value, step, min, max, suffix, onChange, warn, warnText }) {
   return (
-    <div className="stat-box" style={{ ...S.row, ...(warn ? S.rowWarn : null) }}>
-      <label style={S.rowInner}>
+    <div className={`stat-box setting-row ${warn ? 'setting-row--warn' : ''}`}>
+      <label className="setting-row__inner">
         <span>
-          <strong style={S.mainLabel}>{label}</strong>
-          <span style={S.hint}>{hint}</span>
+          <strong className="setting-row__main-label">{label}</strong>
+          <span className="setting-row__hint">{hint}</span>
         </span>
-        <span style={S.inputGroup}>
-          <input type="number" value={value} step={step} min={min} max={max} onChange={(e) => onChange(Number(e.target.value))} style={S.input} />
-          {suffix && <span style={S.suffix}>{suffix}</span>}
+        <span className="setting-row__input-group">
+          <input type="number" value={value} step={step} min={min} max={max} onChange={(e) => onChange(Number(e.target.value))} />
+          {suffix && <span className="setting-row__suffix">{suffix}</span>}
         </span>
       </label>
-      {warn && warnText && <div style={S.warnText}>⚠ {warnText}</div>}
+      {warn && warnText && <div className="setting-row__warn-text">⚠ {warnText}</div>}
     </div>
   )
-}
-
-const S = {
-  sections: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12 },
-  saveArea: { display: 'flex', alignItems: 'center', gap: 10 },
-  dirtyTag: { fontSize: 11, color: 'var(--yellow)', whiteSpace: 'nowrap' },
-  summary: {
-    display: 'grid',
-    gap: 8,
-    border: '1px solid rgba(101,183,255,0.32)',
-    borderRadius: 8,
-    padding: '14px 16px',
-    background: 'var(--blue-dim)',
-    marginBottom: 14,
-  },
-  summaryTitle: { fontSize: 12, fontWeight: 800, color: 'var(--blue)' },
-  summaryList: { display: 'grid', gap: 6, paddingLeft: 18, fontSize: 12.5, color: 'var(--text)', lineHeight: 1.5 },
-  group: { border: '1px solid var(--border-soft)', borderRadius: 10, background: 'rgba(255,255,255,0.024)', overflow: 'hidden' },
-  groupHeader: { display: 'grid', gap: 4, padding: '12px 14px', borderBottom: '1px solid var(--border-soft)', background: 'rgba(101,183,255,0.055)', color: 'var(--text)' },
-  groupBody: { display: 'grid', gap: 8, padding: 10 },
-  row: { border: '1px solid var(--border-soft)', borderRadius: 10, padding: '10px 12px', background: 'var(--card)' },
-  rowWarn: { border: '1px solid rgba(240,196,84,0.45)', background: 'var(--yellow-dim)' },
-  rowInner: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
-  switchRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, border: '1px solid rgba(101,183,255,0.32)', borderRadius: 10, padding: '12px', background: 'var(--blue-dim)' },
-  switchRowOn: { border: '1px solid rgba(255,92,92,0.45)', background: 'var(--red-dim)' },
-  mainLabel: { display: 'block', color: 'var(--text)', fontSize: 13, marginBottom: 3 },
-  hint: { display: 'block', color: 'var(--text2)', fontSize: 11, lineHeight: 1.4, maxWidth: 320 },
-  warnText: { marginTop: 8, fontSize: 11, color: 'var(--yellow)' },
-  inputGroup: { display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 },
-  input: { width: 100 },
-  suffix: { fontSize: 12, color: 'var(--text2)', minWidth: 20 },
 }

@@ -11,43 +11,43 @@ const TF_LABELS = [
 ]
 
 const DIR_TEXT = { LONG: 'BUY', SHORT: 'SHORT', HOLD: 'HOLD' }
-const DIR_COLOR = { LONG: 'var(--green)', SHORT: 'var(--red)', HOLD: 'var(--yellow)' }
+const DIR_TONE = { LONG: 'tone-long', SHORT: 'tone-short', HOLD: 'tone-hold' }
 
 export function ProfitSummary({ trades, directions }) {
   // 청산 완료(pnl_pct가 있는) 거래만 표와 합계에 반영
   const closed = trades.filter((t) => t.pnl_pct != null).slice().reverse()
   const total = closed.reduce((sum, t) => sum + Number(t.pnl_pct), 0)
-  const totalColor = total >= 0 ? 'var(--green)' : 'var(--red)'
+  const totalTone = total >= 0 ? 'tone-long' : 'tone-short'
 
   return (
     <div>
-      <div style={S.tfRow}>
+      <div className="tf-row">
         {TF_LABELS.map(([key, label]) => {
           const dir = directions?.[key] ?? 'HOLD'
           return (
-            <div key={key} style={{ ...S.tfBadge, borderColor: DIR_COLOR[dir], color: DIR_COLOR[dir] }}>
-              <span style={S.tfLabel}>{label}</span>
+            <div key={key} className={`tf-badge ${DIR_TONE[dir] ?? 'tone-hold'}`}>
+              <span className="tf-badge__label">{label}</span>
               <span>{DIR_TEXT[dir] ?? dir}</span>
             </div>
           )
         })}
       </div>
       <div className="data-table-wrap">
-        <table style={S.table}>
+        <table>
           <thead>
-            <tr>{['시간', '방향', '수익률'].map((h) => <th key={h} style={S.th}>{h}</th>)}</tr>
+            <tr>{['시간', '방향', '수익률'].map((h) => <th key={h}>{h}</th>)}</tr>
           </thead>
           <tbody>
-            {closed.length === 0 && <tr><td colSpan="3" style={S.empty}>청산된 거래가 없습니다</td></tr>}
+            {closed.length === 0 && <tr><td colSpan="3" className="table-empty">청산된 거래가 없습니다</td></tr>}
             {closed.map((t) => {
               const pnl = Number(t.pnl_pct)
-              const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)'
-              const dirColor = t.direction === 'LONG' ? 'var(--green)' : 'var(--red)'
+              const pnlTone = pnl >= 0 ? 'tone-long' : 'tone-short'
+              const dirTone = t.direction === 'LONG' ? 'tone-long' : 'tone-short'
               return (
                 <tr key={t.id}>
-                  <td style={S.td}>{toKst(t.entry_time)}</td>
-                  <td style={{ ...S.td, color: dirColor }}>{t.direction}</td>
-                  <td style={{ ...S.td, color: pnlColor }}>{pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}%</td>
+                  <td>{toKst(t.entry_time)}</td>
+                  <td className={dirTone}>{t.direction}</td>
+                  <td className={pnlTone}>{pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}%</td>
                 </tr>
               )
             })}
@@ -55,8 +55,8 @@ export function ProfitSummary({ trades, directions }) {
           {closed.length > 0 && (
             <tfoot>
               <tr>
-                <td style={S.totalLabel} colSpan="2">합계</td>
-                <td style={{ ...S.totalLabel, color: totalColor }}>{total >= 0 ? '+' : ''}{total.toFixed(2)}%</td>
+                <td colSpan="2">합계</td>
+                <td className={totalTone}>{total >= 0 ? '+' : ''}{total.toFixed(2)}%</td>
               </tr>
             </tfoot>
           )}
@@ -64,15 +64,4 @@ export function ProfitSummary({ trades, directions }) {
       </div>
     </div>
   )
-}
-
-const S = {
-  tfRow: { display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
-  tfBadge: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, border: '1px solid', borderRadius: 6, padding: '4px 8px', fontSize: 11, fontWeight: 800, lineHeight: 1.2, background: 'rgba(255,255,255,0.03)' },
-  tfLabel: { fontSize: 10, fontWeight: 700, color: 'var(--text2)' },
-  table: { width: '100%', borderCollapse: 'collapse', fontSize: 12 },
-  th: { padding: '8px 9px', textAlign: 'left', color: 'var(--text2)', borderBottom: '1px solid var(--border)', background: 'var(--card)' },
-  td: { padding: '7px 9px', borderBottom: '1px solid var(--border-soft)' },
-  totalLabel: { padding: '8px 9px', fontWeight: 900, borderTop: '1px solid var(--border)', background: 'var(--card)' },
-  empty: { padding: 20, textAlign: 'center', color: 'var(--text2)' },
 }

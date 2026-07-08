@@ -11,7 +11,7 @@ export function TradeHistory({ trades, signal }) {
           <p>LIVE, PAPER, PLAN 거래 복기</p>
         </div>
       </div>
-      <div style={{ display: 'grid', gap: 14 }}>
+      <div className="stack stack--lg">
         <ProfitSummary trades={trades} directions={signal?.timeframe_directions} />
         <TradeLogTable trades={trades} />
       </div>

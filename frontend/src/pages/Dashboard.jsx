@@ -37,6 +37,7 @@ function WarningList({ warnings }) {
 
 export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop }) {
   const warnings = state.signal?.risk_warnings ?? []
+  const latestWarnings = warnings.slice().reverse()
 
   return (
     <>
@@ -72,7 +73,7 @@ export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop
               <ProfitSummary trades={state.trades} />
             </SectionBlock>
             <SectionBlock title={`위험 경고 ${warnings.length ? `(${warnings.length})` : ''}`}>
-              <WarningList warnings={warnings} />
+              <WarningList warnings={latestWarnings} />
             </SectionBlock>
           </div>
         </Panel>

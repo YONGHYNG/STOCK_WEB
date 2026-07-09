@@ -8,6 +8,7 @@ from backend.order.order_manager import OrderManager
 from backend.risk.risk_manager import StrategyRiskManager
 from backend.strategy.indicator import add_indicators
 from backend.strategy.strategy import VolumeTrendRsiStrategy
+from backend.strategy.volume_trend_engine import RISK_ATR_MULTIPLIER
 
 
 logger = logging.getLogger("volume_trend_strategy")
@@ -58,9 +59,9 @@ class MainLoop:
         entry = decision.entry_price
         atr = float(df.iloc[-1].get("atr14") or 0)
         if decision.direction == "LONG":
-            stop_loss = entry - atr * 1.2
+            stop_loss = entry - atr * RISK_ATR_MULTIPLIER
         else:
-            stop_loss = entry + atr * 1.2
+            stop_loss = entry + atr * RISK_ATR_MULTIPLIER
 
         allowed, reason, size = self.risk_manager.can_enter(decision.direction, entry, stop_loss, len(df) - 1)
         if not allowed:

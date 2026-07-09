@@ -6,6 +6,10 @@ from backend.config import SYMBOL, TAKER_FEE_RATE, TIMEFRAMES
 from backend.strategy.indicator import add_indicators
 from backend.strategy.strategy import VolumeTrendRsiStrategy
 
+RISK_ATR_MULTIPLIER = 2.0
+TAKE_PROFIT_1_R_MULTIPLIER = 1.0
+TAKE_PROFIT_2_R_MULTIPLIER = 1.5
+
 
 @dataclass
 class TradingResult:
@@ -210,12 +214,22 @@ class TradingAIEngine:
     def _risk_prices(direction: str, entry: float, atr: float) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
         if direction not in ("LONG", "SHORT") or atr <= 0:
             return None, None, None, None
-        risk = atr * 1.2
+        risk = atr * RISK_ATR_MULTIPLIER
         if direction == "LONG":
             stop = entry - risk
-            return stop, entry + risk, entry + risk * 1.5, 1.5
+            return (
+                stop,
+                entry + risk * TAKE_PROFIT_1_R_MULTIPLIER,
+                entry + risk * TAKE_PROFIT_2_R_MULTIPLIER,
+                TAKE_PROFIT_2_R_MULTIPLIER,
+            )
         stop = entry + risk
-        return stop, entry - risk, entry - risk * 1.5, 1.5
+        return (
+            stop,
+            entry - risk * TAKE_PROFIT_1_R_MULTIPLIER,
+            entry - risk * TAKE_PROFIT_2_R_MULTIPLIER,
+            TAKE_PROFIT_2_R_MULTIPLIER,
+        )
 
     @staticmethod
     def _plan_direction(signal: str, direction: str) -> str:

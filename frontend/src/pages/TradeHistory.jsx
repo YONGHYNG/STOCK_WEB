@@ -49,7 +49,7 @@ export function TradeHistory({ trades, signal }) {
       <div className="workspace-panel__top">
         <div>
           <h2>거래 기록</h2>
-          <p>LIVE, PAPER, PLAN 거래 복기</p>
+          <p>LIVE, PAPER 거래 복기</p>
         </div>
         <TimeframePositionCards directions={signal?.timeframe_directions} />
       </div>

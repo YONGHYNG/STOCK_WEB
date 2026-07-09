@@ -22,23 +22,7 @@ function SectionBlock({ title, children }) {
   )
 }
 
-function WarningList({ warnings }) {
-  if (warnings.length === 0) {
-    return <div className="clear-card">현재 표시할 위험 경고가 없습니다.</div>
-  }
-  return (
-    <div className="warning-list">
-      {warnings.map((w, i) => (
-        <div key={`${w}-${i}`} className="warning-card">{w}</div>
-      ))}
-    </div>
-  )
-}
-
 export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop }) {
-  const warnings = state.signal?.risk_warnings ?? []
-  const latestWarnings = warnings.slice().reverse()
-
   return (
     <>
       <div className="top-grid">
@@ -67,13 +51,10 @@ export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop
           </div>
         </Panel>
 
-        <Panel title="수익률 · 위험 경고" className="panel--profit-risk">
+        <Panel title="일일 매매 요약" className="panel--profit-risk">
           <div className="panel-stack">
-            <SectionBlock title="수익률">
+            <SectionBlock title="오늘 현황">
               <ProfitSummary trades={state.trades} />
-            </SectionBlock>
-            <SectionBlock title={`위험 경고 ${warnings.length ? `(${warnings.length})` : ''}`}>
-              <WarningList warnings={latestWarnings} />
             </SectionBlock>
           </div>
         </Panel>

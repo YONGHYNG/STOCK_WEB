@@ -18,7 +18,10 @@ function timeValue(v) {
 export function TradeLogTable({ trades }) {
   const [page, setPage] = useState(1)
   const sortedTrades = useMemo(
-    () => trades.slice().sort((a, b) => timeValue(b.entry_time) - timeValue(a.entry_time)),
+    () => trades
+      .filter((t) => t.trade_type !== 'PLAN')
+      .slice()
+      .sort((a, b) => timeValue(b.entry_time) - timeValue(a.entry_time)),
     [trades],
   )
   const totalPages = Math.max(1, Math.ceil(sortedTrades.length / PAGE_SIZE))

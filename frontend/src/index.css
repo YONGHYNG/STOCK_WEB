@@ -611,6 +611,48 @@ hr {
   gap: 10px;
 }
 
+.trade-log .data-table-wrap {
+  max-height: none;
+  overflow-y: visible;
+}
+
+.daily-summary {
+  display: grid;
+  gap: 10px;
+}
+
+.summary-range-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.summary-range-tabs .tab-button {
+  min-height: 30px;
+  padding: 5px 6px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.summary-calc,
+.summary-settlement {
+  display: grid;
+  gap: 8px;
+}
+
+.summary-calc {
+  grid-template-columns: minmax(0, 1fr) minmax(76px, 0.55fr) minmax(96px, 0.7fr);
+}
+
+.summary-calc label {
+  display: grid;
+  gap: 6px;
+}
+
+.summary-calc input {
+  width: 100%;
+}
+
 .pagination {
   display: flex;
   align-items: center;

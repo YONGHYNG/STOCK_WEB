@@ -6,7 +6,7 @@ from backend.config import SYMBOL, TAKER_FEE_RATE, TIMEFRAMES
 from backend.strategy.indicator import add_indicators
 from backend.strategy.strategy import VolumeTrendRsiStrategy
 
-RISK_ATR_MULTIPLIER = 2.0
+RISK_ATR_MULTIPLIER = 5.0
 TAKE_PROFIT_1_R_MULTIPLIER = 1.0
 TAKE_PROFIT_2_R_MULTIPLIER = 1.5
 

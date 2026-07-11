@@ -18,7 +18,7 @@ export function SignalCard({ signal, price }) {
   const displayTone = toneClass(displayDirection)
   const strategySignal = signal?.strategy_signal ?? 'HOLD'
   const state = signal?.market_mode ?? 'HOLD'
-  const volumeRatio = summary?.volume_ratio != null ? Number(summary.volume_ratio).toFixed(2) : '-'
+  const volumeRatio = summary?.volume_ratio != null ? `평균 대비 ${Number(summary.volume_ratio).toFixed(2)}배` : '-'
   const rsi = summary?.rsi14 != null ? Number(summary.rsi14).toFixed(1) : '-'
 
   const metrics = [
@@ -31,7 +31,7 @@ export function SignalCard({ signal, price }) {
     { label: '예상 1차 익절', value: money(signal?.take_profit_1), tone: 'tone-long' },
     { label: '예상 2차 익절', value: money(signal?.take_profit_2), tone: 'tone-long' },
     { label: 'RSI14', value: rsi },
-    { label: '거래량 비율', value: volumeRatio },
+    { label: '1분봉 거래량 배수', value: volumeRatio },
     { label: 'MA90 / MA200', value: `${money(summary?.ma90)} / ${money(summary?.ma200)}` },
     { label: '지지 / 돌파', value: `${money(summary?.support_level)} / ${money(summary?.breakout_level)}` },
   ]

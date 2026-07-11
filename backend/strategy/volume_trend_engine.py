@@ -6,9 +6,11 @@ from backend.config import SYMBOL, TAKER_FEE_RATE, TIMEFRAMES
 from backend.strategy.indicator import add_indicators
 from backend.strategy.strategy import VolumeTrendRsiStrategy
 
-RISK_ATR_MULTIPLIER = 5.0
+RISK_ATR_MULTIPLIER = 3.0
 TAKE_PROFIT_1_R_MULTIPLIER = 1.0
 TAKE_PROFIT_2_R_MULTIPLIER = 1.5
+STRUCTURE_LOOKBACK = 60
+STRUCTURE_STOP_BUFFER_ATR = 0.4
 
 
 @dataclass
@@ -119,7 +121,7 @@ class TradingAIEngine:
         else:
             entry = price
         atr = float(last.get("atr14") or 0)
-        stop_loss, tp1, tp2, rr = self._risk_prices(plan_direction, entry, atr)
+        stop_loss, tp1, tp2, rr = self._risk_prices(plan_direction, entry, atr, df, decision, last)
         warnings = list(decision.warnings)
         entry_grade = "B" if direction in ("LONG", "SHORT") and stop_loss and rr and rr >= 1.5 else "F"
         if decision.signal.startswith("WAIT"):
@@ -211,24 +213,65 @@ class TradingAIEngine:
         }
 
     @staticmethod
-    def _risk_prices(direction: str, entry: float, atr: float) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+    def _risk_prices(
+        direction: str,
+        entry: float,
+        atr: float,
+        df=None,
+        decision=None,
+        last=None,
+    ) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
         if direction not in ("LONG", "SHORT") or atr <= 0:
             return None, None, None, None
-        risk = atr * RISK_ATR_MULTIPLIER
+
+        recent = df.tail(STRUCTURE_LOOKBACK) if df is not None and len(df) else None
+        recent_support = float(recent["low"].min()) if recent is not None and "low" in recent else None
+        recent_resistance = float(recent["high"].max()) if recent is not None and "high" in recent else None
+        support = getattr(decision, "support_level", None) if decision is not None else None
+        breakout = getattr(decision, "breakout_level", None) if decision is not None else None
+        ma90 = float(last.get("ma90") or 0) if last is not None else None
+        ma200 = float(last.get("ma200") or 0) if last is not None else None
+        volume_ratio = float(last.get("volume_ratio") or 0) if last is not None else 0.0
+
+        base_risk = atr * RISK_ATR_MULTIPLIER
+        volume_boost = 0.6 if volume_ratio >= 1.5 else 0.35 if volume_ratio >= 1.2 else 0.15 if volume_ratio >= 1.0 else 0.0
+        tp1_r = 1.4 + volume_boost
+        tp2_r = 2.2 + volume_boost * 1.5
+        buffer = atr * STRUCTURE_STOP_BUFFER_ATR
+
         if direction == "LONG":
-            stop = entry - risk
+            below_levels = [
+                value for value in (support, breakout, ma90, ma200, recent_support)
+                if value is not None and value > 0 and value < entry
+            ]
+            structural_stop = min((level - buffer for level in below_levels), default=entry - base_risk)
+            stop = min(entry - base_risk, structural_stop)
+            risk = entry - stop
+            resistance_target = recent_resistance + buffer if recent_resistance and recent_resistance > entry else None
+            tp1 = max(entry + risk * tp1_r, resistance_target or 0)
+            tp2 = max(entry + risk * tp2_r, (resistance_target + risk * 0.8) if resistance_target else 0)
             return (
                 stop,
-                entry + risk * TAKE_PROFIT_1_R_MULTIPLIER,
-                entry + risk * TAKE_PROFIT_2_R_MULTIPLIER,
-                TAKE_PROFIT_2_R_MULTIPLIER,
+                tp1,
+                tp2,
+                (tp2 - entry) / risk if risk > 0 else None,
             )
-        stop = entry + risk
+
+        above_levels = [
+            value for value in (support, breakout, ma90, ma200, recent_resistance)
+            if value is not None and value > entry
+        ]
+        structural_stop = max((level + buffer for level in above_levels), default=entry + base_risk)
+        stop = max(entry + base_risk, structural_stop)
+        risk = stop - entry
+        support_target = recent_support - buffer if recent_support and recent_support < entry else None
+        tp1 = min(entry - risk * tp1_r, support_target) if support_target else entry - risk * tp1_r
+        tp2 = min(entry - risk * tp2_r, support_target - risk * 0.8) if support_target else entry - risk * tp2_r
         return (
             stop,
-            entry - risk * TAKE_PROFIT_1_R_MULTIPLIER,
-            entry - risk * TAKE_PROFIT_2_R_MULTIPLIER,
-            TAKE_PROFIT_2_R_MULTIPLIER,
+            tp1,
+            tp2,
+            (entry - tp2) / risk if risk > 0 else None,
         )
 
     @staticmethod

@@ -8,7 +8,7 @@ from backend.order.order_manager import OrderManager
 from backend.risk.risk_manager import StrategyRiskManager
 from backend.strategy.indicator import add_indicators
 from backend.strategy.strategy import VolumeTrendRsiStrategy
-from backend.strategy.volume_trend_engine import RISK_ATR_MULTIPLIER
+from backend.strategy.volume_trend_engine import TradingAIEngine
 
 
 logger = logging.getLogger("volume_trend_strategy")
@@ -58,10 +58,10 @@ class MainLoop:
 
         entry = decision.entry_price
         atr = float(df.iloc[-1].get("atr14") or 0)
-        if decision.direction == "LONG":
-            stop_loss = entry - atr * RISK_ATR_MULTIPLIER
-        else:
-            stop_loss = entry + atr * RISK_ATR_MULTIPLIER
+        stop_loss = TradingAIEngine._risk_prices(decision.direction, entry, atr, df, decision, df.iloc[-1])[0]
+        if stop_loss is None:
+            result["risk_block"] = "손절가 계산 불가"
+            return result
 
         allowed, reason, size = self.risk_manager.can_enter(decision.direction, entry, stop_loss, len(df) - 1)
         if not allowed:

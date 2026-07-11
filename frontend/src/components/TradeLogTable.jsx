@@ -50,28 +50,28 @@ export function TradeLogTable({ trades }) {
   return (
     <div className="trade-log">
       <div className="trade-log-filter">
-        <label>
-          <span className="eyebrow">날짜 조회</span>
-          <input
-            type="date"
-            value={selectedDate}
-            onChange={(e) => {
-              setSelectedDate(e.target.value)
+        <div className="trade-log-filter__controls">
+          <label>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => {
+                setSelectedDate(e.target.value)
+                setPage(1)
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedDate('')
               setPage(1)
             }}
-          />
-        </label>
-        <button
-          type="button"
-          onClick={() => {
-            setSelectedDate('')
-            setPage(1)
-          }}
-          disabled={!selectedDate}
-        >
-          전체
-        </button>
-        <span className="pagination__total">총 {sortedTrades.length}건</span>
+            disabled={!selectedDate}
+          >
+            전체
+          </button>
+        </div>
       </div>
       <div className="data-table-wrap">
         <table className="trade-log-table">

@@ -11,6 +11,7 @@ TAKE_PROFIT_1_R_MULTIPLIER = 1.0
 TAKE_PROFIT_2_R_MULTIPLIER = 1.5
 STRUCTURE_LOOKBACK = 60
 STRUCTURE_STOP_BUFFER_ATR = 0.4
+RISK_TIMEFRAMES = ("5m", "15m")
 
 
 @dataclass
@@ -121,7 +122,7 @@ class TradingAIEngine:
         else:
             entry = price
         atr = float(last.get("atr14") or 0)
-        stop_loss, tp1, tp2, rr = self._risk_prices(plan_direction, entry, atr, df, decision, last)
+        stop_loss, tp1, tp2, rr = self._risk_prices(plan_direction, entry, atr, df, decision, last, frame_info["summaries"])
         warnings = list(decision.warnings)
         entry_grade = "B" if direction in ("LONG", "SHORT") and stop_loss and rr and rr >= 1.5 else "F"
         if decision.signal.startswith("WAIT"):
@@ -220,24 +221,40 @@ class TradingAIEngine:
         df=None,
         decision=None,
         last=None,
+        timeframe_summaries: Optional[dict[str, dict]] = None,
     ) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
         if direction not in ("LONG", "SHORT") or atr <= 0:
             return None, None, None, None
 
+        timeframe_summaries = timeframe_summaries or {}
+        higher_atrs = [
+            float(summary.get("atr14") or 0)
+            for tf, summary in timeframe_summaries.items()
+            if tf in RISK_TIMEFRAMES and summary.get("data_ready")
+        ]
+        risk_atr = max([atr, *higher_atrs]) if higher_atrs else atr
         recent = df.tail(STRUCTURE_LOOKBACK) if df is not None and len(df) else None
-        recent_support = float(recent["low"].min()) if recent is not None and "low" in recent else None
-        recent_resistance = float(recent["high"].max()) if recent is not None and "high" in recent else None
+        support_candidates = [float(recent["low"].min())] if recent is not None and "low" in recent else []
+        resistance_candidates = [float(recent["high"].max())] if recent is not None and "high" in recent else []
+        for tf in RISK_TIMEFRAMES:
+            summary = timeframe_summaries.get(tf) or {}
+            support_candidates.append(float(summary.get("recent_support") or 0))
+            resistance_candidates.append(float(summary.get("recent_resistance") or 0))
+        support_candidates = [value for value in support_candidates if value > 0]
+        resistance_candidates = [value for value in resistance_candidates if value > 0]
+        recent_support = min(support_candidates) if support_candidates else None
+        recent_resistance = max(resistance_candidates) if resistance_candidates else None
         support = getattr(decision, "support_level", None) if decision is not None else None
         breakout = getattr(decision, "breakout_level", None) if decision is not None else None
         ma90 = float(last.get("ma90") or 0) if last is not None else None
         ma200 = float(last.get("ma200") or 0) if last is not None else None
         volume_ratio = float(last.get("volume_ratio") or 0) if last is not None else 0.0
 
-        base_risk = atr * RISK_ATR_MULTIPLIER
+        base_risk = risk_atr * RISK_ATR_MULTIPLIER
         volume_boost = 0.6 if volume_ratio >= 1.5 else 0.35 if volume_ratio >= 1.2 else 0.15 if volume_ratio >= 1.0 else 0.0
         tp1_r = 1.4 + volume_boost
         tp2_r = 2.2 + volume_boost * 1.5
-        buffer = atr * STRUCTURE_STOP_BUFFER_ATR
+        buffer = risk_atr * STRUCTURE_STOP_BUFFER_ATR
 
         if direction == "LONG":
             below_levels = [
@@ -342,6 +359,7 @@ class TradingAIEngine:
                 continue
             last = frame.iloc[-1]
             direction = self._timeframe_direction(last)
+            recent = frame.tail(STRUCTURE_LOOKBACK)
             directions[tf] = direction
             summaries[tf] = {
                 "direction": direction,
@@ -353,6 +371,8 @@ class TradingAIEngine:
                 "rsi14": float(last.get("rsi14") or 0),
                 "atr14": float(last.get("atr14") or 0),
                 "volume_ratio": float(last.get("volume_ratio") or 0),
+                "recent_support": float(recent["low"].min()),
+                "recent_resistance": float(recent["high"].max()),
             }
         return {"directions": directions, "summaries": summaries}
 

@@ -28,11 +28,11 @@ export function PositionCard({ account, positions, status, price }) {
   const paper = status?.paper_position
   const equity = num(account?.accountEquity ?? account?.equity)
   const available = num(account?.available ?? account?.crossMaxAvailable)
+  const connected = Boolean(account)
   const hasPaper = !btc && Boolean(paper)
   const currentPrice = hasPaper ? num(price ?? paper?.current_price) : num(price)
 
   const side = hasPaper ? paper?.direction : btc?.holdSide?.toUpperCase()
-  const sideTone = side === 'SHORT' ? 'tone-short' : side === 'LONG' ? 'tone-long' : 'tone-muted'
   const paperPnlPct = hasPaper && paper?.pnl_pct != null ? num(paper.pnl_pct) : hasPaper ? paperPnl(side, paper?.entry_price, currentPrice || paper?.current_price) : 0
   const pnlTone = paperPnlPct > 0 ? 'tone-long' : paperPnlPct < 0 ? 'tone-short' : 'tone-muted'
 
@@ -40,19 +40,15 @@ export function PositionCard({ account, positions, status, price }) {
     <div className="account-position">
       <div className="account-position__summary">
         <div className="stat-box account-position__main">
-          <div className="eyebrow">계정 평가금</div>
-          <div className="value-xl">{account ? `$${equity.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '연동 안 됨'}</div>
-          <div className="value-sub">가용 {account ? `$${available.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '-'}</div>
+          <div className="eyebrow">계정 연동</div>
+          <div className={`account-connection ${connected ? 'tone-long' : 'tone-muted'}`}>{connected ? 'ON' : 'OFF'}</div>
+          <div className="value-sub">{connected ? 'Bitget 계정 연결됨' : 'API 계정 미연동'}</div>
         </div>
 
         <div className="stat-box account-position__main">
-          <div className="eyebrow">BTCUSDT 포지션</div>
-          <div className={`value-xl ${sideTone}`}>
-            {btc ? `${side} ${btc.total} BTC` : hasPaper ? `${side} ${paper?.size_btc ?? '-'} BTC` : '-'}
-          </div>
-          <div className="value-sub">
-            {btc ? `실거래 · 레버리지 ${btc.leverage ?? '-'}x` : hasPaper ? `모의매매 #${paper?.id ?? '-'}` : '보유 포지션 없음'}
-          </div>
+          <div className="eyebrow">전체 자산</div>
+          <div className="value-xl">{connected ? `$${equity.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '-'}</div>
+          <div className="value-sub">가용 {connected ? `$${available.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '-'}</div>
         </div>
       </div>
 

@@ -398,7 +398,7 @@ hr {
 
 .account-position__summary {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -410,6 +410,13 @@ hr {
 .account-position__controls {
   display: grid;
   gap: 12px;
+}
+
+.account-connection {
+  margin-top: 4px;
+  font-size: 15px;
+  font-weight: 950;
+  line-height: 1.2;
 }
 
 .paper-position {
@@ -1012,10 +1019,6 @@ hr {
   .panel,
   .workspace-panel {
     padding: 13px;
-  }
-
-  .account-position__summary {
-    grid-template-columns: 1fr;
   }
 
   .paper-position__row,

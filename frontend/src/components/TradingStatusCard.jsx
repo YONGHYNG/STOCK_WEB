@@ -41,9 +41,31 @@ function directionLabel(direction) {
   return direction || '포지션'
 }
 
+function plainReason(reason, direction) {
+  const text = String(reason || '')
+  const side = directionLabel(direction)
+  if (!text) return `${side} 포지션을 보유 중입니다`
+  if (text.includes('support_level') && text.includes('RSI < 50')) {
+    return '지지선 재확인 후 아래로 밀렸고 RSI도 약해서 숏으로 진입했습니다'
+  }
+  if (text.includes('breakout_level') && text.includes('RSI > 50')) {
+    return '돌파선을 다시 확인한 뒤 위로 버텼고 RSI도 강해서 롱으로 진입했습니다'
+  }
+  if (text.includes('리테스트') && text.includes('아래')) {
+    return '가격이 다시 확인 구간을 찍고 아래로 꺾여 숏으로 진입했습니다'
+  }
+  if (text.includes('눌림') || text.includes('돌파')) {
+    return '가격이 눌림 구간을 버티고 다시 올라 롱으로 진입했습니다'
+  }
+  if (text.includes('RSI')) {
+    return `${side} 방향 조건과 RSI 흐름이 맞아서 진입했습니다`
+  }
+  return text
+}
+
 function statusReason(signal, status, activePosition) {
   if (activePosition) {
-    return firstReason(activePosition.entry_reason) || `${activePosition.direction ?? activePosition.side ?? '포지션'} 진입 상태`
+    return plainReason(firstReason(activePosition.entry_reason), activePosition.direction ?? activePosition.side)
   }
   if (status?.emergency_stopped) return '긴급정지 상태'
   const warnings = signal?.risk_warnings ?? signal?.warnings ?? []

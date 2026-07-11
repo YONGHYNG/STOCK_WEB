@@ -27,7 +27,7 @@ export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop
     <>
       <div className="top-grid">
         <Panel title="실시간 시그널" className="panel--hero">
-          <SignalCard signal={state.signal} price={state.price} />
+          <SignalCard signal={state.signal} price={state.price} status={state.status} />
         </Panel>
 
         <Panel title="운영 · 계정 · 포지션" className="panel--operations">

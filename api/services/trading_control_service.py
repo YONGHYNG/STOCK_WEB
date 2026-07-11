@@ -210,6 +210,8 @@ def _account_equity_from_cache() -> Optional[float]:
 
 def _paper_position_payload() -> Optional[dict]:
     if not paper_trader.is_open or not paper_trader.open_data:
+        paper_trader.restore_from_db()
+    if not paper_trader.is_open or not paper_trader.open_data:
         return None
     data = paper_trader.open_data
     entry = float(data.get("entry") or 0)

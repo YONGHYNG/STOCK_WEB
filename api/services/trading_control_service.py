@@ -24,6 +24,7 @@ from backend.config import (
     REFRESH_CANDLE_LIMIT,
     REFRESH_INTERVAL_MS,
     SYMBOL,
+    TAKER_FEE_RATE,
     TIMEFRAMES,
     USE_DEMO_DATA,
 )
@@ -214,16 +215,19 @@ def _paper_position_payload() -> Optional[dict]:
     if not paper_trader.is_open or not paper_trader.open_data:
         return None
     data = paper_trader.open_data
+    row = get_open_trade(SYMBOL, trade_type="PAPER")
     entry = float(data.get("entry") or 0)
     current = float(state.last_price or entry or 0)
     direction = data.get("direction")
-    pnl_pct = 0.0
+    gross_pnl_pct = 0.0
     if entry > 0 and current > 0:
-        pnl_pct = (
+        gross_pnl_pct = (
             (current - entry) / entry * 100
             if direction == "LONG"
             else (entry - current) / entry * 100
         )
+    fee_pct = float(TAKER_FEE_RATE) * 2 * 100
+    net_pnl_pct = gross_pnl_pct - fee_pct
     return {
         "id": paper_trader.open_id,
         "symbol": SYMBOL,
@@ -234,8 +238,11 @@ def _paper_position_payload() -> Optional[dict]:
         "stop_loss": data.get("sl"),
         "take_profit_1": data.get("tp1"),
         "take_profit_2": data.get("tp2"),
-        "pnl_pct": pnl_pct,
+        "gross_pnl_pct": gross_pnl_pct,
+        "fee_pct": fee_pct,
+        "pnl_pct": net_pnl_pct,
         "size_btc": risk_cfg.order_size_btc,
+        "entry_reason": row.get("entry_reason") if row else "",
     }
 
 
@@ -295,7 +302,8 @@ def _tp_sl_result(t: dict, price: float) -> Optional[str]:
 
 
 def _pnl_pct(direction: str, entry: float, exit_price: float) -> float:
-    return (exit_price - entry) / entry * 100 if direction == "LONG" else (entry - exit_price) / entry * 100
+    gross = (exit_price - entry) / entry * 100 if direction == "LONG" else (entry - exit_price) / entry * 100
+    return gross - float(TAKER_FEE_RATE) * 2 * 100
 
 
 async def _ensure_signal_plan(result: dict):
@@ -414,7 +422,7 @@ async def _check_paper_tp_sl(price: float):
         return
     t = paper_trader.open_data
     entry, direction = t["entry"], t["direction"]
-    pnl_pct = (price - entry) / entry * 100 if direction == "LONG" else (entry - price) / entry * 100
+    pnl_pct = _pnl_pct(direction, entry, price)
     sign = "+" if pnl_pct >= 0 else ""
     profit_reason = f"[모의] {result_code} 적중: ${entry:,.2f} → ${price:,.2f}  ({sign}{pnl_pct:.2f}%)" if result_code.startswith("TP") else ""
     loss_reason = f"[모의] 손절: ${entry:,.2f} → ${price:,.2f}  ({sign}{pnl_pct:.2f}%)" if result_code == "SL" else ""
@@ -710,6 +718,7 @@ async def emergency_stop():
 
 
 async def emergency_close():
+    position_closed = False
     if paper_trader.is_open and state.last_price:
         tid, pnl = paper_trader.force_close(state.last_price)
         risk_mgr.record_trade_result(pnl)
@@ -717,28 +726,35 @@ async def emergency_close():
         await manager.broadcast({"type": "log", "data": {"message": msg}})
         await manager.broadcast({"type": "trade_update"})
         await manager.broadcast({"type": "status", "data": _status_payload()})
+        position_closed = True
     if private_client:
         for p in state.cached_positions:
             if p.get("symbol") == SYMBOL:
                 try:
                     private_client.close_position(p.get("holdSide", "long"))
+                    position_closed = True
                 except Exception as exc:
                     msg = state.add_log(f"[긴급정지] 청산 실패: {exc}")
                     await manager.broadcast({"type": "log", "data": {"message": msg}})
     if state.open_trade_data and state.last_price:
         t = state.open_trade_data
         price = state.last_price
-        pnl_pct = (
-            (price - t["entry"]) / t["entry"] * 100 if t["direction"] == "LONG"
-            else (t["entry"] - price) / t["entry"] * 100
-        )
+        pnl_pct = _pnl_pct(t["direction"], t["entry"], price)
         close_trade(trade_id=state.open_trade_id, exit_price=price, result="SIGNAL_CHANGE",
                     pnl_pct=pnl_pct, profit_reason="", loss_reason="긴급정지 청산")
         state.open_trade_id = None
         state.open_trade_data = None
         await manager.broadcast({"type": "trade_update"})
+        position_closed = True
     msg = state.add_log("[긴급정지] 포지션 청산 완료")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
+    if position_closed:
+        state.cached_positions = []
+        await manager.broadcast({"type": "account", "data": {
+            "account": state.cached_account,
+            "positions": state.cached_positions,
+        }})
+    await manager.broadcast({"type": "status", "data": _status_payload()})
     return {"ok": True}
 
 

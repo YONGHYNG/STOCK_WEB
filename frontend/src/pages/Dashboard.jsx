@@ -36,6 +36,7 @@ export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop
               <TradingStatusCard
                 status={state.status}
                 signal={state.signal}
+                positions={state.positions}
                 updatedAt={state.updatedAt}
                 onModeChange={onModeChange}
                 onEmergencyStop={onEmergencyStop}

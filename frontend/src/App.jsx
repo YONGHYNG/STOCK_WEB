@@ -100,8 +100,13 @@ export default function App() {
   }
 
   async function emergencyStop() {
-    await tradingApi.emergencyStop()
-    dispatch({ type: 'STATUS', data: { auto_trade_enabled: false, emergency_stopped: true } })
+    const stopResult = await tradingApi.emergencyStop()
+    if (stopResult?.has_position) {
+      await tradingApi.emergencyClose()
+    }
+    const status = await tradingApi.getStatus()
+    dispatch({ type: 'STATUS', data: status })
+    tradingApi.getTrades().then((t) => dispatch({ type: 'TRADES', trades: t }))
   }
 
   return (

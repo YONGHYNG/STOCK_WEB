@@ -8,7 +8,16 @@
 
 from typing import Optional
 import backend.database as db
-from backend.config import SYMBOL
+from backend.config import SYMBOL, TAKER_FEE_RATE
+
+
+def _net_pnl_pct(direction: str, entry: float, exit_price: float) -> float:
+    gross = (
+        (exit_price - entry) / entry * 100
+        if direction == "LONG"
+        else (entry - exit_price) / entry * 100
+    )
+    return gross - float(TAKER_FEE_RATE) * 2 * 100
 
 
 class PaperTrader:
@@ -83,10 +92,7 @@ class PaperTrader:
             return 0, 0.0
         t     = self._open_data
         entry = t["entry"]
-        pnl_pct = (
-            (exit_price - entry) / entry * 100 if t["direction"] == "LONG"
-            else (entry - exit_price) / entry * 100
-        )
+        pnl_pct = _net_pnl_pct(t["direction"], entry, exit_price)
         tid = self._open_id
         db.close_trade(
             trade_id      = tid,
@@ -129,10 +135,7 @@ class PaperTrader:
             return 0, 0.0
         t = self._open_data
         entry = t["entry"]
-        pnl_pct = (
-            (exit_price - entry) / entry * 100 if t["direction"] == "LONG"
-            else (entry - exit_price) / entry * 100
-        )
+        pnl_pct = _net_pnl_pct(t["direction"], entry, exit_price)
         msg = (
             f"[모의매매 시그널변경] ${entry:,.2f} → ${exit_price:,.2f}  "
             f"({'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%)"

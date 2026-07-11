@@ -28,20 +28,45 @@ function strategyLabel(strategy) {
   }
 }
 
-function entryState(signal, status) {
-  if (status?.emergency_stopped) return ['차단', '긴급정지 상태']
-  const warnings = signal?.risk_warnings ?? signal?.warnings ?? []
-  if (warnings.length) return ['차단', warnings[0]]
-  if (signal?.direction === 'LONG' || signal?.direction === 'SHORT') return ['가능', '리스크 조건 통과 대기']
-  if (signal?.strategy_signal?.startsWith('WAIT')) return ['대기', signal.strategy_signal]
-  return ['대기', '확정 진입 신호 없음']
+function firstReason(text) {
+  return String(text || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean)
 }
 
-export function TradingStatusCard({ status, signal, updatedAt, onModeChange, onEmergencyStop }) {
+function directionLabel(direction) {
+  if (direction === 'LONG') return '롱'
+  if (direction === 'SHORT') return '숏'
+  return direction || '포지션'
+}
+
+function statusReason(signal, status, activePosition) {
+  if (activePosition) {
+    return firstReason(activePosition.entry_reason) || `${activePosition.direction ?? activePosition.side ?? '포지션'} 진입 상태`
+  }
+  if (status?.emergency_stopped) return '긴급정지 상태'
+  const warnings = signal?.risk_warnings ?? signal?.warnings ?? []
+  if (warnings.length) return warnings[0]
+  if (signal?.strategy_signal?.startsWith('WAIT')) return signal.strategy_signal
+  return '확정 진입 신호 없음'
+}
+
+export function TradingStatusCard({ status, signal, positions = [], updatedAt, onModeChange, onEmergencyStop }) {
   const mode = status?.trading_mode ?? 'PAPER_TRADING'
   const autoEnabled = mode === 'PAPER_TRADING' ? true : Boolean(status?.auto_trade_enabled)
-  const currentStrategy = signal?.strategy_signal ?? 'HOLD'
-  const [entryLabel, blockReason] = entryState(signal, status)
+  const livePosition = positions.find((p) => p.symbol === 'BTCUSDT')
+  const paperPosition = status?.paper_position
+  const activePosition = paperPosition || (livePosition ? {
+    direction: livePosition.holdSide?.toUpperCase(),
+    side: livePosition.holdSide?.toUpperCase(),
+    entry_reason: '실거래 포지션 보유 중',
+  } : null)
+  const currentStrategy = activePosition
+    ? `${directionLabel(activePosition.direction ?? activePosition.side)} 보유 중`
+    : strategyLabel(signal?.strategy_signal ?? 'HOLD')
+  const reasonLabel = activePosition ? '투자 사유' : '차단 사유'
+  const reasonText = statusReason(signal, status, activePosition)
 
   return (
     <div className="ops-card">
@@ -61,8 +86,8 @@ export function TradingStatusCard({ status, signal, updatedAt, onModeChange, onE
 
       <div className="ops-status ops-status--strategy">
         <div className="eyebrow">현재 전략</div>
-        <div className={`ops-status__value ${String(currentStrategy).startsWith('WAIT') ? 'tone-wait' : ''}`}>
-          {strategyLabel(currentStrategy)}
+        <div className={`ops-status__value ${String(activePosition?.direction ?? activePosition?.side).includes('LONG') ? 'tone-long' : String(activePosition?.direction ?? activePosition?.side).includes('SHORT') ? 'tone-short' : String(currentStrategy).startsWith('WAIT') ? 'tone-wait' : ''}`}>
+          {currentStrategy}
         </div>
       </div>
 
@@ -79,16 +104,9 @@ export function TradingStatusCard({ status, signal, updatedAt, onModeChange, onE
           <div className="ops-status__value ops-status__value--time">{updatedAt}</div>
         </div>
 
-        <div className="ops-status">
-          <div className="eyebrow">진입 가능 여부</div>
-          <div className={`ops-status__value ${entryLabel === '가능' ? 'tone-long' : entryLabel === '차단' ? 'tone-short' : 'tone-wait'}`}>
-            {entryLabel}
-          </div>
-        </div>
-
         <div className="ops-status ops-status--wide">
-          <div className="eyebrow">차단 사유</div>
-          <div className="ops-status__value ops-status__value--reason">{blockReason}</div>
+          <div className="eyebrow">{reasonLabel}</div>
+          <div className="ops-status__value ops-status__value--reason">{reasonText}</div>
         </div>
       </div>
 

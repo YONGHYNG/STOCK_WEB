@@ -19,7 +19,8 @@ function paperPnl(direction, entry, current) {
   const e = num(entry)
   const c = num(current)
   if (!e || !c) return 0
-  return direction === 'SHORT' ? ((e - c) / e) * 100 : ((c - e) / e) * 100
+  const gross = direction === 'SHORT' ? ((e - c) / e) * 100 : ((c - e) / e) * 100
+  return gross - 0.12
 }
 
 export function PositionCard({ account, positions, status, price }) {
@@ -32,7 +33,7 @@ export function PositionCard({ account, positions, status, price }) {
 
   const side = hasPaper ? paper?.direction : btc?.holdSide?.toUpperCase()
   const sideTone = side === 'SHORT' ? 'tone-short' : side === 'LONG' ? 'tone-long' : 'tone-muted'
-  const paperPnlPct = hasPaper ? paperPnl(side, paper?.entry_price, currentPrice || paper?.current_price) : 0
+  const paperPnlPct = hasPaper && paper?.pnl_pct != null ? num(paper.pnl_pct) : hasPaper ? paperPnl(side, paper?.entry_price, currentPrice || paper?.current_price) : 0
   const pnlTone = paperPnlPct > 0 ? 'tone-long' : paperPnlPct < 0 ? 'tone-short' : 'tone-muted'
 
   return (
@@ -67,8 +68,9 @@ export function PositionCard({ account, positions, status, price }) {
               <strong>{money(currentPrice || paper?.current_price)}</strong>
             </div>
             <div>
-              <span className="eyebrow">손익률</span>
+              <span className="eyebrow">수수료 차감 손익률</span>
               <strong className={pnlTone}>{pct(paperPnlPct)}</strong>
+              <small>왕복 수수료 {pct(paper?.fee_pct ?? 0.12)}</small>
             </div>
           </div>
 

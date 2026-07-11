@@ -20,7 +20,8 @@ function paperPnl(direction, entry, current) {
   const e = Number(entry ?? 0)
   const c = Number(current ?? 0)
   if (!e || !c) return 0
-  return direction === 'SHORT' ? ((e - c) / e) * 100 : ((c - e) / e) * 100
+  const gross = direction === 'SHORT' ? ((e - c) / e) * 100 : ((c - e) / e) * 100
+  return gross - 0.12
 }
 
 export function SignalCard({ signal, price, status }) {
@@ -40,14 +41,17 @@ export function SignalCard({ signal, price, status }) {
   const rsi = summary?.rsi14 != null ? Number(summary.rsi14).toFixed(1) : '-'
   const currentPrice = Number(price ?? paper?.current_price ?? signal?.last_price ?? signal?.entry_price ?? 0)
   const displayPrice = currentPrice || signal?.last_price || price || signal?.entry_price
-  const activePnl = hasPaper ? paperPnl(activeDirection, paper?.entry_price, currentPrice || paper?.current_price) : 0
+  const activePnl = hasPaper && paper?.pnl_pct != null
+    ? Number(paper.pnl_pct)
+    : hasPaper ? paperPnl(activeDirection, paper?.entry_price, currentPrice || paper?.current_price) : 0
 
   const positionMetrics = hasPaper ? [
     { label: '현재 포지션', value: 'PAPER OPEN', tone: 'tone-info' },
     { label: '포지션 방향', value: activeDirection, tone: toneClass(activeDirection) },
     { label: '진입가', value: money(paper?.entry_price) },
     { label: '현재가', value: money(currentPrice || paper?.current_price) },
-    { label: '손익률', value: pct(activePnl), tone: activePnl > 0 ? 'tone-long' : activePnl < 0 ? 'tone-short' : 'tone-muted' },
+    { label: '수수료 차감 손익률', value: pct(activePnl), tone: activePnl > 0 ? 'tone-long' : activePnl < 0 ? 'tone-short' : 'tone-muted' },
+    { label: '총손익 / 수수료', value: `${pct(paper?.gross_pnl_pct ?? 0)} / ${pct(paper?.fee_pct ?? 0.12)}` },
     { label: '손절가', value: money(paper?.stop_loss), tone: 'tone-short' },
     { label: '1차 익절', value: money(paper?.take_profit_1), tone: 'tone-long' },
     { label: '2차 익절', value: money(paper?.take_profit_2), tone: 'tone-long' },
@@ -67,7 +71,7 @@ export function SignalCard({ signal, price, status }) {
     { label: 'MA90 / MA200', value: `${money(summary?.ma90)} / ${money(summary?.ma200)}` },
     { label: '지지 / 돌파', value: `${money(summary?.support_level)} / ${money(summary?.breakout_level)}` },
   ]
-  const metrics = hasPaper ? [...positionMetrics, ...signalMetrics.slice(0, 4)] : signalMetrics
+  const metrics = hasPaper ? [...positionMetrics, ...signalMetrics.slice(0, 3)] : signalMetrics
 
   return (
     <div className="signal-card">

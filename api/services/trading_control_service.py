@@ -605,7 +605,7 @@ async def get_signal():
 
 
 async def get_trades():
-    return get_recent_trades(SYMBOL, 50)
+    return get_recent_trades(SYMBOL, limit=None)
 
 
 async def get_status():

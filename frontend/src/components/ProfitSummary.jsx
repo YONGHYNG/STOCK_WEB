@@ -3,6 +3,7 @@ import { useState } from 'react'
 
 const RANGE_OPTIONS = [1, 3, 7, 14, 30]
 const DEFAULT_TAKER_FEE_RATE_PCT = 0.06
+const FIXED_LEVERAGE = 20
 
 function parseBackendTime(value) {
   if (!value) return null
@@ -37,7 +38,6 @@ function money(value) {
 
 export function ProfitSummary({ trades }) {
   const [rangeDays, setRangeDays] = useState(1)
-  const [leverage, setLeverage] = useState(3)
   const [margin, setMargin] = useState(100)
   const [feeRatePct, setFeeRatePct] = useState(DEFAULT_TAKER_FEE_RATE_PCT)
   const currentDay = kstDayNumber(new Date())
@@ -51,13 +51,13 @@ export function ProfitSummary({ trades }) {
   const closed = actualTrades.filter((t) => t.pnl_pct != null && inRange(t.exit_time ?? t.entry_time))
   const pnl = closed.reduce((sum, t) => sum + Number(t.pnl_pct), 0)
   const pnlTone = pnl >= 0 ? 'tone-long' : 'tone-short'
-  const safeLeverage = Math.max(1, Number(leverage) || 1)
   const safeMargin = Math.max(0, Number(margin) || 0)
   const safeFeeRate = Math.max(0, Number(feeRatePct) || 0) / 100
-  const notional = safeMargin * safeLeverage
+  const notional = safeMargin * FIXED_LEVERAGE
   const grossProfit = notional * (pnl / 100)
   const totalFee = closed.length * notional * safeFeeRate * 2
   const netProfit = grossProfit - totalFee
+  const netPnlPct = safeMargin > 0 ? (netProfit / safeMargin) * 100 : 0
   const netTone = netProfit >= 0 ? 'tone-long' : 'tone-short'
 
   return (
@@ -75,13 +75,14 @@ export function ProfitSummary({ trades }) {
         ))}
       </div>
       <div className="stat-box">
-        <div className="eyebrow">{rangeDays}일 진입</div>
-        <div className="value-xl">{entries.length}회</div>
+        <div className="eyebrow">수수료 제외 수익금</div>
+        <div className={`value-xl ${netTone}`}>{netProfit >= 0 ? '+' : '-'}{money(Math.abs(netProfit))}</div>
+        <div className="value-sub">{netPnlPct >= 0 ? '+' : ''}{netPnlPct.toFixed(2)}% / 투자금 기준</div>
       </div>
       <div className="stat-box">
         <div className="eyebrow">{rangeDays}일 실현 수익률</div>
         <div className={`value-xl ${pnlTone}`}>{pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}%</div>
-        <div className="value-sub">청산 {closed.length}건 기준</div>
+        <div className="value-sub">수수료 차감 전 · 청산 {closed.length}건</div>
       </div>
       <div className="summary-calc">
         <label>
@@ -92,17 +93,6 @@ export function ProfitSummary({ trades }) {
             type="number"
             value={margin}
             onChange={(e) => setMargin(e.target.value)}
-          />
-        </label>
-        <label>
-          <span className="eyebrow">배수</span>
-          <input
-            min="1"
-            max="125"
-            step="1"
-            type="number"
-            value={leverage}
-            onChange={(e) => setLeverage(e.target.value)}
           />
         </label>
         <label>
@@ -118,17 +108,20 @@ export function ProfitSummary({ trades }) {
       </div>
       <div className="summary-settlement">
         <div className="stat-box">
+          <div className="eyebrow">{rangeDays}일 진입</div>
+          <div className="stat-value">{entries.length}회</div>
+        </div>
+        <div className="stat-box">
+          <div className="eyebrow">고정 배수</div>
+          <div className="stat-value">{FIXED_LEVERAGE}배</div>
+        </div>
+        <div className="stat-box">
           <div className="eyebrow">명목금액</div>
           <div className="stat-value">{money(notional)}</div>
         </div>
         <div className="stat-box">
           <div className="eyebrow">왕복 수수료</div>
           <div className="stat-value tone-short">-{money(totalFee)}</div>
-        </div>
-        <div className="stat-box">
-          <div className="eyebrow">수익금</div>
-          <div className={`stat-value ${netTone}`}>{netProfit >= 0 ? '+' : '-'}{money(Math.abs(netProfit))}</div>
-          <div className="value-sub">수익률 반영 후 수수료 차감</div>
         </div>
       </div>
     </div>

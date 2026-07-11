@@ -17,20 +17,62 @@ function timeValue(v) {
 
 export function TradeLogTable({ trades }) {
   const [page, setPage] = useState(1)
-  const sortedTrades = useMemo(
+  const [selectedDate, setSelectedDate] = useState('')
+  const baseTrades = useMemo(
     () => trades
       .filter((t) => t.trade_type !== 'PLAN')
       .slice()
       .sort((a, b) => timeValue(b.entry_time) - timeValue(a.entry_time)),
     [trades],
   )
+  const sortedTrades = useMemo(
+    () => selectedDate
+      ? baseTrades.filter((t) => toKst(t.entry_time).slice(0, 10) === selectedDate)
+      : baseTrades,
+    [baseTrades, selectedDate],
+  )
   const totalPages = Math.max(1, Math.ceil(sortedTrades.length / PAGE_SIZE))
   const currentPage = Math.min(page, totalPages)
   const start = (currentPage - 1) * PAGE_SIZE
   const visibleTrades = sortedTrades.slice(start, start + PAGE_SIZE)
+  const showPagination = sortedTrades.length > PAGE_SIZE
+  const pagination = showPagination && (
+    <div className="pagination">
+      <span className="pagination__total">총 {sortedTrades.length}건</span>
+      <button onClick={() => setPage(1)} disabled={currentPage === 1}>처음</button>
+      <button onClick={() => setPage(Math.max(1, currentPage - 1))} disabled={currentPage === 1}>이전</button>
+      <span className="pagination__status">{currentPage} / {totalPages}</span>
+      <button onClick={() => setPage(Math.min(totalPages, currentPage + 1))} disabled={currentPage === totalPages}>다음</button>
+      <button onClick={() => setPage(totalPages)} disabled={currentPage === totalPages}>마지막</button>
+    </div>
+  )
 
   return (
     <div className="trade-log">
+      <div className="trade-log-filter">
+        <label>
+          <span className="eyebrow">날짜 조회</span>
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={(e) => {
+              setSelectedDate(e.target.value)
+              setPage(1)
+            }}
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedDate('')
+            setPage(1)
+          }}
+          disabled={!selectedDate}
+        >
+          전체
+        </button>
+        <span className="pagination__total">총 {sortedTrades.length}건</span>
+      </div>
       <div className="data-table-wrap">
         <table className="trade-log-table">
           <thead>
@@ -62,15 +104,7 @@ export function TradeLogTable({ trades }) {
         </table>
       </div>
 
-      {sortedTrades.length > PAGE_SIZE && (
-        <div className="pagination">
-          <button onClick={() => setPage(1)} disabled={currentPage === 1}>처음</button>
-          <button onClick={() => setPage(Math.max(1, currentPage - 1))} disabled={currentPage === 1}>이전</button>
-          <span className="pagination__status">{currentPage} / {totalPages}</span>
-          <button onClick={() => setPage(Math.min(totalPages, currentPage + 1))} disabled={currentPage === totalPages}>다음</button>
-          <button onClick={() => setPage(totalPages)} disabled={currentPage === totalPages}>마지막</button>
-        </div>
-      )}
+      {pagination}
     </div>
   )
 }

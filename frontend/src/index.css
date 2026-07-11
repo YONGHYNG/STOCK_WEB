@@ -611,6 +611,19 @@ hr {
   gap: 10px;
 }
 
+.trade-log-filter {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.trade-log-filter label {
+  display: grid;
+  gap: 6px;
+}
+
 .trade-log .data-table-wrap {
   max-height: none;
   overflow-y: visible;
@@ -641,7 +654,7 @@ hr {
 }
 
 .summary-calc {
-  grid-template-columns: minmax(0, 1fr) minmax(76px, 0.55fr) minmax(96px, 0.7fr);
+  grid-template-columns: minmax(0, 1fr) minmax(110px, 0.75fr);
 }
 
 .summary-calc label {
@@ -658,6 +671,7 @@ hr {
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .pagination button {
@@ -671,6 +685,13 @@ hr {
   font-size: 12px;
   font-weight: 850;
   text-align: center;
+}
+
+.pagination__total {
+  margin-right: auto;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 850;
 }
 
 /* ---- risk status hero ---- */

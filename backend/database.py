@@ -277,13 +277,23 @@ def get_open_trade(symbol: str, trade_type: str = "LIVE") -> Optional[dict]:
     return dict(row) if row else None
 
 
-def get_recent_trades(symbol: str, limit: int = 50, trade_type: Optional[str] = None) -> list[dict]:
-    """최근 거래 목록을 반환합니다 (최신순). trade_type=None이면 전체."""
+def get_recent_trades(symbol: str, limit: Optional[int] = 50, trade_type: Optional[str] = None) -> list[dict]:
+    """거래 목록을 최신순으로 반환합니다. limit=None이면 전체를 반환합니다."""
     with get_connection() as conn:
-        if trade_type:
+        if trade_type and limit is None:
+            rows = conn.execute(
+                "SELECT * FROM trades WHERE symbol=? AND trade_type=? ORDER BY id DESC",
+                (symbol, trade_type),
+            ).fetchall()
+        elif trade_type:
             rows = conn.execute(
                 "SELECT * FROM trades WHERE symbol=? AND trade_type=? ORDER BY id DESC LIMIT ?",
                 (symbol, trade_type, limit),
+            ).fetchall()
+        elif limit is None:
+            rows = conn.execute(
+                "SELECT * FROM trades WHERE symbol=? ORDER BY id DESC",
+                (symbol,),
             ).fetchall()
         else:
             rows = conn.execute(

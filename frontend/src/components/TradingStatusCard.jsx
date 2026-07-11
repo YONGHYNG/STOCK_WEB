@@ -1,15 +1,4 @@
 // 역할: 자동매매 실행 상태를 표시하는 카드 컴포넌트.
-import { useEffect, useState } from 'react'
-import { tradingApi } from '../api/tradingApi'
-
-const STRATEGIES = [
-  ['WAIT_PULLBACK_LONG', '눌림 롱 대기'],
-  ['WAIT_RETEST_SHORT', '리테스트 숏 대기'],
-  ['LONG', '롱 확정'],
-  ['SHORT', '숏 확정'],
-  ['HOLD', '관망'],
-]
-
 function modeLabel(mode) {
   if (mode === 'PAPER_TRADING') return 'PAPER'
   if (mode === 'SIGNAL_ONLY') return 'WAIT'
@@ -22,6 +11,21 @@ function modeTone(mode, stopped) {
   return 'ops-badge--wait'
 }
 
+function strategyLabel(strategy) {
+  switch (strategy) {
+    case 'WAIT_PULLBACK_LONG':
+      return '눌림 롱 대기'
+    case 'WAIT_RETEST_SHORT':
+      return '리테스트 숏 대기'
+    case 'LONG':
+      return '롱 확정'
+    case 'SHORT':
+      return '숏 확정'
+    default:
+      return '관망'
+  }
+}
+
 function entryState(signal, status) {
   if (status?.emergency_stopped) return ['차단', '긴급정지 상태']
   const warnings = signal?.risk_warnings ?? signal?.warnings ?? []
@@ -31,21 +35,11 @@ function entryState(signal, status) {
   return ['대기', '확정 진입 신호 없음']
 }
 
-export function TradingStatusCard({ status, signal, updatedAt, onModeChange, onEmergencyStop, onStatusPatch }) {
+export function TradingStatusCard({ status, signal, updatedAt, onModeChange, onEmergencyStop }) {
   const mode = status?.trading_mode ?? 'PAPER_TRADING'
   const autoEnabled = mode === 'PAPER_TRADING' ? true : Boolean(status?.auto_trade_enabled)
-  const currentStrategy = status?.selected_strategy ?? signal?.strategy_signal ?? 'WAIT_PULLBACK_LONG'
-  const [selectedStrategy, setSelectedStrategy] = useState(currentStrategy)
+  const currentStrategy = signal?.strategy_signal ?? 'HOLD'
   const [entryLabel, blockReason] = entryState(signal, status)
-
-  useEffect(() => {
-    setSelectedStrategy(currentStrategy)
-  }, [currentStrategy])
-
-  async function applyStrategy() {
-    await tradingApi.setStrategy(selectedStrategy)
-    onStatusPatch?.({ selected_strategy: selectedStrategy })
-  }
 
   return (
     <div className="ops-card">
@@ -62,16 +56,11 @@ export function TradingStatusCard({ status, signal, updatedAt, onModeChange, onE
         </div>
       </div>
 
-      <div className="ops-strategy-row">
-        <label>
-          <span className="eyebrow">현재 전략</span>
-          <select value={selectedStrategy} onChange={(e) => setSelectedStrategy(e.target.value)}>
-            {STRATEGIES.map(([value, label]) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
-        </label>
-        <button className="btn-apply" onClick={applyStrategy}>적용</button>
+      <div className="ops-status ops-status--strategy">
+        <div className="eyebrow">현재 전략</div>
+        <div className={`ops-status__value ${String(currentStrategy).startsWith('WAIT') ? 'tone-wait' : ''}`}>
+          {strategyLabel(currentStrategy)}
+        </div>
       </div>
 
       <div className="ops-grid">

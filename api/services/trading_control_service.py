@@ -47,7 +47,6 @@ from api.schemas.trading_schema import (
     ModePayload,
     OrderPayload,
     RiskSettingsPayload,
-    StrategyPayload,
 )
 
 # ── Singletons ─────────────────────────────────────────────────────────────────
@@ -601,7 +600,6 @@ def _status_payload() -> dict:
         "confidence_threshold": risk_cfg.confidence_threshold,
         "order_size_btc": risk_cfg.order_size_btc,
         "keep_awake_enabled": keep_awake.enabled,
-        "selected_strategy": state.selected_strategy,
     }
 
 
@@ -663,14 +661,6 @@ async def set_auto_trade(payload: AutoTradePayload):
     power_log = state.add_log(f"[전원관리] {power_msg}" if ok else f"[전원관리 경고] {power_msg}")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "log", "data": {"message": power_log}})
-    await manager.broadcast({"type": "status", "data": _status_payload()})
-    return {"ok": True}
-
-
-async def set_strategy(payload: StrategyPayload):
-    state.selected_strategy = payload.strategy
-    msg = state.add_log(f"[전략 적용] {payload.strategy}")
-    await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "status", "data": _status_payload()})
     return {"ok": True}
 

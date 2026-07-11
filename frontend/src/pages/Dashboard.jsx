@@ -39,7 +39,6 @@ export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop
                 updatedAt={state.updatedAt}
                 onModeChange={onModeChange}
                 onEmergencyStop={onEmergencyStop}
-                onStatusPatch={setStatusPatch}
               />
             </SectionBlock>
             <SectionBlock title="계정 및 포지션">

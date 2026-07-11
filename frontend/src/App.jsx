@@ -15,7 +15,6 @@ const DEFAULT_STATUS = {
   last_price: null,
   confidence_threshold: 30,
   order_size_btc: 0.001,
-  selected_strategy: 'WAIT_PULLBACK_LONG',
 }
 
 const INITIAL = {
@@ -95,7 +94,6 @@ export default function App() {
       data: {
         trading_mode: mode,
         auto_trade_enabled: mode === 'PAPER_TRADING' ? true : state.status.auto_trade_enabled,
-        ...(res?.selected_strategy ? { selected_strategy: res.selected_strategy } : {}),
       },
     })
   }

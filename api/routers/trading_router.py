@@ -1,7 +1,7 @@
 # 역할: HTTP API 경로를 백엔드 서비스에 연결하는 라우터.
 from fastapi import APIRouter
 
-from api.schemas.trading_schema import AutoTradePayload, CredentialsPayload, ModePayload, RiskSettingsPayload, StrategyPayload
+from api.schemas.trading_schema import AutoTradePayload, CredentialsPayload, ModePayload, RiskSettingsPayload
 from api.services import trading_control_service as svc
 
 router = APIRouter()
@@ -25,11 +25,6 @@ async def set_mode(payload: ModePayload):
 @router.post("/api/auto-trade")
 async def set_auto_trade(payload: AutoTradePayload):
     return await svc.set_auto_trade(payload)
-
-
-@router.post("/api/strategy")
-async def set_strategy(payload: StrategyPayload):
-    return await svc.set_strategy(payload)
 
 
 @router.post("/api/emergency-stop")

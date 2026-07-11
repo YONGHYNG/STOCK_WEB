@@ -335,24 +335,6 @@ hr {
   margin-top: 6px;
 }
 
-.ops-strategy-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: end;
-}
-
-.ops-strategy-row select {
-  width: 100%;
-  margin-top: 6px;
-}
-
-.btn-apply {
-  min-width: 64px;
-  border-color: rgba(106, 184, 255, 0.55);
-  color: var(--blue);
-}
-
 .ops-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -370,6 +352,10 @@ hr {
 
 .ops-status--wide {
   grid-column: 1 / -1;
+}
+
+.ops-status--strategy {
+  min-height: 54px;
 }
 
 .ops-status__value {

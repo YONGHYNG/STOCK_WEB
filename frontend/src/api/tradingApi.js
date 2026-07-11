@@ -23,7 +23,6 @@ export const tradingApi = {
   saveRiskSettings: (settings) => post('/risk-settings', settings),
   setMode: (mode) => post('/mode', { mode }),
   setAutoTrade: (enabled, threshold) => post('/auto-trade', { enabled, threshold }),
-  setStrategy: (strategy) => post('/strategy', { strategy }),
   emergencyStop: () => post('/emergency-stop'),
   emergencyClose: () => post('/emergency-close'),
   placeOrder: (side, size) => post('/order', { side, size }),

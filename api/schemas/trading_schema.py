@@ -24,10 +24,6 @@ class AutoTradePayload(BaseModel):
     threshold: Optional[float] = None
 
 
-class StrategyPayload(BaseModel):
-    strategy: str
-
-
 class CredentialsPayload(BaseModel):
     api_key: str
     secret_key: str

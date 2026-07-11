@@ -12,7 +12,6 @@ class TradingState:
     seeded: bool = False
     auto_trade_enabled: bool = True
     trading_mode: str = "PAPER_TRADING"
-    selected_strategy: str = "WAIT_PULLBACK_LONG"
     open_trade_id: Optional[int] = None
     open_trade_data: Optional[dict] = None
     plan_trade_id: Optional[int] = None

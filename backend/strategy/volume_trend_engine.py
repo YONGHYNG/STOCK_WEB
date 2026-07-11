@@ -11,7 +11,7 @@ TAKE_PROFIT_1_R_MULTIPLIER = 1.0
 TAKE_PROFIT_2_R_MULTIPLIER = 1.5
 STRUCTURE_LOOKBACK = 60
 STRUCTURE_STOP_BUFFER_ATR = 0.4
-RISK_TIMEFRAMES = ("5m", "15m")
+RISK_TIMEFRAMES = ("5m",)
 
 
 @dataclass
@@ -252,8 +252,8 @@ class TradingAIEngine:
 
         base_risk = risk_atr * RISK_ATR_MULTIPLIER
         volume_boost = 0.6 if volume_ratio >= 1.5 else 0.35 if volume_ratio >= 1.2 else 0.15 if volume_ratio >= 1.0 else 0.0
-        tp1_r = 1.4 + volume_boost
-        tp2_r = 2.2 + volume_boost * 1.5
+        tp1_r = 0.8 + volume_boost * 0.5
+        tp2_r = 1.4 + volume_boost
         buffer = risk_atr * STRUCTURE_STOP_BUFFER_ATR
 
         if direction == "LONG":

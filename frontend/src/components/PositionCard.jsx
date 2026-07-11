@@ -26,9 +26,18 @@ function paperPnl(direction, entry, current) {
 export function PositionCard({ account, positions, status, price }) {
   const btc = positions.find((p) => p.symbol === 'BTCUSDT')
   const paper = status?.paper_position
+  const paperAccount = status?.paper_account
   const equity = num(account?.accountEquity ?? account?.equity)
   const available = num(account?.available ?? account?.crossMaxAvailable)
   const connected = Boolean(account)
+  const displayEquity = connected ? equity : num(paperAccount?.equity)
+  const accountLabel = connected ? '전체 자산' : '모의 자산'
+  const accountSub = connected
+    ? `가용 $${available.toLocaleString('en-US', { minimumFractionDigits: 2 })}`
+    : `$${num(paperAccount?.initial_balance || 100).toFixed(0)} · ${num(paperAccount?.leverage || 20)}배 기준`
+  const accountTone = !connected && displayEquity
+    ? displayEquity >= num(paperAccount?.initial_balance || 100) ? 'tone-long' : 'tone-short'
+    : ''
   const hasPaper = !btc && Boolean(paper)
   const currentPrice = hasPaper ? num(price ?? paper?.current_price) : num(price)
 
@@ -46,9 +55,11 @@ export function PositionCard({ account, positions, status, price }) {
         </div>
 
         <div className="stat-box account-position__main">
-          <div className="eyebrow">전체 자산</div>
-          <div className="value-xl">{connected ? `$${equity.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '-'}</div>
-          <div className="value-sub">가용 {connected ? `$${available.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '-'}</div>
+          <div className="eyebrow">{accountLabel}</div>
+          <div className={`value-xl ${accountTone}`}>
+            {displayEquity ? `$${displayEquity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
+          </div>
+          <div className="value-sub">{accountSub}</div>
         </div>
       </div>
 

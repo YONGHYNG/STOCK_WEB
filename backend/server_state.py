@@ -17,6 +17,7 @@ class TradingState:
     plan_trade_id: Optional[int] = None
     plan_trade_data: Optional[dict] = None
     plan_signature: Optional[tuple] = None
+    paper_account_start_trade_id: Optional[int] = None
     cached_account: Optional[dict] = None
     cached_positions: list = field(default_factory=list)
     emergency_stopped: bool = False

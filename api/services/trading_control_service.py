@@ -58,6 +58,8 @@ executor = ThreadPoolExecutor(max_workers=8)
 paper_trader = PaperTrader()
 risk_cfg = risk_settings_store.load()
 risk_mgr = RiskManager(risk_cfg)
+PAPER_ACCOUNT_INITIAL_BALANCE = 100.0
+PAPER_ACCOUNT_LEVERAGE = 20
 
 
 def _make_private_client() -> Optional[BitgetPrivateClient]:
@@ -243,6 +245,50 @@ def _paper_position_payload() -> Optional[dict]:
         "pnl_pct": net_pnl_pct,
         "size_btc": risk_cfg.order_size_btc,
         "entry_reason": row.get("entry_reason") if row else "",
+    }
+
+
+def _ensure_paper_account_start_id() -> Optional[int]:
+    if state.paper_account_start_trade_id is not None:
+        return state.paper_account_start_trade_id
+    open_row = get_open_trade(SYMBOL, trade_type="PAPER")
+    if open_row:
+        state.paper_account_start_trade_id = int(open_row["id"])
+        return state.paper_account_start_trade_id
+    paper_trades = [t for t in get_recent_trades(SYMBOL, limit=None, trade_type="PAPER") if t.get("id") is not None]
+    if paper_trades:
+        state.paper_account_start_trade_id = max(int(t["id"]) for t in paper_trades) + 1
+    else:
+        state.paper_account_start_trade_id = 1
+    return state.paper_account_start_trade_id
+
+
+def _paper_account_payload() -> dict:
+    start_id = _ensure_paper_account_start_id()
+    trades = [
+        t for t in get_recent_trades(SYMBOL, limit=None, trade_type="PAPER")
+        if start_id is not None and int(t.get("id") or 0) >= start_id
+    ]
+    closed = [t for t in trades if t.get("pnl_pct") is not None and t.get("result") != "OPEN"]
+    realized_pnl = sum(
+        PAPER_ACCOUNT_INITIAL_BALANCE * PAPER_ACCOUNT_LEVERAGE * (float(t.get("pnl_pct") or 0) / 100)
+        for t in closed
+    )
+    paper_position = _paper_position_payload()
+    unrealized_pnl = 0.0
+    if paper_position:
+        unrealized_pnl = PAPER_ACCOUNT_INITIAL_BALANCE * PAPER_ACCOUNT_LEVERAGE * (float(paper_position.get("pnl_pct") or 0) / 100)
+    equity = PAPER_ACCOUNT_INITIAL_BALANCE + realized_pnl + unrealized_pnl
+    return {
+        "initial_balance": PAPER_ACCOUNT_INITIAL_BALANCE,
+        "leverage": PAPER_ACCOUNT_LEVERAGE,
+        "notional": PAPER_ACCOUNT_INITIAL_BALANCE * PAPER_ACCOUNT_LEVERAGE,
+        "start_trade_id": start_id,
+        "realized_pnl": realized_pnl,
+        "unrealized_pnl": unrealized_pnl,
+        "equity": equity,
+        "return_pct": ((equity - PAPER_ACCOUNT_INITIAL_BALANCE) / PAPER_ACCOUNT_INITIAL_BALANCE * 100)
+        if PAPER_ACCOUNT_INITIAL_BALANCE else 0.0,
     }
 
 
@@ -480,6 +526,8 @@ async def _auto_paper_trade(direction: str, r: dict):
         await manager.broadcast({"type": "status", "data": _status_payload()})
 
     trade_id = paper_trader.open_trade(direction, r)
+    if state.paper_account_start_trade_id is None:
+        state.paper_account_start_trade_id = trade_id
     risk_mgr.record_order_placed()
     msg = state.add_log(f"[모의매매] {direction} 진입  #{trade_id}  전략신호={r.get('strategy_signal', direction)}")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
@@ -566,6 +614,8 @@ async def price_loop():
                     await _check_tp_sl(price)
                 if paper_trader.is_open:
                     await _check_paper_tp_sl(price)
+                    if paper_trader.is_open:
+                        await manager.broadcast({"type": "status", "data": _status_payload()})
         except Exception:
             pass
         await asyncio.sleep(2)
@@ -601,6 +651,8 @@ async def startup_event():
         state.plan_trade_id = existing_plan["id"]
         state.plan_trade_data = _trade_data_from_row(existing_plan)
     paper_trader.restore_from_db()
+    if state.paper_account_start_trade_id is None and paper_trader.is_open:
+        state.paper_account_start_trade_id = paper_trader.open_id
     asyncio.create_task(signal_loop())
     asyncio.create_task(price_loop())
     asyncio.create_task(account_loop())
@@ -640,6 +692,7 @@ def _status_payload() -> dict:
         "order_size_btc": risk_cfg.order_size_btc,
         "keep_awake_enabled": keep_awake.enabled,
         "paper_position": _paper_position_payload(),
+        "paper_account": _paper_account_payload(),
     }
 
 

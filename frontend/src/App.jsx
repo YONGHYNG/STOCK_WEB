@@ -16,6 +16,7 @@ const DEFAULT_STATUS = {
   confidence_threshold: 30,
   order_size_btc: 0.001,
   paper_position: null,
+  paper_account: null,
 }
 
 const INITIAL = {

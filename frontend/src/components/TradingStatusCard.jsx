@@ -1,6 +1,7 @@
 // 역할: 자동매매 실행 상태를 표시하는 카드 컴포넌트.
 function modeLabel(mode) {
   if (mode === 'PAPER_TRADING') return 'PAPER'
+  if (mode === 'LIVE_TRADING') return 'LIVE'
   if (mode === 'SIGNAL_ONLY') return 'WAIT'
   return 'STOP'
 }
@@ -8,6 +9,7 @@ function modeLabel(mode) {
 function modeTone(mode, stopped) {
   if (stopped) return 'ops-badge--stop'
   if (mode === 'PAPER_TRADING') return 'ops-badge--paper'
+  if (mode === 'LIVE_TRADING') return 'ops-badge--live'
   return 'ops-badge--wait'
 }
 
@@ -51,6 +53,7 @@ export function TradingStatusCard({ status, signal, updatedAt, onModeChange, onE
           <label className="eyebrow" htmlFor="trading-mode">운영 모드</label>
           <select id="trading-mode" value={mode} onChange={(e) => onModeChange(e.target.value)}>
             <option value="PAPER_TRADING">모의매매</option>
+            <option value="LIVE_TRADING">실거래</option>
             <option value="SIGNAL_ONLY">신호만 표시</option>
           </select>
         </div>

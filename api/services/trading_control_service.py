@@ -619,9 +619,6 @@ async def websocket_endpoint(ws: WebSocket):
 
 
 def _status_payload() -> dict:
-    if state.trading_mode == "LIVE_TRADING":
-        state.trading_mode = "PAPER_TRADING"
-        state.auto_trade_enabled = True
     return {
         "trading_mode": state.trading_mode,
         "auto_trade_enabled": state.auto_trade_enabled,
@@ -670,7 +667,7 @@ async def save_risk_settings(payload: RiskSettingsPayload):
 
 
 async def set_mode(payload: ModePayload):
-    state.trading_mode = "PAPER_TRADING" if payload.mode == "LIVE_TRADING" else payload.mode
+    state.trading_mode = payload.mode
     if state.trading_mode == "PAPER_TRADING":
         state.auto_trade_enabled = True
         keep_awake.enable()

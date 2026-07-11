@@ -314,6 +314,12 @@ hr {
   color: var(--green);
 }
 
+.ops-badge--live {
+  border-color: rgba(106, 184, 255, 0.62);
+  background: rgba(106, 184, 255, 0.12);
+  color: var(--blue);
+}
+
 .ops-badge--wait {
   border-color: rgba(245, 185, 69, 0.55);
   background: rgba(245, 185, 69, 0.1);

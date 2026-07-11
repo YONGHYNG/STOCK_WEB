@@ -208,6 +208,35 @@ def _account_equity_from_cache() -> Optional[float]:
     return None
 
 
+def _paper_position_payload() -> Optional[dict]:
+    if not paper_trader.is_open or not paper_trader.open_data:
+        return None
+    data = paper_trader.open_data
+    entry = float(data.get("entry") or 0)
+    current = float(state.last_price or entry or 0)
+    direction = data.get("direction")
+    pnl_pct = 0.0
+    if entry > 0 and current > 0:
+        pnl_pct = (
+            (current - entry) / entry * 100
+            if direction == "LONG"
+            else (entry - current) / entry * 100
+        )
+    return {
+        "id": paper_trader.open_id,
+        "symbol": SYMBOL,
+        "trade_type": "PAPER",
+        "direction": direction,
+        "entry_price": entry,
+        "current_price": current,
+        "stop_loss": data.get("sl"),
+        "take_profit_1": data.get("tp1"),
+        "take_profit_2": data.get("tp2"),
+        "pnl_pct": pnl_pct,
+        "size_btc": risk_cfg.order_size_btc,
+    }
+
+
 # ── TP/SL checks ───────────────────────────────────────────────────────────────
 
 
@@ -394,6 +423,7 @@ async def _check_paper_tp_sl(price: float):
     msg = state.add_log(f"[모의매매 {emoji}] #{tid}  {result_code}  {sign}{pnl:.2f}%")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "trade_update"})
+    await manager.broadcast({"type": "status", "data": _status_payload()})
 
 
 # ── Auto trade ─────────────────────────────────────────────────────────────────
@@ -437,12 +467,14 @@ async def _auto_paper_trade(direction: str, r: dict):
         msg = state.add_log(f"[모의매매] 반전 청산 #{tid}  PnL={pnl:+.2f}%")
         await manager.broadcast({"type": "log", "data": {"message": msg}})
         await manager.broadcast({"type": "trade_update"})
+        await manager.broadcast({"type": "status", "data": _status_payload()})
 
     trade_id = paper_trader.open_trade(direction, r)
     risk_mgr.record_order_placed()
     msg = state.add_log(f"[모의매매] {direction} 진입  #{trade_id}  전략신호={r.get('strategy_signal', direction)}")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "trade_update"})
+    await manager.broadcast({"type": "status", "data": _status_payload()})
 
 
 async def _auto_live_trade(direction: str, r: dict):
@@ -600,6 +632,7 @@ def _status_payload() -> dict:
         "confidence_threshold": risk_cfg.confidence_threshold,
         "order_size_btc": risk_cfg.order_size_btc,
         "keep_awake_enabled": keep_awake.enabled,
+        "paper_position": _paper_position_payload(),
     }
 
 
@@ -673,11 +706,18 @@ async def emergency_stop():
     msg = state.add_log(f"[긴급정지] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} — 자동매매 차단됨")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "status", "data": _status_payload()})
-    has_pos = bool(state.open_trade_data or state.cached_positions)
+    has_pos = bool(state.open_trade_data or state.cached_positions or paper_trader.is_open)
     return {"ok": True, "has_position": has_pos}
 
 
 async def emergency_close():
+    if paper_trader.is_open and state.last_price:
+        tid, pnl = paper_trader.force_close(state.last_price)
+        risk_mgr.record_trade_result(pnl)
+        msg = state.add_log(f"[모의매매 긴급청산] #{tid}  PnL={pnl:+.2f}%")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        await manager.broadcast({"type": "trade_update"})
+        await manager.broadcast({"type": "status", "data": _status_payload()})
     if private_client:
         for p in state.cached_positions:
             if p.get("symbol") == SYMBOL:

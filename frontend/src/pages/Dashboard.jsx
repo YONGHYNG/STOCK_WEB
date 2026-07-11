@@ -45,6 +45,8 @@ export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop
               <PositionCard
                 account={state.account}
                 positions={state.positions}
+                status={state.status}
+                price={state.price}
               />
             </SectionBlock>
           </div>

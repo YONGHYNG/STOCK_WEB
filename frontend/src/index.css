@@ -400,6 +400,39 @@ hr {
   gap: 12px;
 }
 
+.paper-position {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(106, 184, 255, 0.24);
+  border-radius: 8px;
+  background: rgba(106, 184, 255, 0.045);
+}
+
+.paper-position__row,
+.paper-position__levels {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.paper-position__row > div,
+.paper-position__levels > div {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.paper-position strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 13px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
 .stack {
   display: grid;
   gap: 8px;
@@ -962,6 +995,11 @@ hr {
   }
 
   .account-position__summary {
+    grid-template-columns: 1fr;
+  }
+
+  .paper-position__row,
+  .paper-position__levels {
     grid-template-columns: 1fr;
   }
 

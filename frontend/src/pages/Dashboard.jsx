@@ -35,17 +35,17 @@ export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop
             <SectionBlock title="운영 상태">
               <TradingStatusCard
                 status={state.status}
+                signal={state.signal}
                 updatedAt={state.updatedAt}
                 onModeChange={onModeChange}
                 onEmergencyStop={onEmergencyStop}
+                onStatusPatch={setStatusPatch}
               />
             </SectionBlock>
             <SectionBlock title="계정 및 포지션">
               <PositionCard
                 account={state.account}
                 positions={state.positions}
-                status={state.status}
-                onStatusPatch={setStatusPatch}
               />
             </SectionBlock>
           </div>

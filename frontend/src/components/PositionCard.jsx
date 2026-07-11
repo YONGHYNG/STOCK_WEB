@@ -1,21 +1,13 @@
 // 역할: 현재 포지션과 진입 정보를 표시하는 컴포넌트.
-import { tradingApi } from '../api/tradingApi'
-
 function num(v) {
   const n = Number(v ?? 0)
   return Number.isFinite(n) ? n : 0
 }
 
-export function PositionCard({ account, positions, status, onStatusPatch }) {
+export function PositionCard({ account, positions }) {
   const btc = positions.find((p) => p.symbol === 'BTCUSDT')
   const equity = num(account?.accountEquity ?? account?.equity)
   const available = num(account?.available ?? account?.crossMaxAvailable)
-
-  async function toggleAuto(e) {
-    const enabled = e.target.checked
-    await tradingApi.setAutoTrade(enabled, status?.confidence_threshold)
-    onStatusPatch({ auto_trade_enabled: enabled })
-  }
 
   const side = btc?.holdSide?.toUpperCase()
   const sideTone = side === 'SHORT' ? 'tone-short' : side === 'LONG' ? 'tone-long' : 'tone-muted'
@@ -35,16 +27,6 @@ export function PositionCard({ account, positions, status, onStatusPatch }) {
             {btc ? `${side} ${btc.total} BTC` : '-'}
           </div>
           <div className="value-sub">{btc ? `레버리지 ${btc.leverage ?? '-'}x` : '보유 포지션 없음'}</div>
-        </div>
-      </div>
-
-      <div className="stat-box account-position__controls">
-        <div>
-          <div className="eyebrow">자동매매</div>
-          <label className="switch-inline" style={{ marginTop: 6 }}>
-            <input type="checkbox" checked={Boolean(status?.auto_trade_enabled)} onChange={toggleAuto} />
-            <span>{status?.auto_trade_enabled ? 'ON' : 'OFF'}</span>
-          </label>
         </div>
       </div>
     </div>

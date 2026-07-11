@@ -47,6 +47,7 @@ from api.schemas.trading_schema import (
     ModePayload,
     OrderPayload,
     RiskSettingsPayload,
+    StrategyPayload,
 )
 
 # ── Singletons ─────────────────────────────────────────────────────────────────
@@ -587,6 +588,9 @@ async def websocket_endpoint(ws: WebSocket):
 
 
 def _status_payload() -> dict:
+    if state.trading_mode == "LIVE_TRADING":
+        state.trading_mode = "PAPER_TRADING"
+        state.auto_trade_enabled = True
     return {
         "trading_mode": state.trading_mode,
         "auto_trade_enabled": state.auto_trade_enabled,
@@ -597,6 +601,7 @@ def _status_payload() -> dict:
         "confidence_threshold": risk_cfg.confidence_threshold,
         "order_size_btc": risk_cfg.order_size_btc,
         "keep_awake_enabled": keep_awake.enabled,
+        "selected_strategy": state.selected_strategy,
     }
 
 
@@ -634,8 +639,11 @@ async def save_risk_settings(payload: RiskSettingsPayload):
 
 
 async def set_mode(payload: ModePayload):
-    state.trading_mode = payload.mode
-    msg = state.add_log(f"[모드변경] {payload.mode}")
+    state.trading_mode = "PAPER_TRADING" if payload.mode == "LIVE_TRADING" else payload.mode
+    if state.trading_mode == "PAPER_TRADING":
+        state.auto_trade_enabled = True
+        keep_awake.enable()
+    msg = state.add_log(f"[모드변경] {state.trading_mode}")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "status", "data": _status_payload()})
     return {"ok": True}
@@ -645,15 +653,24 @@ async def set_mode(payload: ModePayload):
 
 async def set_auto_trade(payload: AutoTradePayload):
     global risk_cfg
-    state.auto_trade_enabled = payload.enabled
+    enabled = True if state.trading_mode == "PAPER_TRADING" else payload.enabled
+    state.auto_trade_enabled = enabled
     if payload.threshold is not None:
         risk_cfg.confidence_threshold = payload.threshold
         risk_mgr.settings.confidence_threshold = payload.threshold
-    ok, power_msg = keep_awake.enable() if payload.enabled else keep_awake.disable()
-    msg = state.add_log(f"[자동매매] {'ON' if payload.enabled else 'OFF'}  모드={state.trading_mode}")
+    ok, power_msg = keep_awake.enable() if enabled else keep_awake.disable()
+    msg = state.add_log(f"[자동매매] {'ON' if enabled else 'OFF'}  모드={state.trading_mode}")
     power_log = state.add_log(f"[전원관리] {power_msg}" if ok else f"[전원관리 경고] {power_msg}")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "log", "data": {"message": power_log}})
+    await manager.broadcast({"type": "status", "data": _status_payload()})
+    return {"ok": True}
+
+
+async def set_strategy(payload: StrategyPayload):
+    state.selected_strategy = payload.strategy
+    msg = state.add_log(f"[전략 적용] {payload.strategy}")
+    await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "status", "data": _status_payload()})
     return {"ok": True}
 

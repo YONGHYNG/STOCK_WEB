@@ -7,14 +7,15 @@ import { StrategySetting } from './pages/StrategySetting'
 import { TradeHistory } from './pages/TradeHistory'
 
 const DEFAULT_STATUS = {
-  trading_mode: 'SIGNAL_ONLY',
-  auto_trade_enabled: false,
+  trading_mode: 'PAPER_TRADING',
+  auto_trade_enabled: true,
   emergency_stopped: false,
   demo_mode: false,
   seeded: false,
   last_price: null,
   confidence_threshold: 30,
   order_size_btc: 0.001,
+  selected_strategy: 'WAIT_PULLBACK_LONG',
 }
 
 const INITIAL = {
@@ -88,8 +89,15 @@ export default function App() {
   }, [])
 
   async function setMode(mode) {
-    await tradingApi.setMode(mode)
-    dispatch({ type: 'STATUS', data: { trading_mode: mode } })
+    const res = await tradingApi.setMode(mode)
+    dispatch({
+      type: 'STATUS',
+      data: {
+        trading_mode: mode,
+        auto_trade_enabled: mode === 'PAPER_TRADING' ? true : state.status.auto_trade_enabled,
+        ...(res?.selected_strategy ? { selected_strategy: res.selected_strategy } : {}),
+      },
+    })
   }
 
   async function emergencyStop() {

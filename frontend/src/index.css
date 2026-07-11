@@ -289,6 +289,43 @@ hr {
   gap: 10px;
 }
 
+.ops-head {
+  display: grid;
+  grid-template-columns: minmax(84px, 112px) minmax(0, 1fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.ops-badge {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.ops-badge--paper {
+  border-color: rgba(49, 208, 125, 0.55);
+  background: rgba(49, 208, 125, 0.1);
+  color: var(--green);
+}
+
+.ops-badge--wait {
+  border-color: rgba(245, 185, 69, 0.55);
+  background: rgba(245, 185, 69, 0.1);
+  color: var(--yellow);
+}
+
+.ops-badge--stop {
+  border-color: rgba(255, 93, 108, 0.62);
+  background: rgba(255, 93, 108, 0.1);
+  color: var(--red);
+}
+
 .ops-card__mode {
   min-width: 0;
 }
@@ -298,6 +335,30 @@ hr {
   margin-top: 6px;
 }
 
+.ops-strategy-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.ops-strategy-row select {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.btn-apply {
+  min-width: 64px;
+  border-color: rgba(106, 184, 255, 0.55);
+  color: var(--blue);
+}
+
+.ops-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .ops-status {
   min-width: 0;
   min-height: 58px;
@@ -305,6 +366,10 @@ hr {
   border: 1px solid var(--line-soft);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.026);
+}
+
+.ops-status--wide {
+  grid-column: 1 / -1;
 }
 
 .ops-status__value {
@@ -317,6 +382,11 @@ hr {
 .ops-status__value--time {
   font-size: 13px;
   white-space: nowrap;
+}
+
+.ops-status__value--reason {
+  font-size: 13px;
+  line-height: 1.35;
 }
 
 .btn-block {

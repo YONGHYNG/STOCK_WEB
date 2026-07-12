@@ -1,5 +1,6 @@
 # 역할: FastAPI 서버 실행과 라우터 등록을 담당하는 진입점.
 import uvicorn
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -14,7 +15,15 @@ from api.services.trading_control_service import startup_event
 from api.websocket.trading_ws import router as websocket_router
 from backend.database import init_db
 
-app = FastAPI(title="Trading AI Dashboard")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    init_db()
+    await startup_event()
+    yield
+
+
+app = FastAPI(title="Trading AI Dashboard", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -43,14 +52,7 @@ if dashboard_service.frontend_exists():
         return await dashboard_service.serve_spa(full_path)
 
 
-@app.on_event("startup")
-async def on_startup():
-    init_db()
-    await startup_event()
-
-
 def main() -> None:
-    init_db()
     uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=False)
 
 if __name__ == "__main__":

@@ -29,13 +29,14 @@ export function PositionCard({ account, positions, status, price }) {
   const paperAccount = status?.paper_account
   const equity = num(account?.accountEquity ?? account?.equity)
   const available = num(account?.available ?? account?.crossMaxAvailable)
-  const connected = Boolean(account)
-  const displayEquity = connected ? equity : num(paperAccount?.equity)
-  const accountLabel = connected ? '전체 자산' : '모의 자산'
-  const accountSub = connected
+  const apiConnected = Boolean(account)
+  const usingPaper = status?.trading_mode === 'PAPER_TRADING'
+  const displayEquity = usingPaper ? num(paperAccount?.equity) : equity
+  const accountLabel = usingPaper ? '모의 자산' : '전체 자산'
+  const accountSub = !usingPaper
     ? `가용 $${available.toLocaleString('en-US', { minimumFractionDigits: 2 })}`
-    : `$${num(paperAccount?.initial_balance || 100).toFixed(0)} · ${num(paperAccount?.leverage || 20)}배 기준`
-  const accountTone = !connected && displayEquity
+    : `확정 $${num(paperAccount?.balance).toFixed(2)} · ${num(paperAccount?.leverage || 20)}배 운용`
+  const accountTone = usingPaper && displayEquity
     ? displayEquity >= num(paperAccount?.initial_balance || 100) ? 'tone-long' : 'tone-short'
     : ''
   const hasPaper = !btc && Boolean(paper)
@@ -50,8 +51,8 @@ export function PositionCard({ account, positions, status, price }) {
       <div className="account-position__summary">
         <div className="stat-box account-position__main">
           <div className="eyebrow">계정 연동</div>
-          <div className={`account-connection ${connected ? 'tone-long' : 'tone-muted'}`}>{connected ? 'ON' : 'OFF'}</div>
-          <div className="value-sub">{connected ? 'Bitget 계정 연결됨' : 'API 계정 미연동'}</div>
+          <div className={`account-connection ${apiConnected ? 'tone-long' : 'tone-muted'}`}>{apiConnected ? 'ON' : 'OFF'}</div>
+          <div className="value-sub">{apiConnected ? 'Bitget 계정 연결됨' : 'API 계정 미연동'}</div>
         </div>
 
         <div className="stat-box account-position__main">

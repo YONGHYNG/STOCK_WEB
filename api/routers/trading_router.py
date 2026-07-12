@@ -32,6 +32,11 @@ async def emergency_stop():
     return await svc.emergency_stop()
 
 
+@router.post("/api/emergency-resume")
+async def emergency_resume():
+    return await svc.emergency_resume()
+
+
 @router.post("/api/emergency-close")
 async def emergency_close():
     return await svc.emergency_close()

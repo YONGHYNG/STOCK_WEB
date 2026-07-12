@@ -96,7 +96,61 @@ def init_db() -> None:
             conn.execute("ALTER TABLE trades ADD COLUMN trade_type TEXT NOT NULL DEFAULT 'LIVE'")
         except Exception:
             pass   # 이미 존재하면 무시
+        try:
+            conn.execute("ALTER TABLE trades ADD COLUMN realized_pnl_amount REAL")
+        except Exception:
+            pass
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS paper_account (
+                id              INTEGER PRIMARY KEY CHECK (id = 1),
+                initial_balance REAL NOT NULL,
+                balance         REAL NOT NULL,
+                leverage        REAL NOT NULL,
+                updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
         conn.commit()
+
+
+def reconcile_paper_account(initial_balance: float = 100.0, leverage: float = 20.0) -> dict:
+    """미반영 모의 청산 내역을 순서대로 잔액에 누적하고 영구 저장합니다."""
+    with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            "INSERT OR IGNORE INTO paper_account (id, initial_balance, balance, leverage) VALUES (1, ?, ?, ?)",
+            (initial_balance, initial_balance, leverage),
+        )
+        account = conn.execute("SELECT * FROM paper_account WHERE id=1").fetchone()
+        balance = float(account["balance"])
+        account_leverage = float(account["leverage"])
+        rows = conn.execute(
+            """
+            SELECT id, pnl_pct FROM trades
+            WHERE trade_type='PAPER' AND result != 'OPEN' AND pnl_pct IS NOT NULL
+              AND realized_pnl_amount IS NULL
+            ORDER BY id ASC
+            """
+        ).fetchall()
+        for row in rows:
+            pnl_amount = balance * account_leverage * (float(row["pnl_pct"]) / 100)
+            pnl_amount = max(pnl_amount, -balance)
+            balance += pnl_amount
+            conn.execute(
+                "UPDATE trades SET realized_pnl_amount=? WHERE id=? AND realized_pnl_amount IS NULL",
+                (round(pnl_amount, 8), row["id"]),
+            )
+        conn.execute(
+            "UPDATE paper_account SET balance=?, updated_at=CURRENT_TIMESTAMP WHERE id=1",
+            (round(balance, 8),),
+        )
+        conn.commit()
+        return dict(conn.execute("SELECT * FROM paper_account WHERE id=1").fetchone())
+
+
+def get_paper_account(initial_balance: float = 100.0, leverage: float = 20.0) -> dict:
+    return reconcile_paper_account(initial_balance, leverage)
 
 
 def insert_candle(symbol: str, timeframe: str, candle: dict) -> None:

@@ -21,6 +21,7 @@ class TradingState:
     cached_account: Optional[dict] = None
     cached_positions: list = field(default_factory=list)
     emergency_stopped: bool = False
+    auto_trade_enabled_before_emergency: Optional[bool] = None
     _log_buffer: list = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 

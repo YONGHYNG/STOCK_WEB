@@ -110,6 +110,12 @@ export default function App() {
     tradingApi.getTrades().then((t) => dispatch({ type: 'TRADES', trades: t }))
   }
 
+  async function emergencyResume() {
+    await tradingApi.emergencyResume()
+    const status = await tradingApi.getStatus()
+    dispatch({ type: 'STATUS', data: status })
+  }
+
   return (
     <div className="app-shell">
       <main className="dashboard">
@@ -118,6 +124,7 @@ export default function App() {
           setStatusPatch={(patch) => dispatch({ type: 'STATUS', data: patch })}
           onModeChange={setMode}
           onEmergencyStop={emergencyStop}
+          onEmergencyResume={emergencyResume}
         />
         {state.page === 'strategy' && <StrategySetting settings={state.riskSettings} onSaved={(s) => dispatch({ type: 'RISK_SETTINGS', settings: s })} />}
         {state.page === 'history' && <TradeHistory trades={state.trades} signal={state.signal} />}

@@ -74,7 +74,7 @@ function statusReason(signal, status, activePosition) {
   return '확정 진입 신호 없음'
 }
 
-export function TradingStatusCard({ status, signal, positions = [], updatedAt, onModeChange, onEmergencyStop }) {
+export function TradingStatusCard({ status, signal, positions = [], updatedAt, onModeChange, onEmergencyStop, onEmergencyResume }) {
   const mode = status?.trading_mode ?? 'PAPER_TRADING'
   const autoEnabled = mode === 'PAPER_TRADING' ? true : Boolean(status?.auto_trade_enabled)
   const livePosition = positions.find((p) => p.symbol === 'BTCUSDT')
@@ -93,9 +93,18 @@ export function TradingStatusCard({ status, signal, positions = [], updatedAt, o
   return (
     <div className="ops-card">
       <div className="ops-head">
-        <div className={`ops-badge ${modeTone(mode, status?.emergency_stopped)}`}>
-          {status?.emergency_stopped ? 'STOP' : modeLabel(mode)}
-        </div>
+        {status?.emergency_stopped ? (
+          <button
+            type="button"
+            className="ops-badge ops-badge--stop ops-badge--button"
+            onClick={onEmergencyResume}
+            title="클릭하여 운영 재개"
+          >
+            STOP
+          </button>
+        ) : (
+          <div className={`ops-badge ${modeTone(mode, false)}`}>{modeLabel(mode)}</div>
+        )}
         <div className="ops-card__mode">
           <label className="eyebrow" htmlFor="trading-mode">운영 모드</label>
           <select id="trading-mode" value={mode} onChange={(e) => onModeChange(e.target.value)}>

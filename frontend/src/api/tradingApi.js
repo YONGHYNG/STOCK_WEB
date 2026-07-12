@@ -24,6 +24,7 @@ export const tradingApi = {
   setMode: (mode) => post('/mode', { mode }),
   setAutoTrade: (enabled, threshold) => post('/auto-trade', { enabled, threshold }),
   emergencyStop: () => post('/emergency-stop'),
+  emergencyResume: () => post('/emergency-resume'),
   emergencyClose: () => post('/emergency-close'),
   placeOrder: (side, size) => post('/order', { side, size }),
   closePosition: () => post('/close-position'),

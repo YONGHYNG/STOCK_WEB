@@ -334,6 +334,16 @@ hr {
   color: var(--red);
 }
 
+.ops-badge--button {
+  width: 100%;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.ops-badge--button:hover {
+  background: rgba(255, 93, 108, 0.2);
+}
+
 .ops-card__mode {
   min-width: 0;
 }

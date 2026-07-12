@@ -33,6 +33,7 @@ from backend.database import (
     get_all_time_high,
     get_all_time_low,
     get_open_trade,
+    get_paper_account,
     get_recent_candles,
     get_recent_trades,
     insert_candles,
@@ -264,31 +265,26 @@ def _ensure_paper_account_start_id() -> Optional[int]:
 
 
 def _paper_account_payload() -> dict:
-    start_id = _ensure_paper_account_start_id()
-    trades = [
-        t for t in get_recent_trades(SYMBOL, limit=None, trade_type="PAPER")
-        if start_id is not None and int(t.get("id") or 0) >= start_id
-    ]
-    closed = [t for t in trades if t.get("pnl_pct") is not None and t.get("result") != "OPEN"]
-    realized_pnl = sum(
-        PAPER_ACCOUNT_INITIAL_BALANCE * PAPER_ACCOUNT_LEVERAGE * (float(t.get("pnl_pct") or 0) / 100)
-        for t in closed
-    )
+    account = get_paper_account(PAPER_ACCOUNT_INITIAL_BALANCE, PAPER_ACCOUNT_LEVERAGE)
+    initial_balance = float(account["initial_balance"])
+    balance = float(account["balance"])
+    leverage = float(account["leverage"])
+    realized_pnl = balance - initial_balance
     paper_position = _paper_position_payload()
     unrealized_pnl = 0.0
     if paper_position:
-        unrealized_pnl = PAPER_ACCOUNT_INITIAL_BALANCE * PAPER_ACCOUNT_LEVERAGE * (float(paper_position.get("pnl_pct") or 0) / 100)
-    equity = PAPER_ACCOUNT_INITIAL_BALANCE + realized_pnl + unrealized_pnl
+        unrealized_pnl = balance * leverage * (float(paper_position.get("pnl_pct") or 0) / 100)
+        unrealized_pnl = max(unrealized_pnl, -balance)
+    equity = balance + unrealized_pnl
     return {
-        "initial_balance": PAPER_ACCOUNT_INITIAL_BALANCE,
-        "leverage": PAPER_ACCOUNT_LEVERAGE,
-        "notional": PAPER_ACCOUNT_INITIAL_BALANCE * PAPER_ACCOUNT_LEVERAGE,
-        "start_trade_id": start_id,
+        "initial_balance": initial_balance,
+        "balance": balance,
+        "leverage": leverage,
+        "notional": balance * leverage,
         "realized_pnl": realized_pnl,
         "unrealized_pnl": unrealized_pnl,
         "equity": equity,
-        "return_pct": ((equity - PAPER_ACCOUNT_INITIAL_BALANCE) / PAPER_ACCOUNT_INITIAL_BALANCE * 100)
-        if PAPER_ACCOUNT_INITIAL_BALANCE else 0.0,
+        "return_pct": ((equity - initial_balance) / initial_balance * 100) if initial_balance else 0.0,
     }
 
 
@@ -759,6 +755,8 @@ async def set_auto_trade(payload: AutoTradePayload):
 
 
 async def emergency_stop():
+    if not state.emergency_stopped:
+        state.auto_trade_enabled_before_emergency = state.auto_trade_enabled
     risk_mgr.activate_emergency_stop()
     state.auto_trade_enabled = False
     state.emergency_stopped = True
@@ -768,6 +766,22 @@ async def emergency_stop():
     await manager.broadcast({"type": "status", "data": _status_payload()})
     has_pos = bool(state.open_trade_data or state.cached_positions or paper_trader.is_open)
     return {"ok": True, "has_position": has_pos}
+
+
+async def emergency_resume():
+    risk_mgr.deactivate_emergency_stop()
+    state.emergency_stopped = False
+    previous_enabled = state.auto_trade_enabled_before_emergency
+    state.auto_trade_enabled = previous_enabled if previous_enabled is not None else state.trading_mode == "PAPER_TRADING"
+    state.auto_trade_enabled_before_emergency = None
+    if state.auto_trade_enabled:
+        keep_awake.enable()
+    else:
+        keep_awake.disable()
+    msg = state.add_log(f"[긴급정지 해제] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} — 운영 재개")
+    await manager.broadcast({"type": "log", "data": {"message": msg}})
+    await manager.broadcast({"type": "status", "data": _status_payload()})
+    return {"ok": True}
 
 
 async def emergency_close():

@@ -22,7 +22,7 @@ function SectionBlock({ title, children }) {
   )
 }
 
-export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop }) {
+export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop, onEmergencyResume }) {
   return (
     <>
       <div className="top-grid">
@@ -40,6 +40,7 @@ export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop
                 updatedAt={state.updatedAt}
                 onModeChange={onModeChange}
                 onEmergencyStop={onEmergencyStop}
+                onEmergencyResume={onEmergencyResume}
               />
             </SectionBlock>
             <SectionBlock title="계정 및 포지션">

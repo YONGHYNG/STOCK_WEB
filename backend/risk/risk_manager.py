@@ -115,8 +115,7 @@ class RiskManager:
             existing_side = btc_positions[0].get("holdSide", "").upper()
             if existing_side == direction:
                 return False, f"이미 {direction} 포지션 보유 중, 추가 진입하지 않음"
-            # 반대 포지션 → 청산 후 반전 (호출자에서 처리)
-            return True, f"반대 {existing_side} 포지션 있음, 청산 후 {direction} 진입"
+            return False, f"기존 {existing_side} 포지션 보유 중, 청산 전까지 반대 진입하지 않음"
 
         return True, ""
 

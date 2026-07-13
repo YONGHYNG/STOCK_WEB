@@ -511,15 +511,7 @@ async def _check_auto_trade(result: dict):
 
 async def _auto_paper_trade(direction: str, r: dict):
     if paper_trader.is_open:
-        if paper_trader.open_data["direction"] == direction:
-            return
-        price = state.last_price or r.get("entry_price", 0)
-        tid, pnl = paper_trader.force_close(price)
-        risk_mgr.record_trade_result(pnl)
-        msg = state.add_log(f"[모의매매] 반전 청산 #{tid}  PnL={pnl:+.2f}%")
-        await manager.broadcast({"type": "log", "data": {"message": msg}})
-        await manager.broadcast({"type": "trade_update"})
-        await manager.broadcast({"type": "status", "data": _status_payload()})
+        return
 
     trade_id = paper_trader.open_trade(direction, r)
     if state.paper_account_start_trade_id is None:
@@ -536,16 +528,7 @@ async def _auto_live_trade(direction: str, r: dict):
         return
     btc_positions = [p for p in state.cached_positions if p.get("symbol") == SYMBOL]
     if btc_positions:
-        existing_side = btc_positions[0].get("holdSide", "").upper()
-        if existing_side != direction:
-            try:
-                private_client.close_position(existing_side.lower())
-                msg = state.add_log(f"[자동매매] 기존 {existing_side} 청산 (반전)")
-                await manager.broadcast({"type": "log", "data": {"message": msg}})
-            except Exception as exc:
-                msg = state.add_log(f"[자동매매] 청산 실패: {exc}")
-                await manager.broadcast({"type": "log", "data": {"message": msg}})
-                return
+        return
 
     size = f"{risk_cfg.order_size_btc:.3f}"
     side = "buy" if direction == "LONG" else "sell"

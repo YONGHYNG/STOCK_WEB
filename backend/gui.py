@@ -1281,20 +1281,12 @@ class TradingMainWindow(QMainWindow):
           - 포지션 없음 + LONG/SHORT → 신규 진입
           - 포지션 있음 + 같은 방향  → 유지 (아무것도 안 함)
           - 포지션 있음 + HOLD       → 유지 (TP/SL에 맡김)
-          - 포지션 있음 + 반대 방향  → 청산 후 반전 진입
+          - 포지션 있음 + 반대 방향  → 무시 (TP/SL에 맡김)
         """
         new_dir = r.get("direction", "HOLD")
 
         if self._open_trade_data:
-            current_dir = self._open_trade_data["direction"]
-            opposite    = {"LONG": "SHORT", "SHORT": "LONG"}
-
-            if new_dir == opposite.get(current_dir):
-                # 반대 방향 신호 → 청산 후 반전
-                if self._last_price:
-                    self._force_close_trade(self._last_price, "SIGNAL_CHANGE")
-                self._do_open_trade(new_dir, r)
-            # 같은 방향이거나 HOLD → 포지션 유지, 진입가 그대로
+            return
         else:
             # 포지션 없음 → LONG/SHORT이면 새 진입
             if new_dir in ("LONG", "SHORT"):
@@ -1621,18 +1613,8 @@ class TradingMainWindow(QMainWindow):
 
     def _auto_paper_trade(self, direction: str, r: dict, entry_reason: str):
         """모의매매 자동 진입."""
-        # 반대 모의 포지션 청산
         if self._paper_trader.is_open:
-            existing_dir = self._paper_trader.open_data["direction"]
-            opposite = {"LONG": "SHORT", "SHORT": "LONG"}
-            if existing_dir == direction:
-                return  # 같은 방향 → 유지
-            # 반대 방향 → 강제청산
-            price = self._last_price or r.get("entry_price", 0)
-            tid, pnl = self._paper_trader.force_close(price)
-            self._risk_mgr.record_trade_result(pnl)
-            self._log(f"[모의매매] 반전 청산 #{tid}  PnL={pnl:+.2f}%")
-            self._refresh_trade_table()
+            return
 
         trade_id = self._paper_trader.open_trade(direction, r)
         self._log(
@@ -1644,17 +1626,9 @@ class TradingMainWindow(QMainWindow):
 
     def _auto_live_trade(self, direction: str, r: dict, entry_reason: str):
         """실거래 자동 진입 (RiskManager 통과 후 실행)."""
-        # 반대 거래소 포지션 청산
         btc_positions = [p for p in self._cached_positions if p.get("symbol") == SYMBOL]
         if btc_positions:
-            existing_side = btc_positions[0].get("holdSide", "").upper()
-            if existing_side != direction:
-                try:
-                    self._private_client.close_position(existing_side.lower())
-                    self._log(f"[자동매매] 기존 {existing_side} 청산 (반전)")
-                except Exception as exc:
-                    self._log(f"[자동매매] 청산 실패: {exc}")
-                    return
+            return
 
         size = f"{self._risk_cfg.order_size_btc:.3f}"
         side = "buy" if direction == "LONG" else "sell"

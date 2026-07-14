@@ -115,7 +115,7 @@ def init_db() -> None:
 
 
 def reconcile_paper_account(initial_balance: float = 100.0, leverage: float = 20.0) -> dict:
-    """미반영 모의 청산 내역을 순서대로 잔액에 누적하고 영구 저장합니다."""
+    """모의 청산 내역을 시간순으로 복리 재계산하고 잔액과 수익금을 저장합니다."""
     with get_connection() as conn:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute(
@@ -123,13 +123,12 @@ def reconcile_paper_account(initial_balance: float = 100.0, leverage: float = 20
             (initial_balance, initial_balance, leverage),
         )
         account = conn.execute("SELECT * FROM paper_account WHERE id=1").fetchone()
-        balance = float(account["balance"])
+        balance = float(account["initial_balance"])
         account_leverage = float(account["leverage"])
         rows = conn.execute(
             """
             SELECT id, pnl_pct FROM trades
             WHERE trade_type='PAPER' AND result != 'OPEN' AND pnl_pct IS NOT NULL
-              AND realized_pnl_amount IS NULL
             ORDER BY id ASC
             """
         ).fetchall()
@@ -138,7 +137,7 @@ def reconcile_paper_account(initial_balance: float = 100.0, leverage: float = 20
             pnl_amount = max(pnl_amount, -balance)
             balance += pnl_amount
             conn.execute(
-                "UPDATE trades SET realized_pnl_amount=? WHERE id=? AND realized_pnl_amount IS NULL",
+                "UPDATE trades SET realized_pnl_amount=? WHERE id=?",
                 (round(pnl_amount, 8), row["id"]),
             )
         conn.execute(

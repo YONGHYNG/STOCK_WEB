@@ -124,9 +124,15 @@ class TradingAIEngine:
         atr = float(last.get("atr14") or 0)
         stop_loss, tp1, tp2, rr = self._risk_prices(plan_direction, entry, atr, df, decision, last, frame_info["summaries"])
         warnings = list(decision.warnings)
-        entry_grade = "B" if direction in ("LONG", "SHORT") and stop_loss and rr and rr >= 1.5 else "F"
+        entry_grade = self._entry_grade(
+            direction=direction,
+            signal=decision.signal,
+            stop_loss=stop_loss,
+            risk_reward=rr,
+            volume_ratio=float(last.get("volume_ratio") or 0),
+            timeframe_directions=frame_info["directions"],
+        )
         if decision.signal.startswith("WAIT"):
-            entry_grade = "F"
             warnings.append("WAIT 상태: 시장가 추격 진입 금지")
             warnings.append("표시된 진입가/손절가/익절가는 조건 충족 시 사용할 예상 계획")
         if entry_grade in ("C", "D", "F"):
@@ -196,6 +202,33 @@ class TradingAIEngine:
             strategy_signal=decision.signal,
             planned_direction=plan_direction,
         )
+
+    @staticmethod
+    def _entry_grade(
+        direction: str,
+        signal: str,
+        stop_loss: Optional[float],
+        risk_reward: Optional[float],
+        volume_ratio: float,
+        timeframe_directions: dict[str, str],
+    ) -> str:
+        """진입 품질을 A~F로 구분하되 A/B만 실제 진입을 허용합니다."""
+        if signal.startswith("WAIT"):
+            return "C" if stop_loss and risk_reward else "D"
+        if direction not in ("LONG", "SHORT"):
+            return "D"
+        if not stop_loss or not risk_reward or risk_reward < 1.5:
+            return "F"
+
+        higher_directions = [
+            timeframe_directions.get(tf, "HOLD")
+            for tf in ("5m", "15m", "30m", "1H", "4H", "6H", "1D")
+        ]
+        active_higher = [value for value in higher_directions if value in ("LONG", "SHORT")]
+        higher_aligned = bool(active_higher) and all(value == direction for value in active_higher)
+        if risk_reward >= 2.0 and volume_ratio >= 1.2 and higher_aligned:
+            return "A"
+        return "B"
 
     @staticmethod
     def _pricing(price: float, market: dict) -> dict:

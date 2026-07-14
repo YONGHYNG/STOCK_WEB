@@ -3,6 +3,8 @@ import { useMemo, useState } from 'react'
 import { toKst } from '../utils/time'
 
 const PAGE_SIZE = 10
+const DEFAULT_MARGIN = 100
+const FIXED_LEVERAGE = 20
 
 function money(v) {
   return v != null ? `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '-'
@@ -13,6 +15,12 @@ function timeValue(v) {
   if (Number.isFinite(n)) return n
   const parsed = Date.parse(v)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function profitAmount(trade) {
+  if (trade.realized_pnl_amount != null) return Number(trade.realized_pnl_amount)
+  if (trade.pnl_pct == null) return null
+  return DEFAULT_MARGIN * FIXED_LEVERAGE * (Number(trade.pnl_pct) / 100)
 }
 
 export function TradeLogTable({ trades }) {
@@ -76,7 +84,7 @@ export function TradeLogTable({ trades }) {
       <div className="data-table-wrap">
         <table className="trade-log-table">
           <thead>
-            <tr>{['구분', '시간', '방향', '진입가', '손절', '익절1', '익절2', '청산가', '결과', '수익률'].map((h) => <th key={h}>{h}</th>)}</tr>
+            <tr>{['구분', '시간', '방향', '진입가', '손절', '익절', '수익금', '청산가', '결과', '수익률'].map((h) => <th key={h}>{h}</th>)}</tr>
           </thead>
           <tbody>
             {sortedTrades.length === 0 && <tr><td colSpan="10" className="table-empty">거래 기록이 없습니다</td></tr>}
@@ -85,6 +93,8 @@ export function TradeLogTable({ trades }) {
               const dirTone = t.direction === 'LONG' ? 'tone-long' : 'tone-short'
               const pnlTone = pnl == null ? 'tone-info' : pnl >= 0 ? 'tone-long' : 'tone-short'
               const resultTone = pnl == null ? 'tone-info' : pnl >= 0 ? 'tone-long' : 'tone-short'
+              const realizedProfit = profitAmount(t)
+              const resultLabel = pnl == null ? '진행중' : pnl >= 0 ? '수익' : '손실'
               return (
                 <tr key={t.id}>
                   <td>{t.trade_type}</td>
@@ -93,9 +103,9 @@ export function TradeLogTable({ trades }) {
                   <td>{money(t.entry_price)}</td>
                   <td className="tone-short">{money(t.stop_loss)}</td>
                   <td className="tone-long">{money(t.take_profit_1)}</td>
-                  <td className="tone-long">{money(t.take_profit_2)}</td>
+                  <td className={pnlTone}>{realizedProfit == null ? '-' : `${realizedProfit >= 0 ? '+' : '-'}${money(Math.abs(realizedProfit))}`}</td>
                   <td>{money(t.exit_price)}</td>
-                  <td className={resultTone}>{t.result ?? 'OPEN'}</td>
+                  <td className={resultTone}>{resultLabel}</td>
                   <td className={pnlTone}>{pnl == null ? '진행중' : `${pnl >= 0 ? '+' : ''}${Number(pnl).toFixed(2)}%`}</td>
                 </tr>
               )

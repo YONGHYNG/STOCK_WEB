@@ -16,6 +16,21 @@ function pct(value) {
   return `${sign}${n.toFixed(2)}%`
 }
 
+const GRADE_LABELS = {
+  A: 'A · 최상',
+  B: 'B · 양호',
+  C: 'C · 진입 대기',
+  D: 'D · 조건 미흡',
+  F: 'F · 위험/계산 불가',
+}
+
+function gradeTone(grade) {
+  if (grade === 'A' || grade === 'B') return 'tone-long'
+  if (grade === 'C') return 'tone-wait'
+  if (grade === 'D') return 'tone-muted'
+  return 'tone-short'
+}
+
 function paperPnl(direction, entry, current) {
   const e = Number(entry ?? 0)
   const c = Number(current ?? 0)
@@ -58,7 +73,7 @@ export function SignalCard({ signal, price, status }) {
   ] : []
 
   const signalMetrics = [
-    { label: '진입 등급', value: signal?.entry_grade ?? '-', tone: signal?.entry_grade === 'F' ? 'tone-short' : 'tone-long' },
+    { label: '진입 등급', value: GRADE_LABELS[signal?.entry_grade] ?? '-', tone: gradeTone(signal?.entry_grade) },
     { label: '전략 신호', value: strategySignal, tone: strategySignal.startsWith('WAIT') ? 'tone-wait' : toneClass(direction) },
     { label: '대기 포지션', value: plannedDirection, tone: toneClass(plannedDirection) },
     { label: '상태', value: state, tone: state.startsWith('WAIT') ? 'tone-wait' : '' },

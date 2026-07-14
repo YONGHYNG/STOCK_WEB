@@ -12,6 +12,14 @@ function num(v) {
   return Number.isFinite(n) && v != null && v !== '' ? n : null
 }
 
+const GRADE_LABELS = {
+  A: 'A · 최상',
+  B: 'B · 양호',
+  C: 'C · 진입 대기',
+  D: 'D · 조건 미흡',
+  F: 'F · 위험/계산 불가',
+}
+
 export function RiskStatus({ signal, account, positions }) {
   const btcPosition = (positions ?? []).find((p) => p.symbol === 'BTCUSDT' && Number(p.total ?? 0) > 0)
 
@@ -145,8 +153,8 @@ function PlannedEntryRisk({ signal }) {
         </div>
         <div className="stat-box">
           <span className="eyebrow">진입 등급</span>
-          <strong className="mini-summary__value">{grade}</strong>
-          <span className="mini-summary__hint">A~B는 진입 가능, C~D~F는 조건이 나빠 자동 진입이 막혀요</span>
+          <strong className="mini-summary__value">{GRADE_LABELS[grade] ?? grade}</strong>
+          <span className="mini-summary__hint">A~B는 진입 가능, C는 조건 확인 대기, D~F는 조건 미흡이나 위험으로 자동 진입이 막혀요</span>
         </div>
         <div className="stat-box">
           <span className="eyebrow">자동 진입</span>

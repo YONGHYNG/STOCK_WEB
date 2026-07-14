@@ -1,4 +1,4 @@
-// 역할: 오늘 진입 횟수와 실현 수익률을 요약해서 보여주는 컴포넌트.
+// 역할: 선택한 기간의 진입 횟수와 실현 수익률을 요약해서 보여주는 컴포넌트.
 import { useState } from 'react'
 
 const RANGE_OPTIONS = [1, 3, 7, 14, 30]
@@ -49,14 +49,22 @@ export function ProfitSummary({ trades }) {
   }
   const entries = actualTrades.filter((t) => inRange(t.entry_time))
   const closed = actualTrades.filter((t) => t.pnl_pct != null && inRange(t.exit_time ?? t.entry_time))
-  const pnl = closed.reduce((sum, t) => sum + Number(t.pnl_pct), 0)
-  const pnlTone = pnl >= 0 ? 'tone-long' : 'tone-short'
   const safeMargin = Math.max(0, Number(margin) || 0)
   const safeFeeRate = Math.max(0, Number(feeRatePct) || 0) / 100
+  const settlement = closed
+    .slice()
+    .sort((a, b) => parseBackendTime(a.exit_time ?? a.entry_time) - parseBackendTime(b.exit_time ?? b.entry_time))
+    .reduce((state, trade) => {
+      const notional = state.balance * FIXED_LEVERAGE
+      const profit = Math.max(notional * (Number(trade.pnl_pct) / 100), -state.balance)
+      return {
+        balance: state.balance + profit,
+        includedFee: state.includedFee + notional * safeFeeRate * 2,
+      }
+    }, { balance: safeMargin, includedFee: 0 })
   const notional = safeMargin * FIXED_LEVERAGE
-  const grossProfit = notional * (pnl / 100)
-  const totalFee = closed.length * notional * safeFeeRate * 2
-  const netProfit = grossProfit - totalFee
+  const netProfit = settlement.balance - safeMargin
+  const totalFee = settlement.includedFee
   const netPnlPct = safeMargin > 0 ? (netProfit / safeMargin) * 100 : 0
   const netTone = netProfit >= 0 ? 'tone-long' : 'tone-short'
 
@@ -75,14 +83,14 @@ export function ProfitSummary({ trades }) {
         ))}
       </div>
       <div className="stat-box">
-        <div className="eyebrow">수수료 제외 수익금</div>
+        <div className="eyebrow">수수료 차감 순수익금</div>
         <div className={`value-xl ${netTone}`}>{netProfit >= 0 ? '+' : '-'}{money(Math.abs(netProfit))}</div>
         <div className="value-sub">{netPnlPct >= 0 ? '+' : ''}{netPnlPct.toFixed(2)}% / 투자금 기준</div>
       </div>
       <div className="stat-box">
-        <div className="eyebrow">{rangeDays}일 실현 수익률</div>
-        <div className={`value-xl ${pnlTone}`}>{pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}%</div>
-        <div className="value-sub">수수료 차감 전 · 청산 {closed.length}건</div>
+        <div className="eyebrow">{rangeDays}일 복리 수익률</div>
+        <div className={`value-xl ${netTone}`}>{netPnlPct >= 0 ? '+' : ''}{netPnlPct.toFixed(2)}%</div>
+        <div className="value-sub">수수료 차감 후 · 청산 {closed.length}건</div>
       </div>
       <div className="summary-calc">
         <label>
@@ -120,7 +128,7 @@ export function ProfitSummary({ trades }) {
           <div className="stat-value">{money(notional)}</div>
         </div>
         <div className="stat-box">
-          <div className="eyebrow">왕복 수수료</div>
+          <div className="eyebrow">포함된 왕복 수수료</div>
           <div className="stat-value tone-short">-{money(totalFee)}</div>
         </div>
       </div>

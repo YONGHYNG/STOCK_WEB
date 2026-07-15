@@ -10,6 +10,8 @@ SIGNAL_TO_DIRECTION = {
     "SHORT_BREAKDOWN": "SHORT",
     "LONG_BOUNCE": "LONG",
     "LONG_TREND_CHANGE": "LONG",
+    "SHORT_TREND_CONTINUATION": "SHORT",
+    "LONG_TREND_CONTINUATION": "LONG",
 }
 
 
@@ -84,6 +86,14 @@ class VolumeTrendRsiStrategy:
             reasons.append("최근 20캔들 저점 지지 + 긴 아래꼬리 + RSI 상승 전환 + 거래량 확인")
             return self._decision("LONG_BOUNCE", df, reasons, warnings, support_level=support_level)
 
+        if self._short_trend_continuation(last):
+            reasons.append("하락 추세 지속 + 음봉 확정 + RSI 약세 + 기본 거래량 충족")
+            return self._decision("SHORT_TREND_CONTINUATION", df, reasons, warnings, support_level=support_level)
+
+        if self._long_trend_continuation(last):
+            reasons.append("상승 추세 지속 + 양봉 확정 + RSI 강세 + 기본 거래량 충족")
+            return self._decision("LONG_TREND_CONTINUATION", df, reasons, warnings, support_level=support_level)
+
         if self.state.mode.startswith("WAIT"):
             reasons.append(f"{self.state.mode} 상태 유지, 확정 캔들 조건 미충족")
             return self._decision(self.state.mode, df, reasons, warnings, support_level=support_level)
@@ -102,11 +112,11 @@ class VolumeTrendRsiStrategy:
     def _short_rebound(self, last, prev) -> bool:
         downtrend = float(last["close"]) < float(last["ma90"]) < float(last["ma200"])
         rsi_turn_down = float(prev["rsi14"]) >= 55 and float(last["rsi14"]) < float(prev["rsi14"])
-        return bool(downtrend and self._near_ma_rejection(last) and rsi_turn_down and float(last["volume_ratio"]) >= 1.0)
+        return bool(downtrend and self._near_ma_rejection(last) and rsi_turn_down and float(last["volume_ratio"]) >= 0.8)
 
     @staticmethod
     def _short_breakdown_setup(last, support_level: float) -> bool:
-        return bool(float(last["close"]) < support_level and float(last["volume_ratio"]) >= 1.2)
+        return bool(float(last["close"]) < support_level and float(last["volume_ratio"]) >= 1.05)
 
     def _short_breakdown_entry(self, last) -> bool:
         support = self.state.support_level
@@ -119,13 +129,13 @@ class VolumeTrendRsiStrategy:
         support_hold = float(last["low"]) <= support_level and float(last["close"]) > support_level
         longer_lower_wick = float(last["lower_wick"]) > float(last["upper_wick"])
         rsi_turn_up = float(prev["rsi14"]) <= 40 and float(last["rsi14"]) > float(prev["rsi14"])
-        return bool(support_hold and longer_lower_wick and rsi_turn_up and float(last["volume_ratio"]) >= 1.0)
+        return bool(support_hold and longer_lower_wick and rsi_turn_up and float(last["volume_ratio"]) >= 0.8)
 
     @staticmethod
     def _long_trend_change_setup(last, prev) -> bool:
         prev_below_ma90 = float(prev["close"]) < float(prev["ma90"])
         current_above_mas = float(last["close"]) > float(last["ma90"]) and float(last["close"]) > float(last["ma200"])
-        return bool(prev_below_ma90 and current_above_mas and float(last["rsi14"]) > 50 and float(last["volume_ratio"]) >= 1.2)
+        return bool(prev_below_ma90 and current_above_mas and float(last["rsi14"]) > 50 and float(last["volume_ratio"]) >= 1.05)
 
     def _long_trend_change_entry(self, last) -> bool:
         breakout = self.state.breakout_level
@@ -133,6 +143,26 @@ class VolumeTrendRsiStrategy:
             return False
         rsi = float(last["rsi14"])
         return bool(float(last["low"]) <= breakout and float(last["close"]) > breakout and 45 <= rsi <= 60)
+
+    @staticmethod
+    def _short_trend_continuation(last) -> bool:
+        close = float(last["close"])
+        return bool(
+            close < float(last["open"])
+            and close < float(last["ma90"]) < float(last["ma200"])
+            and float(last["rsi14"]) <= 48
+            and float(last["volume_ratio"]) >= 0.8
+        )
+
+    @staticmethod
+    def _long_trend_continuation(last) -> bool:
+        close = float(last["close"])
+        return bool(
+            close > float(last["open"])
+            and close > float(last["ma90"]) > float(last["ma200"])
+            and float(last["rsi14"]) >= 52
+            and float(last["volume_ratio"]) >= 0.8
+        )
 
     def _consume(self, signal: str) -> str:
         self.state = StrategyState()

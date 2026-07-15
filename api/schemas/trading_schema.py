@@ -11,6 +11,11 @@ class RiskSettingsPayload(BaseModel):
     consecutive_loss_limit: int
     confidence_threshold: float
     reentry_wait_seconds: int
+    stop_gap_min_usdt: float = 400.0
+    stop_gap_max_usdt: float = 700.0
+    take_profit_1_min_usdt: float = 500.0
+    take_profit_1_max_usdt: float = 600.0
+    take_profit_2_usdt: float = 800.0
     max_leverage: int
     live_trading_allowed: bool
 

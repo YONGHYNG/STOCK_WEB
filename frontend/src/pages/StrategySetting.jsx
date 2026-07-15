@@ -8,7 +8,12 @@ const DEFAULTS = {
   daily_max_loss_pct: 3,
   consecutive_loss_limit: 3,
   confidence_threshold: 30,
-  reentry_wait_seconds: 300,
+  reentry_wait_seconds: 30,
+  stop_gap_min_usdt: 400,
+  stop_gap_max_usdt: 700,
+  take_profit_1_min_usdt: 500,
+  take_profit_1_max_usdt: 600,
+  take_profit_2_usdt: 800,
   max_leverage: 3,
   live_trading_allowed: false,
 }
@@ -64,6 +69,7 @@ export function StrategySetting({ settings, onSaved }) {
           <li>확정 진입 신호가 나온 뒤 리스크 검사를 통과할 때만, 최대 <b>{form.max_leverage}배</b> 레버리지로 <b>{form.order_size_btc} BTC</b>씩 자동 진입해요</li>
           <li>한 번에 <b>{form.max_loss_pct}%</b> 넘게 잃거나 하루 합계로 <b>{form.daily_max_loss_pct}%</b> 잃으면 그날은 더 이상 진입하지 않아요</li>
           <li>손실이 <b>{form.consecutive_loss_limit}번</b> 연속되면 잠시 멈추고, 다음 진입까지는 <b>{minutesLabel(form.reentry_wait_seconds)}</b> 기다려요</li>
+          <li>진입가 기준 손절 간격은 <b>{form.stop_gap_min_usdt}~{form.stop_gap_max_usdt} USDT</b>, 익절 간격은 <b>{form.take_profit_1_min_usdt}~{form.take_profit_1_max_usdt} / {form.take_profit_2_usdt} USDT</b>로 잡아요</li>
           <li>실거래 주문은 지금 <b className={form.live_trading_allowed ? 'tone-short' : 'tone-long'}>{form.live_trading_allowed ? '허용됨 (실제 돈이 움직여요)' : '차단됨 (신호만 보여줘요)'}</b></li>
         </ul>
       </div>
@@ -90,6 +96,14 @@ export function StrategySetting({ settings, onSaved }) {
             warn={leverageWarn}
             warnText="5배가 넘으면 작은 가격 변동에도 청산 위험이 크게 늘어나요"
           />
+        </SettingGroup>
+
+        <SettingGroup title="손절·익절 가격 간격" note="실제 손익금이 아니라 BTC 진입가에서 떨어진 USDT 가격 간격이에요">
+          <Field label="최소 손절 간격" hint="ATR이 작아도 이 가격 간격보다 손절을 좁히지 않아요" value={form.stop_gap_min_usdt} step="50" min="1" suffix="USDT" onChange={(v) => set('stop_gap_min_usdt', v)} />
+          <Field label="최대 손절 간격" hint="ATR이 커도 손절 가격 간격은 여기까지만 허용해요" value={form.stop_gap_max_usdt} step="50" min={form.stop_gap_min_usdt} suffix="USDT" onChange={(v) => set('stop_gap_max_usdt', v)} />
+          <Field label="1차 익절 최소 간격" hint="1차 익절 가격 간격의 하한이에요" value={form.take_profit_1_min_usdt} step="50" min="1" suffix="USDT" onChange={(v) => set('take_profit_1_min_usdt', v)} />
+          <Field label="1차 익절 최대 간격" hint="1차 익절 가격 간격의 상한이에요" value={form.take_profit_1_max_usdt} step="50" min={form.take_profit_1_min_usdt} suffix="USDT" onChange={(v) => set('take_profit_1_max_usdt', v)} />
+          <Field label="2차 익절 간격" hint="두 번째 목표가는 진입가에서 이만큼 떨어져 잡아요" value={form.take_profit_2_usdt} step="50" min={form.take_profit_1_max_usdt} suffix="USDT" onChange={(v) => set('take_profit_2_usdt', v)} />
         </SettingGroup>
 
         <SettingGroup title="진입 조건" note="WAIT 상태에서는 진입하지 않고, 확정 신호만 자동 진입 후보가 돼요">

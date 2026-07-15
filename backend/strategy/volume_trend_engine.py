@@ -5,6 +5,7 @@ from typing import Optional
 from backend.config import SYMBOL, TAKER_FEE_RATE, TIMEFRAMES
 from backend.strategy.indicator import add_indicators
 from backend.strategy.strategy import VolumeTrendRsiStrategy
+from backend.risk.settings import load as load_risk_settings
 
 RISK_ATR_MULTIPLIER = 3.0
 TAKE_PROFIT_1_R_MULTIPLIER = 1.0
@@ -122,7 +123,9 @@ class TradingAIEngine:
         else:
             entry = price
         atr = float(last.get("atr14") or 0)
-        stop_loss, tp1, tp2, rr = self._risk_prices(plan_direction, entry, atr, df, decision, last, frame_info["summaries"])
+        stop_loss, tp1, tp2, rr = self._risk_prices(
+            plan_direction, entry, atr, df, decision, last, frame_info["summaries"], load_risk_settings()
+        )
         warnings = list(decision.warnings)
         entry_grade = self._entry_grade(
             direction=direction,
@@ -217,7 +220,7 @@ class TradingAIEngine:
             return "C" if stop_loss and risk_reward else "D"
         if direction not in ("LONG", "SHORT"):
             return "D"
-        if not stop_loss or not risk_reward or risk_reward < 1.5:
+        if not stop_loss or not risk_reward or risk_reward < 1.1:
             return "F"
 
         higher_directions = [
@@ -255,11 +258,13 @@ class TradingAIEngine:
         decision=None,
         last=None,
         timeframe_summaries: Optional[dict[str, dict]] = None,
+        risk_settings=None,
     ) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
         if direction not in ("LONG", "SHORT") or atr <= 0:
             return None, None, None, None
 
         timeframe_summaries = timeframe_summaries or {}
+        risk_settings = risk_settings or load_risk_settings()
         higher_atrs = [
             float(summary.get("atr14") or 0)
             for tf, summary in timeframe_summaries.items()
@@ -283,7 +288,12 @@ class TradingAIEngine:
         ma200 = float(last.get("ma200") or 0) if last is not None else None
         volume_ratio = float(last.get("volume_ratio") or 0) if last is not None else 0.0
 
-        base_risk = risk_atr * RISK_ATR_MULTIPLIER
+        stop_min = max(1.0, float(risk_settings.stop_gap_min_usdt))
+        stop_max = max(stop_min, float(risk_settings.stop_gap_max_usdt))
+        tp1_min = max(1.0, float(risk_settings.take_profit_1_min_usdt))
+        tp1_max = max(tp1_min, float(risk_settings.take_profit_1_max_usdt))
+        tp2_gap = max(tp1_max, float(risk_settings.take_profit_2_usdt))
+        base_risk = min(max(risk_atr * RISK_ATR_MULTIPLIER, stop_min), stop_max)
         volume_boost = 0.6 if volume_ratio >= 1.5 else 0.35 if volume_ratio >= 1.2 else 0.15 if volume_ratio >= 1.0 else 0.0
         tp1_r = 0.8 + volume_boost * 0.5
         tp2_r = 1.4 + volume_boost
@@ -294,12 +304,11 @@ class TradingAIEngine:
                 value for value in (support, breakout, ma90, ma200, recent_support)
                 if value is not None and value > 0 and value < entry
             ]
-            structural_stop = min((level - buffer for level in below_levels), default=entry - base_risk)
-            stop = min(entry - base_risk, structural_stop)
+            stop = entry - base_risk
             risk = entry - stop
-            resistance_target = recent_resistance + buffer if recent_resistance and recent_resistance > entry else None
-            tp1 = max(entry + risk * tp1_r, resistance_target or 0)
-            tp2 = max(entry + risk * tp2_r, (resistance_target + risk * 0.8) if resistance_target else 0)
+            tp1_gap = min(max(risk, tp1_min), tp1_max)
+            tp1 = entry + tp1_gap
+            tp2 = entry + tp2_gap
             return (
                 stop,
                 tp1,
@@ -311,12 +320,11 @@ class TradingAIEngine:
             value for value in (support, breakout, ma90, ma200, recent_resistance)
             if value is not None and value > entry
         ]
-        structural_stop = max((level + buffer for level in above_levels), default=entry + base_risk)
-        stop = max(entry + base_risk, structural_stop)
+        stop = entry + base_risk
         risk = stop - entry
-        support_target = recent_support - buffer if recent_support and recent_support < entry else None
-        tp1 = min(entry - risk * tp1_r, support_target) if support_target else entry - risk * tp1_r
-        tp2 = min(entry - risk * tp2_r, support_target - risk * 0.8) if support_target else entry - risk * tp2_r
+        tp1_gap = min(max(risk, tp1_min), tp1_max)
+        tp1 = entry - tp1_gap
+        tp2 = entry - tp2_gap
         return (
             stop,
             tp1,

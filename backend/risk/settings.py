@@ -22,7 +22,14 @@ class RiskSettings:
 
     # 진입 조건
     confidence_threshold: float = 30.0  # 자동매매 확정 신호 기준 (%)
-    reentry_wait_seconds: int = 300     # 재진입 대기 시간 (초)
+    reentry_wait_seconds: int = 30      # 재진입 대기 시간 (초)
+
+    # 진입가 기준 가격 간격 (USDT)
+    stop_gap_min_usdt: float = 400.0
+    stop_gap_max_usdt: float = 700.0
+    take_profit_1_min_usdt: float = 500.0
+    take_profit_1_max_usdt: float = 600.0
+    take_profit_2_usdt: float = 800.0
 
     # 레버리지
     max_leverage: int = 3               # 최대 레버리지
@@ -42,7 +49,12 @@ def load() -> RiskSettings:
                 daily_max_loss_pct    = float(d.get("daily_max_loss_pct",    3.0)),
                 consecutive_loss_limit= int(  d.get("consecutive_loss_limit",3)),
                 confidence_threshold  = float(d.get("confidence_threshold",  30.0)),
-                reentry_wait_seconds  = int(  d.get("reentry_wait_seconds",  300)),
+                reentry_wait_seconds  = int(  d.get("reentry_wait_seconds",  30)),
+                stop_gap_min_usdt     = float(d.get("stop_gap_min_usdt",     400.0)),
+                stop_gap_max_usdt     = float(d.get("stop_gap_max_usdt",     700.0)),
+                take_profit_1_min_usdt= float(d.get("take_profit_1_min_usdt",500.0)),
+                take_profit_1_max_usdt= float(d.get("take_profit_1_max_usdt",600.0)),
+                take_profit_2_usdt    = float(d.get("take_profit_2_usdt",    800.0)),
                 max_leverage          = int(  d.get("max_leverage",          3)),
                 live_trading_allowed  = bool( d.get("live_trading_allowed",  False)),
             )

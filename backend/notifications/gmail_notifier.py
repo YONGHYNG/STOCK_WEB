@@ -78,12 +78,12 @@ def send_trade_plan_email(result: dict) -> tuple[bool, str]:
         return False, "포지션 또는 진입·손절·익절 가격이 완성되지 않음"
 
     body = (
-        "BTCUSDT 다음 포지션이 확정되었습니다.\n\n"
+        "BTCUSDT 포지션 지정가가 체결되었습니다.\n\n"
         f"방향: {direction}\n"
         f"진입 지정가: {entry:,.2f} USDT\n"
         f"손절가: {stop:,.2f} USDT\n"
         f"1차 익절가: {tp1:,.2f} USDT\n"
         f"2차 익절가: {tp2:,.2f} USDT\n"
     )
-    _send_message(sender, app_password, recipient, f"[BTCUSDT] 다음 {direction} 포지션 계획", body)
+    _send_message(sender, app_password, recipient, f"[BTCUSDT] {direction} 포지션 체결", body)
     return True, recipient

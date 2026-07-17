@@ -393,15 +393,6 @@ async def _ensure_signal_plan(result: dict):
     )
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "trade_update"})
-    try:
-        sent, detail = await asyncio.to_thread(send_trade_plan_email, result)
-        email_log = state.add_log(
-            f"[Gmail 알림] 다음 포지션 계획 발송 완료 → {detail}"
-            if sent else f"[Gmail 알림 대기] {detail}"
-        )
-    except Exception as exc:
-        email_log = state.add_log(f"[Gmail 알림 실패] {exc}")
-    await manager.broadcast({"type": "log", "data": {"message": email_log}})
 
 
 async def _check_plan_tp_sl(price: float):
@@ -533,6 +524,18 @@ async def _auto_paper_trade(direction: str, r: dict):
     await manager.broadcast({"type": "status", "data": _status_payload()})
 
 
+async def _send_filled_position_email(result: dict):
+    try:
+        sent, detail = await asyncio.to_thread(send_trade_plan_email, result)
+        email_log = state.add_log(
+            f"[Gmail 알림] 포지션 체결 메일 발송 완료 → {detail}"
+            if sent else f"[Gmail 알림 실패] {detail}"
+        )
+    except Exception as exc:
+        email_log = state.add_log(f"[Gmail 알림 실패] {exc}")
+    await manager.broadcast({"type": "log", "data": {"message": email_log}})
+
+
 async def _check_pending_paper_entry(price: float):
     pending = state.pending_paper_order
     if not pending or paper_trader.is_open:
@@ -549,6 +552,7 @@ async def _check_pending_paper_entry(price: float):
         state.paper_account_start_trade_id = trade_id
     msg = state.add_log(f"[모의 지정가 체결] {direction} #{trade_id}  ${limit_price:,.2f}")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
+    await _send_filled_position_email(result)
     await manager.broadcast({"type": "trade_update"})
     await manager.broadcast({"type": "status", "data": _status_payload()})
 
@@ -570,6 +574,7 @@ async def _auto_live_trade(direction: str, r: dict):
             "direction": direction,
             "entry_price": float(limit_price),
             "order_id": state.pending_live_order_id,
+            "result": dict(r),
         }
         risk_mgr.record_order_placed()
         msg = state.add_log(
@@ -650,8 +655,11 @@ async def account_loop():
                     state.cached_account = acct
                     state.cached_positions = positions if isinstance(positions, list) else []
                     cleared_pending = False
+                    filled_result = None
                     if state.cached_positions:
                         cleared_pending = state.pending_live_order is not None
+                        if state.pending_live_order:
+                            filled_result = state.pending_live_order.get("result")
                         state.pending_live_order_id = None
                         state.pending_live_order = None
                     await manager.broadcast({"type": "account", "data": {
@@ -659,6 +667,8 @@ async def account_loop():
                         "positions": state.cached_positions,
                     }})
                     if cleared_pending:
+                        if filled_result:
+                            await _send_filled_position_email(filled_result)
                         await manager.broadcast({"type": "status", "data": _status_payload()})
         except Exception:
             pass
@@ -736,7 +746,12 @@ def _pending_entry_payload() -> Optional[dict]:
             "take_profit_2": result.get("take_profit_2"),
         }
     if state.pending_live_order:
-        return {"mode": "LIVE", **state.pending_live_order}
+        return {
+            "mode": "LIVE",
+            "direction": state.pending_live_order.get("direction"),
+            "entry_price": state.pending_live_order.get("entry_price"),
+            "order_id": state.pending_live_order.get("order_id"),
+        }
     return None
 
 

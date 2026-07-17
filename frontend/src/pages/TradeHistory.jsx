@@ -43,7 +43,7 @@ function TimeframePositionCards({ directions }) {
   )
 }
 
-export function TradeHistory({ trades, signal }) {
+export function TradeHistory({ trades, signal, pendingEntry, currentPrice }) {
   return (
     <section className="workspace-panel">
       <div className="workspace-panel__top">
@@ -54,7 +54,7 @@ export function TradeHistory({ trades, signal }) {
         <TimeframePositionCards directions={signal?.timeframe_directions} />
       </div>
       <div className="stack stack--lg">
-        <TradeLogTable trades={trades} />
+        <TradeLogTable trades={trades} pendingEntry={pendingEntry} currentPrice={currentPrice} />
       </div>
     </section>
   )

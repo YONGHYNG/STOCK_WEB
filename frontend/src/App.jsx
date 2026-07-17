@@ -128,7 +128,14 @@ export default function App() {
           onEmergencyResume={emergencyResume}
         />
         {state.page === 'strategy' && <StrategySetting settings={state.riskSettings} onSaved={(s) => dispatch({ type: 'RISK_SETTINGS', settings: s })} />}
-        {state.page === 'history' && <TradeHistory trades={state.trades} signal={state.signal} />}
+        {state.page === 'history' && (
+          <TradeHistory
+            trades={state.trades}
+            signal={state.signal}
+            pendingEntry={state.status.pending_entry}
+            currentPrice={state.price ?? state.status.last_price}
+          />
+        )}
         {state.page === 'risk' && <RiskStatus signal={state.signal} account={state.account} positions={state.positions} />}
 
         <nav className="bottom-tab-bar" aria-label="하단 화면 전환">

@@ -23,7 +23,7 @@ function profitAmount(trade) {
   return DEFAULT_MARGIN * FIXED_LEVERAGE * (Number(trade.pnl_pct) / 100)
 }
 
-export function TradeLogTable({ trades }) {
+export function TradeLogTable({ trades, pendingEntry, currentPrice }) {
   const [page, setPage] = useState(1)
   const [selectedDate, setSelectedDate] = useState('')
   const baseTrades = useMemo(
@@ -57,6 +57,18 @@ export function TradeLogTable({ trades }) {
 
   return (
     <div className="trade-log">
+      {pendingEntry && (
+        <div className="pending-entry-notice" role="status">
+          <span className="pending-entry-notice__badge">대기중..</span>
+          <strong className={pendingEntry.direction === 'LONG' ? 'tone-long' : 'tone-short'}>
+            {pendingEntry.direction}
+          </strong>
+          <span>
+            지정가 {money(pendingEntry.entry_price)} 체결을 기다리고 있습니다.
+          </span>
+          <span className="pending-entry-notice__price">현재가 {money(currentPrice)}</span>
+        </div>
+      )}
       <div className="trade-log-filter">
         <div className="trade-log-filter__controls">
           <label>
@@ -87,7 +99,21 @@ export function TradeLogTable({ trades }) {
             <tr>{['구분', '시간', '방향', '진입가', '손절', '익절', '수익금', '청산가', '결과', '수익률'].map((h) => <th key={h}>{h}</th>)}</tr>
           </thead>
           <tbody>
-            {sortedTrades.length === 0 && <tr><td colSpan="10" className="table-empty">거래 기록이 없습니다</td></tr>}
+            {pendingEntry && (
+              <tr className="pending-entry-row">
+                <td>대기중..</td>
+                <td>대기중..</td>
+                <td className={pendingEntry.direction === 'LONG' ? 'tone-long' : 'tone-short'}>{pendingEntry.direction}</td>
+                <td>{money(pendingEntry.entry_price)}</td>
+                <td className="tone-short">{money(pendingEntry.stop_loss)}</td>
+                <td className="tone-long">{money(pendingEntry.take_profit_1)}</td>
+                <td>-</td>
+                <td>-</td>
+                <td className="tone-wait">대기중..</td>
+                <td>-</td>
+              </tr>
+            )}
+            {sortedTrades.length === 0 && !pendingEntry && <tr><td colSpan="10" className="table-empty">거래 기록이 없습니다</td></tr>}
             {visibleTrades.map((t) => {
               const pnl = t.pnl_pct
               const dirTone = t.direction === 'LONG' ? 'tone-long' : 'tone-short'

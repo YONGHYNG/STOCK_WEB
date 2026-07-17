@@ -101,7 +101,7 @@ export function TradeLogTable({ trades, pendingEntry, currentPrice }) {
           <tbody>
             {pendingEntry && (
               <tr className="pending-entry-row">
-                <td>대기중..</td>
+                <td>{pendingEntry.mode}</td>
                 <td>대기중..</td>
                 <td className={pendingEntry.direction === 'LONG' ? 'tone-long' : 'tone-short'}>{pendingEntry.direction}</td>
                 <td>{money(pendingEntry.entry_price)}</td>

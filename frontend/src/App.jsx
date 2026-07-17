@@ -17,6 +17,7 @@ const DEFAULT_STATUS = {
   order_size_btc: 0.001,
   paper_position: null,
   paper_account: null,
+  pending_entry: null,
 }
 
 const INITIAL = {

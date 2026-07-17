@@ -41,10 +41,16 @@ function paperPnl(direction, entry, current) {
 
 export function SignalCard({ signal, price, status }) {
   const paper = status?.paper_position
+  const pendingEntry = status?.pending_entry
   const hasPaper = Boolean(paper)
   const direction = signal?.direction ?? 'HOLD'
   const summary = signal?.timeframe_summary?.['1m'] ?? signal?.timeframe_summary?.['5m'] ?? {}
-  const plannedDirection = signal?.planned_direction ?? summary?.plan_direction ?? direction
+  const plannedDirection = pendingEntry?.direction ?? signal?.planned_direction ?? summary?.plan_direction ?? direction
+  const hasNextPlan = plannedDirection === 'LONG' || plannedDirection === 'SHORT'
+  const nextEntryPrice = hasNextPlan ? pendingEntry?.entry_price ?? signal?.entry_price : null
+  const nextStopLoss = hasNextPlan ? pendingEntry?.stop_loss ?? signal?.stop_loss : null
+  const nextTakeProfit1 = hasNextPlan ? pendingEntry?.take_profit_1 ?? signal?.take_profit_1 : null
+  const nextTakeProfit2 = hasNextPlan ? pendingEntry?.take_profit_2 ?? signal?.take_profit_2 : null
   const activeDirection = paper?.direction
   const displayDirection = hasPaper
     ? `PAPER ${activeDirection}`
@@ -75,18 +81,19 @@ export function SignalCard({ signal, price, status }) {
   const signalMetrics = [
     { label: '진입 등급', value: GRADE_LABELS[signal?.entry_grade] ?? '-', tone: gradeTone(signal?.entry_grade) },
     { label: '전략 신호', value: strategySignal, tone: strategySignal.startsWith('WAIT') ? 'tone-wait' : toneClass(direction) },
-    { label: '대기 포지션', value: plannedDirection, tone: toneClass(plannedDirection) },
+    { label: '다음 포지션', value: plannedDirection, tone: toneClass(plannedDirection) },
     { label: '상태', value: state, tone: state.startsWith('WAIT') ? 'tone-wait' : '' },
-    { label: '예상 진입가', value: money(signal?.entry_price) },
-    { label: '예상 손절가', value: money(signal?.stop_loss), tone: 'tone-short' },
-    { label: '예상 1차 익절', value: money(signal?.take_profit_1), tone: 'tone-long' },
-    { label: '예상 2차 익절', value: money(signal?.take_profit_2), tone: 'tone-long' },
+    { label: pendingEntry ? '대기 중인 진입 지정가' : '다음 진입 지정가', value: money(nextEntryPrice), tone: toneClass(plannedDirection) },
+    { label: '다음 손절가', value: money(nextStopLoss), tone: 'tone-short' },
+    { label: '다음 1차 익절', value: money(nextTakeProfit1), tone: 'tone-long' },
+    { label: '다음 2차 익절', value: money(nextTakeProfit2), tone: 'tone-long' },
     { label: 'RSI14', value: rsi },
     { label: '1분봉 거래량 배수', value: volumeRatio },
     { label: 'MA90 / MA200', value: `${money(summary?.ma90)} / ${money(summary?.ma200)}` },
     { label: '지지 / 돌파', value: `${money(summary?.support_level)} / ${money(summary?.breakout_level)}` },
   ]
-  const metrics = hasPaper ? [...positionMetrics, ...signalMetrics.slice(0, 3)] : signalMetrics
+  const nextPositionMetrics = signalMetrics.filter((_, index) => [0, 1, 2, 4, 5, 6, 7].includes(index))
+  const metrics = hasPaper ? [...positionMetrics, ...nextPositionMetrics] : signalMetrics
 
   return (
     <div className="signal-card">

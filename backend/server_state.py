@@ -20,6 +20,7 @@ class TradingState:
     paper_account_start_trade_id: Optional[int] = None
     pending_paper_order: Optional[dict] = None
     pending_live_order_id: Optional[str] = None
+    pending_live_order: Optional[dict] = None
     cached_account: Optional[dict] = None
     cached_positions: list = field(default_factory=list)
     emergency_stopped: bool = False

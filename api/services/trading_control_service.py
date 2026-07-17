@@ -556,12 +556,18 @@ async def _auto_live_trade(direction: str, r: dict):
         limit_price = f"{float(r.get('entry_price') or 0):.1f}"
         res = private_client.place_limit_order(side, size, limit_price, "open")
         state.pending_live_order_id = str(res.get("orderId") or "pending")
+        state.pending_live_order = {
+            "direction": direction,
+            "entry_price": float(limit_price),
+            "order_id": state.pending_live_order_id,
+        }
         risk_mgr.record_order_placed()
         msg = state.add_log(
             f"[자동매매 LIVE 지정가] {direction} {size} BTC @ ${limit_price}  "
             f"전략신호={r.get('strategy_signal', direction)}  orderId={res.get('orderId', '?')}"
         )
         await manager.broadcast({"type": "log", "data": {"message": msg}})
+        await manager.broadcast({"type": "status", "data": _status_payload()})
     except Exception as exc:
         msg = state.add_log(f"[자동매매] 주문 실패: {exc}")
         await manager.broadcast({"type": "log", "data": {"message": msg}})
@@ -633,12 +639,17 @@ async def account_loop():
                 if acct:
                     state.cached_account = acct
                     state.cached_positions = positions if isinstance(positions, list) else []
+                    cleared_pending = False
                     if state.cached_positions:
+                        cleared_pending = state.pending_live_order is not None
                         state.pending_live_order_id = None
+                        state.pending_live_order = None
                     await manager.broadcast({"type": "account", "data": {
                         "account": acct,
                         "positions": state.cached_positions,
                     }})
+                    if cleared_pending:
+                        await manager.broadcast({"type": "status", "data": _status_payload()})
         except Exception:
             pass
         await asyncio.sleep(10)
@@ -699,7 +710,24 @@ def _status_payload() -> dict:
         "keep_awake_enabled": keep_awake.enabled,
         "paper_position": _paper_position_payload(),
         "paper_account": _paper_account_payload(),
+        "pending_entry": _pending_entry_payload(),
     }
+
+
+def _pending_entry_payload() -> Optional[dict]:
+    if state.pending_paper_order:
+        result = state.pending_paper_order.get("result") or {}
+        return {
+            "mode": "PAPER",
+            "direction": state.pending_paper_order.get("direction"),
+            "entry_price": result.get("entry_price"),
+            "stop_loss": result.get("stop_loss"),
+            "take_profit_1": result.get("take_profit_1"),
+            "take_profit_2": result.get("take_profit_2"),
+        }
+    if state.pending_live_order:
+        return {"mode": "LIVE", **state.pending_live_order}
+    return None
 
 
 async def get_signal():
@@ -778,6 +806,7 @@ async def emergency_stop():
             cancel_msg = state.add_log(f"[긴급정지] 미체결 지정가 취소 실패: {exc}")
             await manager.broadcast({"type": "log", "data": {"message": cancel_msg}})
     state.pending_live_order_id = None
+    state.pending_live_order = None
     keep_awake.disable()
     msg = state.add_log(f"[긴급정지] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} — 자동매매 차단됨")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
@@ -813,6 +842,7 @@ async def emergency_close():
             msg = state.add_log(f"[긴급정지] 미체결 지정가 취소 실패: {exc}")
             await manager.broadcast({"type": "log", "data": {"message": msg}})
     state.pending_live_order_id = None
+    state.pending_live_order = None
     if paper_trader.is_open and state.last_price:
         tid, pnl = paper_trader.force_close(state.last_price)
         risk_mgr.record_trade_result(pnl)
@@ -863,11 +893,18 @@ async def place_order(payload: OrderPayload):
     limit_price = state.last_price - 150.0 if payload.side == "LONG" else state.last_price + 150.0
     try:
         result = private_client.place_limit_order(side, str(payload.size), f"{limit_price:.1f}", "open")
+        state.pending_live_order_id = str(result.get("orderId") or "pending")
+        state.pending_live_order = {
+            "direction": payload.side,
+            "entry_price": limit_price,
+            "order_id": state.pending_live_order_id,
+        }
         msg = state.add_log(
             f"[수동 지정가 주문] {payload.side} {payload.size} BTC @ ${limit_price:,.1f}  "
             f"orderId={result.get('orderId', '?')}"
         )
         await manager.broadcast({"type": "log", "data": {"message": msg}})
+        await manager.broadcast({"type": "status", "data": _status_payload()})
         return {"ok": True, "orderId": result.get("orderId")}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}

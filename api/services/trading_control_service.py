@@ -492,6 +492,15 @@ async def _check_auto_trade(result: dict):
     confidence = result.get("confidence", 0.0)
     mode = TradingMode(state.trading_mode)
 
+    # 미체결 지정가는 같은 방향에서 더 유리한 진입가가 확정되면 갱신한다.
+    # LONG은 더 낮은 가격, SHORT은 더 높은 가격만 더 좋은 조건으로 본다.
+    if state.trading_mode == "PAPER_TRADING" and state.pending_paper_order:
+        await _refresh_pending_paper_order(direction, result)
+        return
+    if state.trading_mode == "LIVE_TRADING" and state.pending_live_order:
+        await _refresh_pending_live_order(direction, result)
+        return
+
     allowed, reason = risk_mgr.check_entry(
         direction=direction, confidence=confidence, mode=mode,
         cached_positions=state.cached_positions, private_client=private_client,
@@ -508,6 +517,87 @@ async def _check_auto_trade(result: dict):
         await _auto_paper_trade(direction, result)
     elif state.trading_mode == "LIVE_TRADING":
         await _auto_live_trade(direction, result)
+
+
+def _is_better_entry(direction: str, current_entry, new_entry) -> bool:
+    try:
+        current_price = float(current_entry)
+        new_price = float(new_entry)
+    except (TypeError, ValueError):
+        return False
+    if direction == "LONG":
+        return new_price < current_price
+    if direction == "SHORT":
+        return new_price > current_price
+    return False
+
+
+def _is_strong_trend_entry(direction: str, result: dict) -> bool:
+    """A등급 확정 신호만 불리한 가격을 감수한 추격 진입으로 허용한다."""
+    return (
+        direction in ("LONG", "SHORT")
+        and result.get("entry_grade") == "A"
+        and float(result.get("confidence") or 0) >= risk_cfg.confidence_threshold
+        and not result.get("risk_warnings")
+    )
+
+
+async def _refresh_pending_paper_order(direction: str, result: dict):
+    pending = state.pending_paper_order
+    if not pending or direction != pending.get("direction"):
+        return
+    previous = pending.get("result") or {}
+    better_entry = _is_better_entry(direction, previous.get("entry_price"), result.get("entry_price"))
+    strong_trend = _is_strong_trend_entry(direction, result)
+    if not better_entry and not strong_trend:
+        return
+
+    old_entry = float(previous.get("entry_price") or 0)
+    new_entry = float(result.get("entry_price") or 0)
+    if old_entry == new_entry:
+        return
+    state.pending_paper_order = {"direction": direction, "result": dict(result)}
+    update_reason = "강한 추세 추격" if strong_trend and not better_entry else "진입 조건 개선"
+    msg = state.add_log(
+        f"[모의 대기 주문 개선] {direction} ${old_entry:,.2f} → ${new_entry:,.2f}  "
+        f"{update_reason}, 손절·익절 조건도 최신 신호로 갱신"
+    )
+    await manager.broadcast({"type": "log", "data": {"message": msg}})
+    await manager.broadcast({"type": "status", "data": _status_payload()})
+
+
+async def _refresh_pending_live_order(direction: str, result: dict):
+    pending = state.pending_live_order
+    if not private_client or not pending or direction != pending.get("direction"):
+        return
+    better_entry = _is_better_entry(direction, pending.get("entry_price"), result.get("entry_price"))
+    strong_trend = _is_strong_trend_entry(direction, result)
+    if not better_entry and not strong_trend:
+        return
+
+    old_order_id = str(pending.get("order_id") or "")
+    old_entry = float(pending.get("entry_price") or 0)
+    new_entry = float(result.get("entry_price") or 0)
+    if old_entry == new_entry:
+        return
+    if not old_order_id or old_order_id == "pending":
+        return
+    try:
+        await asyncio.to_thread(private_client.cancel_order, old_order_id)
+        state.pending_live_order_id = None
+        state.pending_live_order = None
+        await _auto_live_trade(direction, result)
+        if state.pending_live_order:
+            update_reason = "강한 추세 추격" if strong_trend and not better_entry else "진입 조건 개선"
+            msg = state.add_log(
+                f"[LIVE 대기 주문 개선] {direction} ${old_entry:,.2f} → ${new_entry:,.2f}  {update_reason}"
+            )
+        else:
+            msg = state.add_log("[LIVE 대기 주문 갱신 실패] 기존 주문 취소 후 새 주문 생성 실패")
+    except Exception as exc:
+        msg = state.add_log(f"[LIVE 대기 주문 갱신 실패] 기존 주문 유지: {exc}")
+    await manager.broadcast({"type": "log", "data": {"message": msg}})
+    await manager.broadcast({"type": "status", "data": _status_payload()})
 
 
 async def _auto_paper_trade(direction: str, r: dict):

@@ -510,14 +510,34 @@ async def _check_auto_trade(result: dict):
 
 
 async def _auto_paper_trade(direction: str, r: dict):
-    if paper_trader.is_open:
+    if paper_trader.is_open or state.pending_paper_order:
         return
 
-    trade_id = paper_trader.open_trade(direction, r)
+    state.pending_paper_order = {"direction": direction, "result": dict(r)}
+    risk_mgr.record_order_placed()
+    msg = state.add_log(
+        f"[모의 지정가 대기] {direction} ${float(r.get('entry_price') or 0):,.2f}  "
+        f"전략신호={r.get('strategy_signal', direction)}"
+    )
+    await manager.broadcast({"type": "log", "data": {"message": msg}})
+    await manager.broadcast({"type": "status", "data": _status_payload()})
+
+
+async def _check_pending_paper_entry(price: float):
+    pending = state.pending_paper_order
+    if not pending or paper_trader.is_open:
+        return
+    direction = pending["direction"]
+    result = pending["result"]
+    limit_price = float(result.get("entry_price") or 0)
+    filled = (direction == "LONG" and price <= limit_price) or (direction == "SHORT" and price >= limit_price)
+    if not filled:
+        return
+    trade_id = paper_trader.open_trade(direction, result)
+    state.pending_paper_order = None
     if state.paper_account_start_trade_id is None:
         state.paper_account_start_trade_id = trade_id
-    risk_mgr.record_order_placed()
-    msg = state.add_log(f"[모의매매] {direction} 진입  #{trade_id}  전략신호={r.get('strategy_signal', direction)}")
+    msg = state.add_log(f"[모의 지정가 체결] {direction} #{trade_id}  ${limit_price:,.2f}")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "trade_update"})
     await manager.broadcast({"type": "status", "data": _status_payload()})
@@ -527,16 +547,19 @@ async def _auto_live_trade(direction: str, r: dict):
     if not private_client:
         return
     btc_positions = [p for p in state.cached_positions if p.get("symbol") == SYMBOL]
-    if btc_positions:
+    if btc_positions or state.pending_live_order_id:
         return
 
     size = f"{risk_cfg.order_size_btc:.3f}"
     side = "buy" if direction == "LONG" else "sell"
     try:
-        res = private_client.place_market_order(side, size, "open")
+        limit_price = f"{float(r.get('entry_price') or 0):.1f}"
+        res = private_client.place_limit_order(side, size, limit_price, "open")
+        state.pending_live_order_id = str(res.get("orderId") or "pending")
         risk_mgr.record_order_placed()
         msg = state.add_log(
-            f"[자동매매 LIVE] {direction} {size} BTC  전략신호={r.get('strategy_signal', direction)}  orderId={res.get('orderId', '?')}"
+            f"[자동매매 LIVE 지정가] {direction} {size} BTC @ ${limit_price}  "
+            f"전략신호={r.get('strategy_signal', direction)}  orderId={res.get('orderId', '?')}"
         )
         await manager.broadcast({"type": "log", "data": {"message": msg}})
     except Exception as exc:
@@ -587,6 +610,8 @@ async def price_loop():
             if price:
                 state.last_price = price
                 await manager.broadcast({"type": "price", "data": {"price": price}})
+                if state.pending_paper_order:
+                    await _check_pending_paper_entry(price)
                 if state.plan_trade_id and state.plan_trade_data:
                     await _check_plan_tp_sl(price)
                 if state.open_trade_id and state.open_trade_data:
@@ -608,6 +633,8 @@ async def account_loop():
                 if acct:
                     state.cached_account = acct
                     state.cached_positions = positions if isinstance(positions, list) else []
+                    if state.cached_positions:
+                        state.pending_live_order_id = None
                     await manager.broadcast({"type": "account", "data": {
                         "account": acct,
                         "positions": state.cached_positions,
@@ -743,6 +770,14 @@ async def emergency_stop():
     risk_mgr.activate_emergency_stop()
     state.auto_trade_enabled = False
     state.emergency_stopped = True
+    state.pending_paper_order = None
+    if private_client and state.pending_live_order_id and state.pending_live_order_id != "pending":
+        try:
+            private_client.cancel_order(state.pending_live_order_id)
+        except Exception as exc:
+            cancel_msg = state.add_log(f"[긴급정지] 미체결 지정가 취소 실패: {exc}")
+            await manager.broadcast({"type": "log", "data": {"message": cancel_msg}})
+    state.pending_live_order_id = None
     keep_awake.disable()
     msg = state.add_log(f"[긴급정지] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} — 자동매매 차단됨")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
@@ -769,6 +804,15 @@ async def emergency_resume():
 
 async def emergency_close():
     position_closed = False
+    state.pending_paper_order = None
+    if private_client and state.pending_live_order_id and state.pending_live_order_id != "pending":
+        try:
+            private_client.cancel_order(state.pending_live_order_id)
+            position_closed = True
+        except Exception as exc:
+            msg = state.add_log(f"[긴급정지] 미체결 지정가 취소 실패: {exc}")
+            await manager.broadcast({"type": "log", "data": {"message": msg}})
+    state.pending_live_order_id = None
     if paper_trader.is_open and state.last_price:
         tid, pnl = paper_trader.force_close(state.last_price)
         risk_mgr.record_trade_result(pnl)
@@ -814,9 +858,15 @@ async def place_order(payload: OrderPayload):
     if not private_client:
         return {"ok": False, "error": "API 키가 설정되지 않았습니다"}
     side = "buy" if payload.side == "LONG" else "sell"
+    if not state.last_price:
+        return {"ok": False, "error": "현재가를 확인할 수 없어 지정가를 계산하지 못했습니다"}
+    limit_price = state.last_price - 150.0 if payload.side == "LONG" else state.last_price + 150.0
     try:
-        result = private_client.place_market_order(side, str(payload.size), "open")
-        msg = state.add_log(f"[수동주문] {payload.side} {payload.size} BTC  orderId={result.get('orderId', '?')}")
+        result = private_client.place_limit_order(side, str(payload.size), f"{limit_price:.1f}", "open")
+        msg = state.add_log(
+            f"[수동 지정가 주문] {payload.side} {payload.size} BTC @ ${limit_price:,.1f}  "
+            f"orderId={result.get('orderId', '?')}"
+        )
         await manager.broadcast({"type": "log", "data": {"message": msg}})
         return {"ok": True, "orderId": result.get("orderId")}
     except Exception as exc:

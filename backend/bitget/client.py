@@ -110,6 +110,38 @@ class BitgetPrivateClient:
         }
         return (self._post("/api/v2/mix/order/placeOrder", body)).get("data") or {}
 
+    def place_limit_order(
+        self,
+        side: str,
+        size: str,
+        price: str,
+        trade_side: str = "open",
+    ) -> dict:
+        """지정가 주문. 체결되지 않으면 거래소 미체결 주문으로 유지됩니다."""
+        body = {
+            "symbol": SYMBOL,
+            "productType": PRODUCT_TYPE,
+            "marginMode": "crossed",
+            "marginCoin": "USDT",
+            "size": size,
+            "price": price,
+            "side": side,
+            "tradeSide": trade_side,
+            "orderType": "limit",
+            "force": "gtc",
+        }
+        return (self._post("/api/v2/mix/order/placeOrder", body)).get("data") or {}
+
+    def cancel_order(self, order_id: str) -> dict:
+        """미체결 지정가 주문 취소."""
+        body = {
+            "symbol": SYMBOL,
+            "productType": PRODUCT_TYPE,
+            "marginCoin": "USDT",
+            "orderId": order_id,
+        }
+        return (self._post("/api/v2/mix/order/cancel-order", body)).get("data") or {}
+
     def close_position(self, hold_side: str) -> dict:
         """
         포지션 전체 시장가 청산

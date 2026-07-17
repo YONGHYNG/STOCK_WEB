@@ -13,6 +13,7 @@ TAKE_PROFIT_2_R_MULTIPLIER = 1.5
 STRUCTURE_LOOKBACK = 60
 STRUCTURE_STOP_BUFFER_ATR = 0.4
 RISK_TIMEFRAMES = ("5m",)
+LIMIT_ENTRY_OFFSET_USDT = 150.0
 
 
 @dataclass
@@ -122,6 +123,10 @@ class TradingAIEngine:
             entry = planned_entry
         else:
             entry = price
+        if plan_direction == "LONG":
+            entry -= LIMIT_ENTRY_OFFSET_USDT
+        elif plan_direction == "SHORT":
+            entry += LIMIT_ENTRY_OFFSET_USDT
         atr = float(last.get("atr14") or 0)
         stop_loss, tp1, tp2, rr = self._risk_prices(
             plan_direction, entry, atr, df, decision, last, frame_info["summaries"], load_risk_settings()

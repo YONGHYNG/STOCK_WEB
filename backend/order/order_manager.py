@@ -55,7 +55,7 @@ class OrderManager:
         if self.private_client is None:
             return OrderResult(False, self._mode, "open", direction, size, price, "실거래 client 없음")
         side = "buy" if direction == "LONG" else "sell"
-        self.private_client.place_market_order(side, f"{size:.3f}", "open")
+        self.private_client.place_limit_order(side, f"{size:.3f}", f"{price:.1f}", "open")
         self.position = {"direction": direction, "size": size, "entry": price, "signal": signal or {}}
         return OrderResult(True, self._mode, "open", direction, size, price, "live order opened")
 

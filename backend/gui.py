@@ -309,6 +309,7 @@ class TradingMainWindow(QMainWindow):
         self._auto_trade_enabled = False
         self._cached_account: dict | None = None
         self._cached_positions: list = []
+        self._pending_live_order_id: str | None = None
         self._trading_mode = TradingMode.SIGNAL_ONLY
         self._risk_cfg  = risk_settings_store.load()
         self._auto_threshold = self._risk_cfg.confidence_threshold
@@ -1627,16 +1628,18 @@ class TradingMainWindow(QMainWindow):
     def _auto_live_trade(self, direction: str, r: dict, entry_reason: str):
         """실거래 자동 진입 (RiskManager 통과 후 실행)."""
         btc_positions = [p for p in self._cached_positions if p.get("symbol") == SYMBOL]
-        if btc_positions:
+        if btc_positions or getattr(self, "_pending_live_order_id", None):
             return
 
         size = f"{self._risk_cfg.order_size_btc:.3f}"
         side = "buy" if direction == "LONG" else "sell"
         try:
-            result = self._private_client.place_market_order(side, size, "open")
+            limit_price = float(r.get("entry_price") or 0)
+            result = self._private_client.place_limit_order(side, size, f"{limit_price:.1f}", "open")
             order_id = result.get("orderId", "?")
+            self._pending_live_order_id = str(order_id)
             self._log(
-                f"[자동매매 LIVE] {direction} {size} BTC  "
+                f"[자동매매 LIVE 지정가] {direction} {size} BTC @ ${limit_price:,.1f}  "
                 f"전략신호={r.get('strategy_signal', direction)}  orderId={order_id}"
             )
             self._risk_mgr.record_order_placed()
@@ -1720,6 +1723,8 @@ class TradingMainWindow(QMainWindow):
 
         btc_pos = [p for p in (positions or []) if p.get("symbol") == SYMBOL]
         if btc_pos:
+            self._pending_live_order_id = None
+        if btc_pos:
             p       = btc_pos[0]
             side    = p.get("holdSide", "").upper()
             total   = float(p.get("total") or 0)
@@ -1744,19 +1749,26 @@ class TradingMainWindow(QMainWindow):
             return
         size = f"{self._size_spin.value():.3f}"
         side = "buy" if direction == "LONG" else "sell"
+        if not self._last_price:
+            QMessageBox.warning(self, "주문 불가", "현재가를 확인할 수 없어 지정가를 계산하지 못했습니다.")
+            return
+        limit_price = self._last_price - 150.0 if direction == "LONG" else self._last_price + 150.0
 
         ans = QMessageBox.question(
             self, "주문 확인",
             f"⚠ 실제 주문이 발생합니다.\n\n"
-            f"방향: {direction}\n수량: {size} BTC\n\n진행하시겠습니까?",
+            f"방향: {direction}\n수량: {size} BTC\n지정가: ${limit_price:,.1f}\n\n진행하시겠습니까?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if ans != QMessageBox.StandardButton.Yes:
             return
 
         try:
-            result = self._private_client.place_market_order(side, size, "open")
-            self._log(f"[주문 완료] {direction}  {size} BTC  orderId={result.get('orderId', '?')}")
+            result = self._private_client.place_limit_order(side, size, f"{limit_price:.1f}", "open")
+            self._log(
+                f"[지정가 주문 완료] {direction} {size} BTC @ ${limit_price:,.1f}  "
+                f"orderId={result.get('orderId', '?')}"
+            )
             QTimer.singleShot(2000, self._fetch_account)
         except Exception as exc:
             self._log(f"[주문 실패] {exc}")

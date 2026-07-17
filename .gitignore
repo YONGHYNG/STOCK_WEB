@@ -13,7 +13,9 @@ data/*.db
 data/*.db-*
 data/*.csv
 data/credentials.json
+data/gmail_config.json
 data/risk_settings.json
 
 *.log
 *.png
+.env

@@ -12,6 +12,7 @@ from backend.bitget.market_api import BitgetClient
 from backend.bitget.client import BitgetPrivateClient
 import backend.credentials as creds_store
 from backend.order.paper_trader import PaperTrader
+from backend.notifications import send_trade_plan_email
 from backend.power_keepawake import keep_awake
 from backend.risk.risk_manager import RiskManager
 import backend.risk.settings as risk_settings_store
@@ -392,6 +393,15 @@ async def _ensure_signal_plan(result: dict):
     )
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "trade_update"})
+    try:
+        sent, detail = await asyncio.to_thread(send_trade_plan_email, result)
+        email_log = state.add_log(
+            f"[Gmail 알림] 다음 포지션 계획 발송 완료 → {detail}"
+            if sent else f"[Gmail 알림 대기] {detail}"
+        )
+    except Exception as exc:
+        email_log = state.add_log(f"[Gmail 알림 실패] {exc}")
+    await manager.broadcast({"type": "log", "data": {"message": email_log}})
 
 
 async def _check_plan_tp_sl(price: float):

@@ -335,6 +335,18 @@ python -m backend.market.import_csv_to_sqlite data/bitget_BTCUSDT_5m_6y.csv 5m
 
 `backend/config.py`의 `USE_DEMO_DATA`가 `False`이면 Bitget API 실패 시 데모 데이터로 조용히 대체하지 않고 GUI에 오류 상태를 표시합니다.
 
+## Gmail 다음 포지션 알림
+
+포지션 방향과 진입 지정가, 손절가, 1·2차 익절가가 모두 확정되면 `a01025932320@gmail.com`으로 메일을 보냅니다.
+Google 계정에서 2단계 인증을 켜고 앱 비밀번호를 발급한 다음 아래 설정 도구를 한 번 실행하세요.
+
+```powershell
+python -m backend.notifications.gmail_setup
+```
+
+발신 Gmail 주소와 16자리 앱 비밀번호를 입력하면 테스트 메일을 보내고 `data/gmail_config.json`에 로컬 저장합니다.
+이 파일은 Git에서 제외됩니다. 일반 Gmail 비밀번호를 입력하거나 설정 파일을 Git에 커밋하지 마세요.
+
 ## 주요 파일
 
 ```text

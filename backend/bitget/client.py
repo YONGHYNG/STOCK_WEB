@@ -50,8 +50,14 @@ class BitgetPrivateClient:
             headers=self._headers("GET", full),
             timeout=API_TIMEOUT_SECONDS,
         )
-        res.raise_for_status()
-        return self._unwrap(res.json())
+        try:
+            payload = res.json()
+        except ValueError:
+            res.raise_for_status()
+            raise RuntimeError("Bitget에서 해석할 수 없는 응답을 받았습니다")
+        # Bitget은 인증 오류도 HTTP 400으로 반환하므로 HTTP 예외보다
+        # 응답 본문의 code/msg를 먼저 표시해야 원인을 알 수 있다.
+        return self._unwrap(payload)
 
     def _post(self, path: str, body: dict) -> dict:
         body_str = json.dumps(body, separators=(",", ":"))
@@ -61,8 +67,12 @@ class BitgetPrivateClient:
             data=body_str,
             timeout=API_TIMEOUT_SECONDS,
         )
-        res.raise_for_status()
-        return self._unwrap(res.json())
+        try:
+            payload = res.json()
+        except ValueError:
+            res.raise_for_status()
+            raise RuntimeError("Bitget에서 해석할 수 없는 응답을 받았습니다")
+        return self._unwrap(payload)
 
     @staticmethod
     def _unwrap(payload: dict) -> dict:
@@ -83,7 +93,7 @@ class BitgetPrivateClient:
 
     def get_positions(self) -> list[dict]:
         """현재 오픈 포지션 목록"""
-        data = self._get("/api/v2/mix/position/allPosition", {
+        data = self._get("/api/v2/mix/position/all-position", {
             "productType": PRODUCT_TYPE,
             "marginCoin":  "USDT",
         })
@@ -108,7 +118,7 @@ class BitgetPrivateClient:
             "tradeSide":   trade_side,
             "orderType":   "market",
         }
-        return (self._post("/api/v2/mix/order/placeOrder", body)).get("data") or {}
+        return (self._post("/api/v2/mix/order/place-order", body)).get("data") or {}
 
     def place_limit_order(
         self,
@@ -130,7 +140,7 @@ class BitgetPrivateClient:
             "orderType": "limit",
             "force": "gtc",
         }
-        return (self._post("/api/v2/mix/order/placeOrder", body)).get("data") or {}
+        return (self._post("/api/v2/mix/order/place-order", body)).get("data") or {}
 
     def cancel_order(self, order_id: str) -> dict:
         """미체결 지정가 주문 취소."""
@@ -152,4 +162,4 @@ class BitgetPrivateClient:
             "productType": PRODUCT_TYPE,
             "holdSide":    hold_side,
         }
-        return (self._post("/api/v2/mix/order/closePositions", body)).get("data") or {}
+        return (self._post("/api/v2/mix/order/close-positions", body)).get("data") or {}

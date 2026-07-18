@@ -1048,11 +1048,26 @@ async def get_credentials():
 
 async def save_credentials(payload: CredentialsPayload):
     global private_client
-    creds_store.save(payload.api_key, payload.secret_key, payload.passphrase)
-    private_client = _make_private_client()
-    msg = state.add_log(f"[API] 자격증명 저장 완료. 연동={'성공' if private_client else '실패'}")
-    await manager.broadcast({"type": "log", "data": {"message": msg}})
-    return {"ok": True, "connected": private_client is not None}
+    try:
+        candidate = BitgetPrivateClient(payload.api_key, payload.secret_key, payload.passphrase)
+        account, positions = await asyncio.to_thread(
+            lambda: (candidate.get_account(), candidate.get_positions())
+        )
+        creds_store.save(payload.api_key, payload.secret_key, payload.passphrase)
+        private_client = candidate
+        state.cached_account = account
+        state.cached_positions = positions
+        msg = state.add_log("[API] Bitget 계정 연결 확인 및 자격증명 저장 완료")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        await manager.broadcast({"type": "account", "data": {
+            "account": account,
+            "positions": positions,
+        }})
+        return {"ok": True, "connected": True}
+    except Exception as exc:
+        msg = state.add_log(f"[API] Bitget 계정 연동 실패: {exc}")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        return {"ok": False, "connected": False, "error": str(exc)}
 
 
 

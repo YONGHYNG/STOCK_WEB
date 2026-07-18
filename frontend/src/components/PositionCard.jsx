@@ -1,4 +1,6 @@
-// 역할: 현재 포지션과 진입 정보를 표시하는 컴포넌트.
+// 역할: 현재 포지션과 진입 정보, Bitget API 연동을 표시하는 컴포넌트.
+import { useState } from 'react'
+import { tradingApi } from '../api/tradingApi'
 function num(v) {
   const n = Number(v ?? 0)
   return Number.isFinite(n) ? n : 0
@@ -24,6 +26,9 @@ function paperPnl(direction, entry, current) {
 }
 
 export function PositionCard({ account, positions, status, price }) {
+  const [apiModalOpen, setApiModalOpen] = useState(false)
+  const [credentials, setCredentials] = useState({ api_key: '', secret_key: '', passphrase: '' })
+  const [credentialState, setCredentialState] = useState({ saving: false, message: '', ok: false })
   const btc = positions.find((p) => p.symbol === 'BTCUSDT')
   const paper = status?.paper_position
   const paperAccount = status?.paper_account
@@ -46,14 +51,46 @@ export function PositionCard({ account, positions, status, price }) {
   const paperPnlPct = hasPaper && paper?.pnl_pct != null ? num(paper.pnl_pct) : hasPaper ? paperPnl(side, paper?.entry_price, currentPrice || paper?.current_price) : 0
   const pnlTone = paperPnlPct > 0 ? 'tone-long' : paperPnlPct < 0 ? 'tone-short' : 'tone-muted'
 
+  async function openApiModal() {
+    setCredentialState({ saving: false, message: '', ok: false })
+    try {
+      const saved = await tradingApi.getCredentials()
+      setCredentials({ api_key: saved?.api_key ?? '', secret_key: '', passphrase: '' })
+    } catch {
+      setCredentials({ api_key: '', secret_key: '', passphrase: '' })
+    }
+    setApiModalOpen(true)
+  }
+
+  async function connectApi(event) {
+    event.preventDefault()
+    if (!credentials.api_key.trim() || !credentials.secret_key.trim() || !credentials.passphrase.trim()) {
+      setCredentialState({ saving: false, message: '세 항목을 모두 입력해 주세요.', ok: false })
+      return
+    }
+    setCredentialState({ saving: true, message: 'Bitget 계정을 확인하고 있습니다...', ok: false })
+    try {
+      const result = await tradingApi.saveCredentials({
+        api_key: credentials.api_key.trim(),
+        secret_key: credentials.secret_key.trim(),
+        passphrase: credentials.passphrase.trim(),
+      })
+      if (!result?.ok || !result?.connected) throw new Error(result?.error || '연결에 실패했습니다.')
+      setCredentialState({ saving: false, message: 'Bitget 계정 연동에 성공했습니다.', ok: true })
+      setCredentials((current) => ({ ...current, secret_key: '', passphrase: '' }))
+    } catch (error) {
+      setCredentialState({ saving: false, message: error?.message || '연결에 실패했습니다.', ok: false })
+    }
+  }
+
   return (
     <div className="account-position">
       <div className="account-position__summary">
-        <div className="stat-box account-position__main">
+        <button type="button" className="stat-box account-position__main account-link-card" onClick={openApiModal}>
           <div className="eyebrow">계정 연동</div>
           <div className={`account-connection ${apiConnected ? 'tone-long' : 'tone-muted'}`}>{apiConnected ? 'ON' : 'OFF'}</div>
-          <div className="value-sub">{apiConnected ? 'Bitget 계정 연결됨' : 'API 계정 미연동'}</div>
-        </div>
+          <div className="value-sub">{apiConnected ? 'Bitget 계정 연결됨 · 클릭하여 변경' : '클릭하여 API 계정 연결'}</div>
+        </button>
 
         <div className="stat-box account-position__main">
           <div className="eyebrow">{accountLabel}</div>
@@ -96,6 +133,31 @@ export function PositionCard({ account, positions, status, price }) {
               <strong className="tone-long">{money(paper?.take_profit_2)}</strong>
             </div>
           </div>
+        </div>
+      )}
+
+      {apiModalOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => !credentialState.saving && setApiModalOpen(false)}>
+          <section className="api-connect-modal" role="dialog" aria-modal="true" aria-labelledby="api-connect-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="api-connect-modal__header">
+              <div>
+                <h3 id="api-connect-title">Bitget API 계정 연동</h3>
+                <p>입력값은 이 PC에만 저장되며, 실제 연결 조회가 성공해야 저장됩니다.</p>
+              </div>
+              <button type="button" className="modal-close" aria-label="닫기" onClick={() => setApiModalOpen(false)} disabled={credentialState.saving}>×</button>
+            </div>
+            <form className="api-connect-form" onSubmit={connectApi}>
+              <label>API Key<input value={credentials.api_key} onChange={(e) => setCredentials({ ...credentials, api_key: e.target.value })} autoComplete="off" /></label>
+              <label>Secret Key<input type="password" value={credentials.secret_key} onChange={(e) => setCredentials({ ...credentials, secret_key: e.target.value })} autoComplete="new-password" /></label>
+              <label>Passphrase<input type="password" value={credentials.passphrase} onChange={(e) => setCredentials({ ...credentials, passphrase: e.target.value })} autoComplete="new-password" /></label>
+              <div className="api-connect-warning">출금·자금이체 권한은 켜지 마세요. 처음에는 읽기 전용 키로 연결을 확인하세요.</div>
+              {credentialState.message && <div className={credentialState.ok ? 'api-connect-result tone-long' : 'api-connect-result tone-wait'}>{credentialState.message}</div>}
+              <div className="api-connect-actions">
+                <button type="button" onClick={() => setApiModalOpen(false)} disabled={credentialState.saving}>취소</button>
+                <button type="submit" className="api-connect-submit" disabled={credentialState.saving}>{credentialState.saving ? '연결 확인 중...' : '저장하고 연결'}</button>
+              </div>
+            </form>
+          </section>
         </div>
       )}
     </div>

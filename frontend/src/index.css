@@ -417,6 +417,111 @@ hr {
   padding: 12px;
 }
 
+.account-link-card {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  border-color: var(--line-soft);
+  text-align: left;
+}
+
+.account-link-card:hover {
+  border-color: rgba(106, 184, 255, 0.55);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(3, 6, 10, 0.78);
+  backdrop-filter: blur(6px);
+}
+
+.api-connect-modal {
+  width: min(480px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.58);
+}
+
+.api-connect-modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.api-connect-modal__header h3 {
+  font-size: 17px;
+}
+
+.api-connect-modal__header p {
+  margin-top: 5px;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.modal-close {
+  min-width: 34px;
+  padding: 3px 9px;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.api-connect-form {
+  display: grid;
+  gap: 13px;
+  padding: 18px;
+}
+
+.api-connect-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.api-connect-form input {
+  width: 100%;
+  min-height: 40px;
+}
+
+.api-connect-warning,
+.api-connect-result {
+  padding: 10px 12px;
+  border: 1px solid rgba(242, 199, 91, 0.3);
+  border-radius: 8px;
+  background: var(--yellow-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.api-connect-result.tone-long {
+  border-color: rgba(49, 208, 125, 0.35);
+  background: var(--green-dim);
+}
+
+.api-connect-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 3px;
+}
+
+.api-connect-submit {
+  border-color: rgba(106, 184, 255, 0.55);
+  background: var(--blue-dim);
+  color: var(--blue);
+}
+
 .account-position__controls {
   display: grid;
   gap: 12px;

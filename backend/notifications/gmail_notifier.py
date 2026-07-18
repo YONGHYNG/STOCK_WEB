@@ -20,11 +20,6 @@ def load_gmail_config() -> tuple[str, str, str]:
     recipient = os.getenv("TRADE_EMAIL_RECIPIENT", DEFAULT_RECIPIENT).strip()
     if sender and app_password:
         return sender, app_password, recipient
-
-
-def gmail_is_configured() -> bool:
-    sender, app_password, recipient = load_gmail_config()
-    return bool(sender and app_password and recipient)
     try:
         data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         return (
@@ -34,6 +29,11 @@ def gmail_is_configured() -> bool:
         )
     except (OSError, ValueError, TypeError):
         return sender, app_password, recipient
+
+
+def gmail_is_configured() -> bool:
+    sender, app_password, recipient = load_gmail_config()
+    return bool(sender and app_password and recipient)
 
 
 def save_gmail_config(sender: str, app_password: str, recipient: str = DEFAULT_RECIPIENT) -> None:

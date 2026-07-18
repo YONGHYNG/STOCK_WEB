@@ -25,12 +25,20 @@ function paperPnl(direction, entry, current) {
   return gross - 0.12
 }
 
-export function PositionCard({ account, positions, status, price }) {
+export function PositionCard({ account, positions, status, price, trades = [] }) {
   const [apiModalOpen, setApiModalOpen] = useState(false)
   const [credentials, setCredentials] = useState({ api_key: '', secret_key: '', passphrase: '' })
   const [credentialState, setCredentialState] = useState({ saving: false, message: '', ok: false })
   const btc = positions.find((p) => p.symbol === 'BTCUSDT')
-  const paper = status?.paper_position
+  const openPaperTrade = trades.find((trade) => trade.trade_type === 'PAPER' && trade.exit_price == null)
+  const paper = status?.paper_position ?? (openPaperTrade ? {
+    direction: openPaperTrade.direction,
+    entry_price: openPaperTrade.entry_price,
+    stop_loss: openPaperTrade.stop_loss,
+    take_profit_1: openPaperTrade.take_profit_1,
+    take_profit_2: openPaperTrade.take_profit_2,
+    fee_pct: 0.12,
+  } : null)
   const paperAccount = status?.paper_account
   const equity = num(account?.accountEquity ?? account?.equity)
   const available = num(account?.available ?? account?.crossedMaxAvailable ?? account?.crossMaxAvailable)

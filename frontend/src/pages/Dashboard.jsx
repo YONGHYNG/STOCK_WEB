@@ -27,7 +27,7 @@ export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop
     <>
       <div className="top-grid">
         <Panel title="실시간 시그널" className="panel--hero">
-          <SignalCard signal={state.signal} price={state.price} status={state.status} positions={state.positions} />
+          <SignalCard signal={state.signal} price={state.price} status={state.status} positions={state.positions} trades={state.trades} />
         </Panel>
 
         <Panel title="운영 · 계정 · 포지션" className="panel--operations">
@@ -49,6 +49,7 @@ export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop
                 positions={state.positions}
                 status={state.status}
                 price={state.price}
+                trades={state.trades}
               />
             </SectionBlock>
           </div>

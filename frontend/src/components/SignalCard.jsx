@@ -38,12 +38,23 @@ function paperGrossPnl(direction, entry, current) {
   return direction === 'SHORT' ? ((e - c) / e) * 100 : ((c - e) / e) * 100
 }
 
-export function SignalCard({ signal, price, status, positions = [] }) {
-  const paper = status?.paper_position
+export function SignalCard({ signal, price, status, positions = [], trades = [] }) {
+  const openTrade = trades.find((trade) => trade.trade_type !== 'PLAN' && trade.exit_price == null)
+  const openPaperTrade = openTrade?.trade_type === 'PAPER' ? openTrade : null
+  const openLiveTrade = openTrade?.trade_type === 'LIVE' ? openTrade : null
+  const paper = status?.paper_position ?? (openPaperTrade ? {
+    id: openPaperTrade.id,
+    direction: openPaperTrade.direction,
+    entry_price: openPaperTrade.entry_price,
+    stop_loss: openPaperTrade.stop_loss,
+    take_profit_1: openPaperTrade.take_profit_1,
+    take_profit_2: openPaperTrade.take_profit_2,
+    fee_pct: 0.12,
+  } : null)
   const livePosition = positions.find((position) => position.symbol === 'BTCUSDT')
   const pendingEntry = status?.pending_entry
   const hasPaper = Boolean(paper)
-  const hasLive = Boolean(livePosition)
+  const hasLive = Boolean(livePosition || openLiveTrade)
   const hasPosition = hasPaper || hasLive
   const direction = signal?.direction ?? 'HOLD'
   const summary = signal?.timeframe_summary?.['1m'] ?? signal?.timeframe_summary?.['5m'] ?? {}
@@ -53,7 +64,7 @@ export function SignalCard({ signal, price, status, positions = [] }) {
   const nextStopLoss = hasNextPlan ? pendingEntry?.stop_loss ?? signal?.stop_loss : null
   const nextTakeProfit1 = hasNextPlan ? pendingEntry?.take_profit_1 ?? signal?.take_profit_1 : null
   const nextTakeProfit2 = hasNextPlan ? pendingEntry?.take_profit_2 ?? signal?.take_profit_2 : null
-  const activeDirection = hasPaper ? paper?.direction : livePosition?.holdSide?.toUpperCase()
+  const activeDirection = hasPaper ? paper?.direction : livePosition?.holdSide?.toUpperCase() ?? openLiveTrade?.direction
   const displayDirection = hasPosition
     ? `${hasPaper ? 'PAPER' : 'LIVE'} ${activeDirection}`
     : direction === 'HOLD' && plannedDirection !== 'HOLD' ? `WAIT ${plannedDirection}` : direction
@@ -72,26 +83,38 @@ export function SignalCard({ signal, price, status, positions = [] }) {
   const activeGrossUsdt = paperNotional * activeGrossPnl / 100
   const fixedFeeUsdt = paperNotional * fixedFeePct / 100
   const activeNetUsdt = activeGrossUsdt - fixedFeeUsdt
+  const liveEntryPrice = Number(livePosition?.openPriceAvg ?? livePosition?.averageOpenPrice ?? openLiveTrade?.entry_price ?? 0)
+  const liveCurrentPrice = Number(currentPrice || livePosition?.markPrice || 0)
+  const liveSize = Number(livePosition?.total ?? 0)
+  const liveGrossUsdt = hasLive && liveEntryPrice && liveCurrentPrice
+    ? (activeDirection === 'SHORT' ? liveEntryPrice - liveCurrentPrice : liveCurrentPrice - liveEntryPrice) * liveSize
+    : Number(livePosition?.unrealizedPL ?? 0)
+  const liveFeeUsdt = Math.abs(Number(livePosition?.deductedFee ?? 0))
+  const liveNetUsdt = liveGrossUsdt - liveFeeUsdt
 
   const positionMetrics = hasPaper ? [
     { label: '현재 포지션', value: 'PAPER OPEN', tone: 'tone-info' },
     { label: '포지션 방향', value: activeDirection, tone: toneClass(activeDirection) },
-    { label: '진입가', value: money(paper?.entry_price) },
+    { label: '현재 진입가', value: money(paper?.entry_price) },
     { label: '현재가', value: money(currentPrice || paper?.current_price) },
-    { label: '수수료 차감 손익', value: signedUsdt(activeNetUsdt), tone: activeNetUsdt > 0 ? 'tone-long' : activeNetUsdt < 0 ? 'tone-short' : 'tone-muted' },
-    { label: '총손익 / 수수료', value: `${signedUsdt(activeGrossUsdt)} / $${fixedFeeUsdt.toFixed(2)}`, tone: activeGrossUsdt > 0 ? 'tone-long' : activeGrossUsdt < 0 ? 'tone-short' : 'tone-muted' },
-    { label: '손절가', value: money(paper?.stop_loss), tone: 'tone-short' },
-    { label: '1차 익절', value: money(paper?.take_profit_1), tone: 'tone-long' },
-    { label: '2차 익절', value: money(paper?.take_profit_2), tone: 'tone-long' },
+    { label: '실시간 수익 / 고정 수수료', value: `${signedUsdt(activeGrossUsdt)} / $${fixedFeeUsdt.toFixed(2)}`, tone: activeGrossUsdt > 0 ? 'tone-long' : activeGrossUsdt < 0 ? 'tone-short' : 'tone-muted' },
+    { label: '수수료 차감 실제수익', value: signedUsdt(activeNetUsdt), tone: activeNetUsdt > 0 ? 'tone-long' : activeNetUsdt < 0 ? 'tone-short' : 'tone-muted' },
+    { label: '현재 손절가', value: money(paper?.stop_loss), tone: 'tone-short' },
+    { label: '현재 1차 익절가', value: money(paper?.take_profit_1), tone: 'tone-long' },
+    { label: '현재 2차 익절가', value: money(paper?.take_profit_2), tone: 'tone-long' },
   ] : []
 
   const livePositionMetrics = hasLive ? [
     { label: '현재 포지션', value: 'LIVE OPEN', tone: 'tone-info' },
     { label: '포지션 방향', value: activeDirection, tone: toneClass(activeDirection) },
-    { label: '진입가', value: money(livePosition?.openPriceAvg ?? livePosition?.averageOpenPrice) },
-    { label: '현재가', value: money(livePosition?.markPrice ?? currentPrice) },
+    { label: '현재 진입가', value: money(liveEntryPrice) },
+    { label: '현재가', value: money(liveCurrentPrice) },
     { label: '포지션 수량', value: livePosition?.total ? `${livePosition.total} BTC` : '-' },
-    { label: '미실현 손익', value: money(livePosition?.unrealizedPL), tone: Number(livePosition?.unrealizedPL ?? 0) >= 0 ? 'tone-long' : 'tone-short' },
+    { label: '실시간 수익 / 현재 수수료', value: `${signedUsdt(liveGrossUsdt)} / $${liveFeeUsdt.toFixed(2)}`, tone: liveGrossUsdt >= 0 ? 'tone-long' : 'tone-short' },
+    { label: '수수료 차감 실제수익', value: signedUsdt(liveNetUsdt), tone: liveNetUsdt >= 0 ? 'tone-long' : 'tone-short' },
+    { label: '현재 손절가', value: money(livePosition?.stopLoss || openLiveTrade?.stop_loss), tone: 'tone-short' },
+    { label: '현재 1차 익절가', value: money(livePosition?.takeProfit || openLiveTrade?.take_profit_1), tone: 'tone-long' },
+    { label: '현재 2차 익절가', value: money(openLiveTrade?.take_profit_2), tone: 'tone-long' },
   ] : []
 
   const signalMetrics = [

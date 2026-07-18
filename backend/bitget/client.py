@@ -152,6 +152,28 @@ class BitgetPrivateClient:
         }
         return (self._post("/api/v2/mix/order/cancel-order", body)).get("data") or {}
 
+    def place_tpsl_limit_order(
+        self,
+        plan_type: str,
+        hold_side: str,
+        size: str,
+        trigger_price: str,
+        execute_price: str,
+    ) -> dict:
+        """포지션 익절/손절 트리거 도달 시 지정가로 청산하는 거래소 주문."""
+        body = {
+            "marginCoin": "USDT",
+            "productType": PRODUCT_TYPE,
+            "symbol": SYMBOL,
+            "planType": plan_type,
+            "triggerPrice": trigger_price,
+            "triggerType": "mark_price",
+            "executePrice": execute_price,
+            "holdSide": hold_side.lower(),
+            "size": size,
+        }
+        return (self._post("/api/v2/mix/order/place-tpsl-order", body)).get("data") or {}
+
     def close_position(self, hold_side: str) -> dict:
         """
         포지션 전체 시장가 청산

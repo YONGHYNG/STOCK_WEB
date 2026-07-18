@@ -465,11 +465,16 @@ async def _check_paper_tp_sl(price: float):
         return
     t = paper_trader.open_data
     entry, direction = t["entry"], t["direction"]
-    pnl_pct = _pnl_pct(direction, entry, price)
+    limit_exit_price = (
+        float(t.get("tp2")) if result_code == "TP2"
+        else float(t.get("tp1")) if result_code == "TP1"
+        else float(t.get("sl"))
+    )
+    pnl_pct = _pnl_pct(direction, entry, limit_exit_price)
     sign = "+" if pnl_pct >= 0 else ""
-    profit_reason = f"[모의] {result_code} 적중: ${entry:,.2f} → ${price:,.2f}  ({sign}{pnl_pct:.2f}%)" if result_code.startswith("TP") else ""
-    loss_reason = f"[모의] 손절: ${entry:,.2f} → ${price:,.2f}  ({sign}{pnl_pct:.2f}%)" if result_code == "SL" else ""
-    tid, pnl = paper_trader.close_trade(exit_price=price, result=result_code,
+    profit_reason = f"[모의 지정가] {result_code} 체결: ${entry:,.2f} → ${limit_exit_price:,.2f}  ({sign}{pnl_pct:.2f}%)" if result_code.startswith("TP") else ""
+    loss_reason = f"[모의 지정가] 손절 체결: ${entry:,.2f} → ${limit_exit_price:,.2f}  ({sign}{pnl_pct:.2f}%)" if result_code == "SL" else ""
+    tid, pnl = paper_trader.close_trade(exit_price=limit_exit_price, result=result_code,
                                         profit_reason=profit_reason, loss_reason=loss_reason)
     risk_mgr.record_trade_result(pnl)
     emoji = "익절" if result_code.startswith("TP") else "손절"
@@ -764,11 +769,44 @@ async def account_loop():
                     }})
                     if cleared_pending:
                         if filled_result:
+                            await _place_live_limit_protection(state.cached_positions, filled_result)
                             await _send_filled_position_email(filled_result)
                         await manager.broadcast({"type": "status", "data": _status_payload()})
         except Exception:
             pass
         await asyncio.sleep(10)
+
+
+async def _place_live_limit_protection(positions: list, result: dict):
+    """LIVE 체결 직후 Bitget에 손절/익절 지정가 TPSL 주문을 등록한다."""
+    if not private_client or not positions:
+        return
+    position = next((p for p in positions if p.get("symbol") == SYMBOL), None)
+    if not position:
+        return
+    size = str(position.get("total") or risk_cfg.order_size_btc)
+    hold_side = str(position.get("holdSide") or result.get("direction") or "").lower()
+    hold_side = "long" if "long" in hold_side else "short"
+    orders = (
+        ("loss_plan", result.get("stop_loss"), "손절"),
+        ("profit_plan", result.get("take_profit_1"), "1차 익절"),
+    )
+    for plan_type, target, label in orders:
+        if not target:
+            continue
+        price = f"{float(target):.1f}"
+        try:
+            response = await asyncio.to_thread(
+                private_client.place_tpsl_limit_order,
+                plan_type, hold_side, size, price, price,
+            )
+            msg = state.add_log(
+                f"[LIVE {label} 지정가 등록] {hold_side.upper()} {size} BTC @ ${float(target):,.1f}  "
+                f"orderId={response.get('orderId', '?')}"
+            )
+        except Exception as exc:
+            msg = state.add_log(f"[LIVE {label} 지정가 등록 실패] {exc}")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
 
 
 # ── Startup ────────────────────────────────────────────────────────────────────

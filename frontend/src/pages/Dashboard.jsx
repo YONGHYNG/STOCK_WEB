@@ -58,7 +58,7 @@ export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop
         <Panel title="일일 매매 요약" className="panel--profit-risk">
           <div className="panel-stack">
             <SectionBlock title="오늘 현황">
-              <ProfitSummary trades={state.trades} />
+              <ProfitSummary trades={state.trades} paperAccount={state.status.paper_account} />
             </SectionBlock>
           </div>
         </Panel>

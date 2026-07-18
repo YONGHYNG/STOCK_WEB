@@ -37,9 +37,8 @@ function money(value) {
   return `$${Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-export function ProfitSummary({ trades }) {
+export function ProfitSummary({ trades, paperAccount }) {
   const [rangeDays, setRangeDays] = useState(1)
-  const [margin, setMargin] = useState(100)
   const feeRatePct = DEFAULT_LIMIT_FEE_RATE_PCT
   const currentDay = kstDayNumber(new Date())
   const startDay = currentDay == null ? null : currentDay - rangeDays + 1
@@ -50,7 +49,7 @@ export function ProfitSummary({ trades }) {
   }
   const entries = actualTrades.filter((t) => inRange(t.entry_time))
   const closed = actualTrades.filter((t) => t.pnl_pct != null && inRange(t.exit_time ?? t.entry_time))
-  const safeMargin = Math.max(0, Number(margin) || 0)
+  const safeMargin = Math.max(0, Number(paperAccount?.equity ?? paperAccount?.balance ?? 100) || 0)
   const settlement = closed
     .slice()
     .sort((a, b) => parseBackendTime(a.exit_time ?? a.entry_time) - parseBackendTime(b.exit_time ?? b.entry_time))
@@ -103,11 +102,10 @@ export function ProfitSummary({ trades }) {
         <label>
           <span className="eyebrow">투자금</span>
           <input
-            min="0"
-            step="10"
             type="number"
-            value={margin}
-            onChange={(e) => setMargin(e.target.value)}
+            value={safeMargin.toFixed(2)}
+            readOnly
+            aria-readonly="true"
           />
         </label>
         <label>

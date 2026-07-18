@@ -50,3 +50,8 @@ async def get_credentials():
 @router.post("/api/credentials")
 async def save_credentials(payload: CredentialsPayload):
     return await svc.save_credentials(payload)
+
+
+@router.post("/api/credentials/disconnect")
+async def disconnect_credentials():
+    return await svc.disconnect_credentials()

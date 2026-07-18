@@ -18,6 +18,7 @@ const DEFAULT_STATUS = {
   paper_position: null,
   paper_account: null,
   pending_entry: null,
+  api_configured: false,
 }
 
 const INITIAL = {

@@ -795,6 +795,11 @@ async def websocket_endpoint(ws: WebSocket):
     if state.last_price:
         await ws.send_json({"type": "price", "data": {"price": state.last_price}})
     await ws.send_json({"type": "status", "data": _status_payload()})
+    if state.cached_account:
+        await ws.send_json({"type": "account", "data": {
+            "account": state.cached_account,
+            "positions": state.cached_positions,
+        }})
     for msg in state.get_logs(100):
         await ws.send_json({"type": "log", "data": {"message": msg}})
     try:
@@ -818,6 +823,7 @@ def _status_payload() -> dict:
         "confidence_threshold": risk_cfg.confidence_threshold,
         "order_size_btc": risk_cfg.order_size_btc,
         "keep_awake_enabled": keep_awake.enabled,
+        "api_configured": private_client is not None,
         "paper_position": _paper_position_payload(),
         "paper_account": _paper_account_payload(),
         "pending_entry": _pending_entry_payload(),
@@ -1068,6 +1074,32 @@ async def save_credentials(payload: CredentialsPayload):
         msg = state.add_log(f"[API] Bitget 계정 연동 실패: {exc}")
         await manager.broadcast({"type": "log", "data": {"message": msg}})
         return {"ok": False, "connected": False, "error": str(exc)}
+
+
+async def disconnect_credentials():
+    global private_client
+    if state.cached_positions:
+        return {
+            "ok": False,
+            "error": "실거래 포지션을 보유 중입니다. 포지션을 먼저 청산한 뒤 연동을 종료해 주세요.",
+        }
+    try:
+        if private_client and state.pending_live_order_id and state.pending_live_order_id != "pending":
+            await asyncio.to_thread(private_client.cancel_order, state.pending_live_order_id)
+        state.pending_live_order_id = None
+        state.pending_live_order = None
+        state.auto_trade_enabled = False
+        creds_store.save("", "", "")
+        private_client = None
+        state.cached_account = None
+        state.cached_positions = []
+        msg = state.add_log("[API] Bitget 실거래 자동매매 연동 종료")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        await manager.broadcast({"type": "account", "data": {"account": None, "positions": []}})
+        await manager.broadcast({"type": "status", "data": _status_payload()})
+        return {"ok": True, "connected": False}
+    except Exception as exc:
+        return {"ok": False, "error": f"연동 종료 실패: {exc}"}
 
 
 

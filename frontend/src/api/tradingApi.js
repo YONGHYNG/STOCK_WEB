@@ -22,6 +22,7 @@ export const tradingApi = {
   getRiskSettings: () => get('/risk-settings'),
   getCredentials: () => get('/credentials'),
   saveCredentials: (credentials) => post('/credentials', credentials),
+  disconnectCredentials: () => post('/credentials/disconnect'),
   saveRiskSettings: (settings) => post('/risk-settings', settings),
   setMode: (mode) => post('/mode', { mode }),
   setAutoTrade: (enabled, threshold) => post('/auto-trade', { enabled, threshold }),

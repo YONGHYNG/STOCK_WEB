@@ -522,6 +522,23 @@ hr {
   color: var(--blue);
 }
 
+.api-disconnect-confirm {
+  padding: 18px 14px;
+  border: 1px solid rgba(255, 98, 98, 0.42);
+  border-radius: 8px;
+  background: var(--red-dim);
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.api-disconnect-submit {
+  border-color: rgba(255, 98, 98, 0.58);
+  background: var(--red-dim);
+  color: var(--red);
+}
+
 .account-position__controls {
   display: grid;
   gap: 12px;

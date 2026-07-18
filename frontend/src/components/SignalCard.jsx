@@ -10,10 +10,10 @@ function toneClass(value) {
   return 'tone-hold'
 }
 
-function pct(value) {
+function signedUsdt(value) {
   const n = Number(value ?? 0)
-  const sign = n > 0 ? '+' : ''
-  return `${sign}${n.toFixed(2)}%`
+  const sign = n > 0 ? '+' : n < 0 ? '-' : ''
+  return `${sign}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 const GRADE_LABELS = {
@@ -31,18 +31,20 @@ function gradeTone(grade) {
   return 'tone-short'
 }
 
-function paperPnl(direction, entry, current) {
+function paperGrossPnl(direction, entry, current) {
   const e = Number(entry ?? 0)
   const c = Number(current ?? 0)
   if (!e || !c) return 0
-  const gross = direction === 'SHORT' ? ((e - c) / e) * 100 : ((c - e) / e) * 100
-  return gross - 0.12
+  return direction === 'SHORT' ? ((e - c) / e) * 100 : ((c - e) / e) * 100
 }
 
-export function SignalCard({ signal, price, status }) {
+export function SignalCard({ signal, price, status, positions = [] }) {
   const paper = status?.paper_position
+  const livePosition = positions.find((position) => position.symbol === 'BTCUSDT')
   const pendingEntry = status?.pending_entry
   const hasPaper = Boolean(paper)
+  const hasLive = Boolean(livePosition)
+  const hasPosition = hasPaper || hasLive
   const direction = signal?.direction ?? 'HOLD'
   const summary = signal?.timeframe_summary?.['1m'] ?? signal?.timeframe_summary?.['5m'] ?? {}
   const plannedDirection = pendingEntry?.direction ?? signal?.planned_direction ?? summary?.plan_direction ?? direction
@@ -51,9 +53,9 @@ export function SignalCard({ signal, price, status }) {
   const nextStopLoss = hasNextPlan ? pendingEntry?.stop_loss ?? signal?.stop_loss : null
   const nextTakeProfit1 = hasNextPlan ? pendingEntry?.take_profit_1 ?? signal?.take_profit_1 : null
   const nextTakeProfit2 = hasNextPlan ? pendingEntry?.take_profit_2 ?? signal?.take_profit_2 : null
-  const activeDirection = paper?.direction
-  const displayDirection = hasPaper
-    ? `PAPER ${activeDirection}`
+  const activeDirection = hasPaper ? paper?.direction : livePosition?.holdSide?.toUpperCase()
+  const displayDirection = hasPosition
+    ? `${hasPaper ? 'PAPER' : 'LIVE'} ${activeDirection}`
     : direction === 'HOLD' && plannedDirection !== 'HOLD' ? `WAIT ${plannedDirection}` : direction
   const displayTone = toneClass(displayDirection)
   const strategySignal = signal?.strategy_signal ?? 'HOLD'
@@ -62,20 +64,34 @@ export function SignalCard({ signal, price, status }) {
   const rsi = summary?.rsi14 != null ? Number(summary.rsi14).toFixed(1) : '-'
   const currentPrice = Number(price ?? paper?.current_price ?? signal?.last_price ?? signal?.entry_price ?? 0)
   const displayPrice = currentPrice || signal?.last_price || price || signal?.entry_price
-  const activePnl = hasPaper && paper?.pnl_pct != null
-    ? Number(paper.pnl_pct)
-    : hasPaper ? paperPnl(activeDirection, paper?.entry_price, currentPrice || paper?.current_price) : 0
+  const fixedFeePct = Number(paper?.fee_pct ?? 0.12)
+  const activeGrossPnl = hasPaper
+    ? paperGrossPnl(activeDirection, paper?.entry_price, currentPrice || paper?.current_price)
+    : 0
+  const paperNotional = Number(status?.paper_account?.notional ?? 0)
+  const activeGrossUsdt = paperNotional * activeGrossPnl / 100
+  const fixedFeeUsdt = paperNotional * fixedFeePct / 100
+  const activeNetUsdt = activeGrossUsdt - fixedFeeUsdt
 
   const positionMetrics = hasPaper ? [
     { label: '현재 포지션', value: 'PAPER OPEN', tone: 'tone-info' },
     { label: '포지션 방향', value: activeDirection, tone: toneClass(activeDirection) },
     { label: '진입가', value: money(paper?.entry_price) },
     { label: '현재가', value: money(currentPrice || paper?.current_price) },
-    { label: '수수료 차감 손익률', value: pct(activePnl), tone: activePnl > 0 ? 'tone-long' : activePnl < 0 ? 'tone-short' : 'tone-muted' },
-    { label: '총손익 / 수수료', value: `${pct(paper?.gross_pnl_pct ?? 0)} / ${pct(paper?.fee_pct ?? 0.12)}` },
+    { label: '수수료 차감 손익', value: signedUsdt(activeNetUsdt), tone: activeNetUsdt > 0 ? 'tone-long' : activeNetUsdt < 0 ? 'tone-short' : 'tone-muted' },
+    { label: '총손익 / 수수료', value: `${signedUsdt(activeGrossUsdt)} / $${fixedFeeUsdt.toFixed(2)}`, tone: activeGrossUsdt > 0 ? 'tone-long' : activeGrossUsdt < 0 ? 'tone-short' : 'tone-muted' },
     { label: '손절가', value: money(paper?.stop_loss), tone: 'tone-short' },
     { label: '1차 익절', value: money(paper?.take_profit_1), tone: 'tone-long' },
     { label: '2차 익절', value: money(paper?.take_profit_2), tone: 'tone-long' },
+  ] : []
+
+  const livePositionMetrics = hasLive ? [
+    { label: '현재 포지션', value: 'LIVE OPEN', tone: 'tone-info' },
+    { label: '포지션 방향', value: activeDirection, tone: toneClass(activeDirection) },
+    { label: '진입가', value: money(livePosition?.openPriceAvg ?? livePosition?.averageOpenPrice) },
+    { label: '현재가', value: money(livePosition?.markPrice ?? currentPrice) },
+    { label: '포지션 수량', value: livePosition?.total ? `${livePosition.total} BTC` : '-' },
+    { label: '미실현 손익', value: money(livePosition?.unrealizedPL), tone: Number(livePosition?.unrealizedPL ?? 0) >= 0 ? 'tone-long' : 'tone-short' },
   ] : []
 
   const signalMetrics = [
@@ -92,8 +108,7 @@ export function SignalCard({ signal, price, status }) {
     { label: 'MA90 / MA200', value: `${money(summary?.ma90)} / ${money(summary?.ma200)}` },
     { label: '지지 / 돌파', value: `${money(summary?.support_level)} / ${money(summary?.breakout_level)}` },
   ]
-  const nextPositionMetrics = signalMetrics.filter((_, index) => [0, 1, 2, 4, 5, 6, 7].includes(index))
-  const metrics = hasPaper ? [...positionMetrics, ...nextPositionMetrics] : signalMetrics
+  const metrics = hasPaper ? positionMetrics : hasLive ? livePositionMetrics : signalMetrics
 
   return (
     <div className="signal-card">
@@ -106,7 +121,7 @@ export function SignalCard({ signal, price, status }) {
           {displayDirection}
         </div>
       </div>
-      <div className="signal-card__metrics">
+      <div className={`signal-card__metrics ${hasPosition ? 'signal-card__metrics--position' : ''}`}>
         {metrics.map((m) => <Metric key={m.label} {...m} />)}
       </div>
     </div>

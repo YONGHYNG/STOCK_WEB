@@ -577,6 +577,24 @@ hr {
   padding: 11px;
 }
 
+.signal-card__metrics--position {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.signal-card__metrics--position .signal-card__metric {
+  min-height: 94px;
+  padding: 15px;
+}
+
+.signal-card__metrics--position .stat-value {
+  margin-top: 9px;
+  font-size: 21px;
+  font-weight: 950;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
 .stat-value {
   margin-top: 6px;
   color: var(--text);
@@ -1089,6 +1107,10 @@ hr {
 
   .signal-card__badge {
     width: 100%;
+  }
+
+  .signal-card__metrics--position {
+    grid-template-columns: 1fr;
   }
 
   .tab-bar {

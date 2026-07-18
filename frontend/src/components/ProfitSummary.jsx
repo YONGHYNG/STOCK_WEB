@@ -2,7 +2,8 @@
 import { useState } from 'react'
 
 const RANGE_OPTIONS = [1, 3, 7, 14, 30]
-const DEFAULT_TAKER_FEE_RATE_PCT = 0.06
+const DEFAULT_LIMIT_FEE_RATE_PCT = 0.03
+const EMERGENCY_MARKET_FEE_RATE_PCT = 0.06
 const FIXED_LEVERAGE = 20
 
 function parseBackendTime(value) {
@@ -39,7 +40,7 @@ function money(value) {
 export function ProfitSummary({ trades }) {
   const [rangeDays, setRangeDays] = useState(1)
   const [margin, setMargin] = useState(100)
-  const [feeRatePct, setFeeRatePct] = useState(DEFAULT_TAKER_FEE_RATE_PCT)
+  const feeRatePct = DEFAULT_LIMIT_FEE_RATE_PCT
   const currentDay = kstDayNumber(new Date())
   const startDay = currentDay == null ? null : currentDay - rangeDays + 1
   const actualTrades = trades.filter((t) => t.trade_type !== 'PLAN')
@@ -50,16 +51,22 @@ export function ProfitSummary({ trades }) {
   const entries = actualTrades.filter((t) => inRange(t.entry_time))
   const closed = actualTrades.filter((t) => t.pnl_pct != null && inRange(t.exit_time ?? t.entry_time))
   const safeMargin = Math.max(0, Number(margin) || 0)
-  const safeFeeRate = Math.max(0, Number(feeRatePct) || 0) / 100
   const settlement = closed
     .slice()
     .sort((a, b) => parseBackendTime(a.exit_time ?? a.entry_time) - parseBackendTime(b.exit_time ?? b.entry_time))
     .reduce((state, trade) => {
       const notional = state.balance * FIXED_LEVERAGE
-      const profit = Math.max(notional * (Number(trade.pnl_pct) / 100), -state.balance)
+      // 지정가 청산은 0.03%, 긴급 시장가 청산은 0.06%를 적용한다.
+      const storedNetPnlPct = Number(trade.pnl_pct) || 0
+      const emergencyExit = trade.result === 'SIGNAL_CHANGE' || trade.result === 'EMERGENCY'
+      const storedFeePct = DEFAULT_LIMIT_FEE_RATE_PCT + (emergencyExit ? EMERGENCY_MARKET_FEE_RATE_PCT : DEFAULT_LIMIT_FEE_RATE_PCT)
+      const appliedFeePct = Number(feeRatePct || 0) + (emergencyExit ? EMERGENCY_MARKET_FEE_RATE_PCT : Number(feeRatePct || 0))
+      const grossPnlPct = storedNetPnlPct + storedFeePct
+      const adjustedNetPnlPct = grossPnlPct - appliedFeePct
+      const profit = Math.max(notional * (adjustedNetPnlPct / 100), -state.balance)
       return {
         balance: state.balance + profit,
-        includedFee: state.includedFee + notional * safeFeeRate * 2,
+        includedFee: state.includedFee + notional * (appliedFeePct / 100),
       }
     }, { balance: safeMargin, includedFee: 0 })
   const notional = safeMargin * FIXED_LEVERAGE
@@ -106,11 +113,10 @@ export function ProfitSummary({ trades }) {
         <label>
           <span className="eyebrow">수수료율(%)</span>
           <input
-            min="0"
-            step="0.001"
             type="number"
             value={feeRatePct}
-            onChange={(e) => setFeeRatePct(e.target.value)}
+            readOnly
+            aria-readonly="true"
           />
         </label>
       </div>

@@ -25,6 +25,7 @@ from backend.config import (
     REFRESH_CANDLE_LIMIT,
     REFRESH_INTERVAL_MS,
     SYMBOL,
+    MAKER_FEE_RATE,
     TAKER_FEE_RATE,
     TIMEFRAMES,
     USE_DEMO_DATA,
@@ -230,7 +231,7 @@ def _paper_position_payload() -> Optional[dict]:
             if direction == "LONG"
             else (entry - current) / entry * 100
         )
-    fee_pct = float(TAKER_FEE_RATE) * 2 * 100
+    fee_pct = float(MAKER_FEE_RATE) * 2 * 100
     net_pnl_pct = gross_pnl_pct - fee_pct
     return {
         "id": paper_trader.open_id,
@@ -344,9 +345,9 @@ def _tp_sl_result(t: dict, price: float) -> Optional[str]:
     return None
 
 
-def _pnl_pct(direction: str, entry: float, exit_price: float) -> float:
+def _pnl_pct(direction: str, entry: float, exit_price: float, exit_fee_rate: float = MAKER_FEE_RATE) -> float:
     gross = (exit_price - entry) / entry * 100 if direction == "LONG" else (entry - exit_price) / entry * 100
-    return gross - float(TAKER_FEE_RATE) * 2 * 100
+    return gross - (float(MAKER_FEE_RATE) + float(exit_fee_rate)) * 100
 
 
 async def _ensure_signal_plan(result: dict):
@@ -1037,7 +1038,7 @@ async def emergency_close():
     if state.open_trade_data and state.last_price:
         t = state.open_trade_data
         price = state.last_price
-        pnl_pct = _pnl_pct(t["direction"], t["entry"], price)
+        pnl_pct = _pnl_pct(t["direction"], t["entry"], price, TAKER_FEE_RATE)
         close_trade(trade_id=state.open_trade_id, exit_price=price, result="SIGNAL_CHANGE",
                     pnl_pct=pnl_pct, profit_reason="", loss_reason="긴급정지 청산")
         state.open_trade_id = None

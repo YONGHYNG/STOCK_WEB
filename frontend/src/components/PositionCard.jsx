@@ -22,7 +22,7 @@ function paperPnl(direction, entry, current) {
   const c = num(current)
   if (!e || !c) return 0
   const gross = direction === 'SHORT' ? ((e - c) / e) * 100 : ((c - e) / e) * 100
-  return gross - 0.12
+  return gross - 0.06
 }
 
 export function PositionCard({ account, positions, status, price, trades = [] }) {
@@ -37,7 +37,7 @@ export function PositionCard({ account, positions, status, price, trades = [] })
     stop_loss: openPaperTrade.stop_loss,
     take_profit_1: openPaperTrade.take_profit_1,
     take_profit_2: openPaperTrade.take_profit_2,
-    fee_pct: 0.12,
+    fee_pct: 0.06,
   } : null)
   const paperAccount = status?.paper_account
   const equity = num(account?.accountEquity ?? account?.equity)
@@ -143,7 +143,7 @@ export function PositionCard({ account, positions, status, price, trades = [] })
             <div>
               <span className="eyebrow">수수료 차감 손익률</span>
               <strong className={pnlTone}>{pct(paperPnlPct)}</strong>
-              <small>왕복 수수료 {pct(paper?.fee_pct ?? 0.12)}</small>
+              <small>왕복 수수료 {pct(paper?.fee_pct ?? 0.06)}</small>
             </div>
           </div>
 

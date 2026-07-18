@@ -8,16 +8,16 @@
 
 from typing import Optional
 import backend.database as db
-from backend.config import SYMBOL, TAKER_FEE_RATE
+from backend.config import MAKER_FEE_RATE, SYMBOL, TAKER_FEE_RATE
 
 
-def _net_pnl_pct(direction: str, entry: float, exit_price: float) -> float:
+def _net_pnl_pct(direction: str, entry: float, exit_price: float, exit_fee_rate: float = MAKER_FEE_RATE) -> float:
     gross = (
         (exit_price - entry) / entry * 100
         if direction == "LONG"
         else (entry - exit_price) / entry * 100
     )
-    return gross - float(TAKER_FEE_RATE) * 2 * 100
+    return gross - (float(MAKER_FEE_RATE) + float(exit_fee_rate)) * 100
 
 
 class PaperTrader:
@@ -84,6 +84,7 @@ class PaperTrader:
         result: str,
         profit_reason: str = "",
         loss_reason:   str = "",
+        exit_fee_rate: float = MAKER_FEE_RATE,
     ) -> tuple[int, float]:
         """
         모의 포지션을 청산하고 (trade_id, pnl_pct)를 반환합니다.
@@ -92,7 +93,7 @@ class PaperTrader:
             return 0, 0.0
         t     = self._open_data
         entry = t["entry"]
-        pnl_pct = _net_pnl_pct(t["direction"], entry, exit_price)
+        pnl_pct = _net_pnl_pct(t["direction"], entry, exit_price, exit_fee_rate)
         tid = self._open_id
         db.close_trade(
             trade_id      = tid,
@@ -135,7 +136,7 @@ class PaperTrader:
             return 0, 0.0
         t = self._open_data
         entry = t["entry"]
-        pnl_pct = _net_pnl_pct(t["direction"], entry, exit_price)
+        pnl_pct = _net_pnl_pct(t["direction"], entry, exit_price, TAKER_FEE_RATE)
         msg = (
             f"[모의매매 시그널변경] ${entry:,.2f} → ${exit_price:,.2f}  "
             f"({'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%)"
@@ -145,6 +146,7 @@ class PaperTrader:
             result        = "SIGNAL_CHANGE",
             profit_reason = msg if pnl_pct >= 0 else "",
             loss_reason   = msg if pnl_pct < 0  else "",
+            exit_fee_rate = TAKER_FEE_RATE,
         )
 
     def restore_from_db(self):

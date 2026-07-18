@@ -49,7 +49,7 @@ export function SignalCard({ signal, price, status, positions = [], trades = [] 
     stop_loss: openPaperTrade.stop_loss,
     take_profit_1: openPaperTrade.take_profit_1,
     take_profit_2: openPaperTrade.take_profit_2,
-    fee_pct: 0.12,
+    fee_pct: 0.06,
   } : null)
   const livePosition = positions.find((position) => position.symbol === 'BTCUSDT')
   const pendingEntry = status?.pending_entry
@@ -75,7 +75,7 @@ export function SignalCard({ signal, price, status, positions = [], trades = [] 
   const rsi = summary?.rsi14 != null ? Number(summary.rsi14).toFixed(1) : '-'
   const currentPrice = Number(price ?? paper?.current_price ?? signal?.last_price ?? signal?.entry_price ?? 0)
   const displayPrice = currentPrice || signal?.last_price || price || signal?.entry_price
-  const fixedFeePct = Number(paper?.fee_pct ?? 0.12)
+  const fixedFeePct = Number(paper?.fee_pct ?? 0.06)
   const activeGrossPnl = hasPaper
     ? paperGrossPnl(activeDirection, paper?.entry_price, currentPrice || paper?.current_price)
     : 0

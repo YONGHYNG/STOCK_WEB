@@ -12,7 +12,7 @@ from backend.bitget.market_api import BitgetClient
 from backend.bitget.client import BitgetPrivateClient
 import backend.credentials as creds_store
 from backend.order.paper_trader import PaperTrader
-from backend.notifications import send_trade_plan_email
+from backend.notifications import gmail_is_configured, send_trade_plan_email
 from backend.power_keepawake import keep_awake
 from backend.risk.risk_manager import RiskManager
 import backend.risk.settings as risk_settings_store
@@ -615,6 +615,12 @@ async def _auto_paper_trade(direction: str, r: dict):
 
 
 async def _send_filled_position_email(result: dict):
+    if not state.auto_trade_enabled:
+        return
+    if not gmail_is_configured():
+        email_log = state.add_log("[Gmail 알림 실패] Gmail 설정이 없어 자동 연동할 수 없습니다")
+        await manager.broadcast({"type": "log", "data": {"message": email_log}})
+        return
     try:
         sent, detail = await asyncio.to_thread(send_trade_plan_email, result)
         email_log = state.add_log(
@@ -824,6 +830,7 @@ def _status_payload() -> dict:
         "order_size_btc": risk_cfg.order_size_btc,
         "keep_awake_enabled": keep_awake.enabled,
         "api_configured": private_client is not None,
+        "gmail_notification_enabled": state.auto_trade_enabled and gmail_is_configured(),
         "paper_position": _paper_position_payload(),
         "paper_account": _paper_account_payload(),
         "pending_entry": _pending_entry_payload(),
@@ -906,8 +913,16 @@ async def set_auto_trade(payload: AutoTradePayload):
         risk_mgr.settings.confidence_threshold = payload.threshold
     ok, power_msg = keep_awake.enable() if enabled else keep_awake.disable()
     msg = state.add_log(f"[자동매매] {'ON' if enabled else 'OFF'}  모드={state.trading_mode}")
+    gmail_log = state.add_log(
+        "[Gmail 알림] 자동매매 ON · 체결 메일 자동 연동 완료"
+        if enabled and gmail_is_configured()
+        else "[Gmail 알림] 자동매매 ON · Gmail 설정 필요"
+        if enabled
+        else "[Gmail 알림] 자동매매 OFF · 체결 메일 연동 해제"
+    )
     power_log = state.add_log(f"[전원관리] {power_msg}" if ok else f"[전원관리 경고] {power_msg}")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
+    await manager.broadcast({"type": "log", "data": {"message": gmail_log}})
     await manager.broadcast({"type": "log", "data": {"message": power_log}})
     await manager.broadcast({"type": "status", "data": _status_payload()})
     return {"ok": True}

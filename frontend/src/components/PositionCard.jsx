@@ -95,6 +95,7 @@ export function PositionCard({ account, positions, status, price }) {
       if (!result?.ok || !result?.connected) throw new Error(result?.error || '연결에 실패했습니다.')
       setCredentialState({ saving: false, message: 'Bitget 계정 연동에 성공했습니다.', ok: true })
       setCredentials((current) => ({ ...current, secret_key: '', passphrase: '' }))
+      setApiModalOpen(false)
     } catch (error) {
       setCredentialState({ saving: false, message: error?.message || '연결에 실패했습니다.', ok: false })
     }

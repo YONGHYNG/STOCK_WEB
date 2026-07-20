@@ -40,6 +40,14 @@ class OrderPayload(BaseModel):
     size: float
 
 
+class PaperPendingOrderPayload(BaseModel):
+    direction: str
+    entry_price: float
+    stop_loss: float
+    take_profit_1: float
+    take_profit_2: float
+
+
 class BacktestPayload(BaseModel):
     start_ts: int
     end_ts: int

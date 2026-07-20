@@ -50,6 +50,7 @@ from api.schemas.trading_schema import (
     CredentialsPayload,
     ModePayload,
     OrderPayload,
+    PaperPendingOrderPayload,
     RiskSettingsPayload,
 )
 
@@ -1146,6 +1147,33 @@ async def place_order(payload: OrderPayload):
         return {"ok": True, "orderId": result.get("orderId")}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+async def place_paper_pending_order(payload: PaperPendingOrderPayload):
+    direction = payload.direction.upper()
+    if direction not in ("LONG", "SHORT"):
+        return {"ok": False, "error": "방향은 LONG 또는 SHORT만 가능합니다"}
+    if paper_trader.is_open:
+        return {"ok": False, "error": "이미 진행 중인 모의 포지션이 있습니다"}
+    result = {
+        "direction": direction,
+        "entry_price": payload.entry_price,
+        "stop_loss": payload.stop_loss,
+        "take_profit_1": payload.take_profit_1,
+        "take_profit_2": payload.take_profit_2,
+        "strategy_signal": f"MANUAL_{direction}_LIMIT",
+        "entry_grade": "A",
+        "reasons": ["사용자가 복원한 모의 지정가 대기 주문"],
+    }
+    state.pending_paper_order = {"direction": direction, "result": result}
+    risk_mgr.record_order_placed()
+    msg = state.add_log(
+        f"[모의 지정가 대기 복원] {direction} ${payload.entry_price:,.2f}  "
+        f"SL ${payload.stop_loss:,.2f}  TP1 ${payload.take_profit_1:,.2f}"
+    )
+    await manager.broadcast({"type": "log", "data": {"message": msg}})
+    await manager.broadcast({"type": "status", "data": _status_payload()})
+    return {"ok": True, "pending_entry": _status_payload().get("pending_entry")}
 
 
 async def close_position():

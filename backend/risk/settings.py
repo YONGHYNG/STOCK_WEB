@@ -22,7 +22,7 @@ class RiskSettings:
 
     # 진입 조건
     confidence_threshold: float = 30.0  # 자동매매 확정 신호 기준 (%)
-    reentry_wait_seconds: int = 30      # 재진입 대기 시간 (초)
+    reentry_wait_seconds: int = 1800    # 재진입 대기 시간 (초)
 
     # 진입가 기준 가격 간격 (USDT)
     stop_gap_min_usdt: float = 400.0
@@ -47,9 +47,9 @@ def load() -> RiskSettings:
                 order_size_btc        = float(d.get("order_size_btc",        0.001)),
                 max_loss_pct          = float(d.get("max_loss_pct",          1.0)),
                 daily_max_loss_pct    = float(d.get("daily_max_loss_pct",    3.0)),
-                consecutive_loss_limit= int(  d.get("consecutive_loss_limit",3)),
+                consecutive_loss_limit= 3,
                 confidence_threshold  = float(d.get("confidence_threshold",  30.0)),
-                reentry_wait_seconds  = int(  d.get("reentry_wait_seconds",  30)),
+                reentry_wait_seconds  = max(1800, int(d.get("reentry_wait_seconds", 1800))),
                 stop_gap_min_usdt     = float(d.get("stop_gap_min_usdt",     400.0)),
                 stop_gap_max_usdt     = float(d.get("stop_gap_max_usdt",     700.0)),
                 take_profit_1_min_usdt= float(d.get("take_profit_1_min_usdt",500.0)),

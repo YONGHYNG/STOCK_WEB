@@ -266,6 +266,23 @@ def _ensure_paper_account_start_id() -> Optional[int]:
     return state.paper_account_start_trade_id
 
 
+def _recent_consecutive_paper_losses() -> int:
+    """Restore the current PAPER loss streak from newest closed trades."""
+    count = 0
+    for trade in get_recent_trades(SYMBOL, limit=None, trade_type="PAPER"):
+        if trade.get("result") == "OPEN" or trade.get("pnl_pct") is None:
+            continue
+        try:
+            pnl_pct = float(trade["pnl_pct"])
+        except (TypeError, ValueError):
+            continue
+        if pnl_pct < 0:
+            count += 1
+        else:
+            break
+    return count
+
+
 def _paper_account_payload() -> dict:
     account = get_paper_account(PAPER_ACCOUNT_INITIAL_BALANCE, PAPER_ACCOUNT_LEVERAGE)
     initial_balance = float(account["initial_balance"])
@@ -498,6 +515,13 @@ async def _check_auto_trade(result: dict):
     confidence = result.get("confidence", 0.0)
     mode = TradingMode(state.trading_mode)
 
+    if risk_mgr.consecutive_losses >= risk_cfg.consecutive_loss_limit:
+        if state.pending_paper_order or state.pending_live_order:
+            await _cancel_pending_for_risk(
+                f"연속 손실 {risk_mgr.consecutive_losses}회로 신규 대기 주문 취소"
+            )
+        return
+
     # 미체결 지정가는 같은 방향에서 더 유리한 진입가가 확정되면 갱신한다.
     # LONG은 더 낮은 가격, SHORT은 더 높은 가격만 더 좋은 조건으로 본다.
     if state.trading_mode == "PAPER_TRADING" and state.pending_paper_order:
@@ -512,6 +536,8 @@ async def _check_auto_trade(result: dict):
         cached_positions=state.cached_positions, private_client=private_client,
         entry_price=result.get("entry_price"), stop_loss=result.get("stop_loss"),
         entry_grade=result.get("entry_grade"), risk_warnings=result.get("risk_warnings", []),
+        strategy_signal=result.get("strategy_signal"),
+        timeframe_directions=result.get("timeframe_directions", {}),
     )
     if not allowed:
         if reason and "이미" not in reason:
@@ -523,6 +549,24 @@ async def _check_auto_trade(result: dict):
         await _auto_paper_trade(direction, result)
     elif state.trading_mode == "LIVE_TRADING":
         await _auto_live_trade(direction, result)
+
+
+async def _cancel_pending_for_risk(reason: str):
+    if private_client and state.pending_live_order_id and state.pending_live_order_id != "pending":
+        try:
+            await asyncio.to_thread(private_client.cancel_order, state.pending_live_order_id)
+        except Exception as exc:
+            msg = state.add_log(f"[자동매매 차단] LIVE 대기 주문 취소 실패: {exc}")
+            await manager.broadcast({"type": "log", "data": {"message": msg}})
+            return
+    state.pending_paper_order = None
+    state.pending_live_order_id = None
+    state.pending_live_order = None
+    state.auto_trade_enabled = False
+    keep_awake.disable()
+    msg = state.add_log(f"[자동매매 차단] {reason} · 자동매매 OFF")
+    await manager.broadcast({"type": "log", "data": {"message": msg}})
+    await manager.broadcast({"type": "status", "data": _status_payload()})
 
 
 def _is_better_entry(direction: str, current_entry, new_entry) -> bool:
@@ -823,6 +867,15 @@ async def startup_event():
         state.plan_trade_id = existing_plan["id"]
         state.plan_trade_data = _trade_data_from_row(existing_plan)
     paper_trader.restore_from_db()
+    restored_losses = _recent_consecutive_paper_losses()
+    risk_mgr.restore_consecutive_losses(restored_losses)
+    if restored_losses >= risk_cfg.consecutive_loss_limit:
+        state.auto_trade_enabled = False
+        state.pending_paper_order = None
+        keep_awake.disable()
+        state.add_log(
+            f"[리스크 복원] 최근 연속 손실 {restored_losses}회 — 자동매매 OFF"
+        )
     if state.paper_account_start_trade_id is None and paper_trader.is_open:
         state.paper_account_start_trade_id = paper_trader.open_id
     asyncio.create_task(signal_loop())
@@ -919,9 +972,16 @@ async def get_risk_settings():
 async def save_risk_settings(payload: RiskSettingsPayload):
     global risk_cfg, risk_mgr
     s = RiskSettings(**payload.model_dump())
+    s.consecutive_loss_limit = 3
+    s.reentry_wait_seconds = max(1800, s.reentry_wait_seconds)
     risk_settings_store.save(s)
     risk_cfg = s
     risk_mgr = RiskManager(s)
+    risk_mgr.restore_consecutive_losses(_recent_consecutive_paper_losses())
+    if risk_mgr.consecutive_losses >= s.consecutive_loss_limit:
+        state.auto_trade_enabled = False
+        state.pending_paper_order = None
+        keep_awake.disable()
     msg = state.add_log(f"[리스크 설정] 저장 완료  실거래허용={s.live_trading_allowed}")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "status", "data": _status_payload()})
@@ -945,7 +1005,10 @@ async def set_mode(payload: ModePayload):
 
 async def set_auto_trade(payload: AutoTradePayload):
     global risk_cfg
+    was_disabled = not state.auto_trade_enabled
     enabled = True if state.trading_mode == "PAPER_TRADING" else payload.enabled
+    if enabled and was_disabled:
+        risk_mgr.reset_consecutive_losses()
     state.auto_trade_enabled = enabled
     if payload.threshold is not None:
         risk_cfg.confidence_threshold = payload.threshold

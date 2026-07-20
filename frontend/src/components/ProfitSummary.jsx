@@ -57,7 +57,7 @@ export function ProfitSummary({ trades, paperAccount }) {
       const notional = state.balance * FIXED_LEVERAGE
       // 지정가 청산은 0.03%, 긴급 시장가 청산은 0.06%를 적용한다.
       const storedNetPnlPct = Number(trade.pnl_pct) || 0
-      const emergencyExit = trade.result === 'SIGNAL_CHANGE' || trade.result === 'EMERGENCY'
+      const emergencyExit = trade.result === 'SIGNAL_CHANGE' || String(trade.result).includes('EMERGENCY')
       const storedFeePct = DEFAULT_LIMIT_FEE_RATE_PCT + (emergencyExit ? EMERGENCY_MARKET_FEE_RATE_PCT : DEFAULT_LIMIT_FEE_RATE_PCT)
       const appliedFeePct = Number(feeRatePct || 0) + (emergencyExit ? EMERGENCY_MARKET_FEE_RATE_PCT : Number(feeRatePct || 0))
       const grossPnlPct = storedNetPnlPct + storedFeePct

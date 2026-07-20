@@ -36,6 +36,8 @@ class RiskManager:
         stop_loss: float | None = None,
         entry_grade: str | None = None,
         risk_warnings: list[str] | None = None,
+        strategy_signal: str | None = None,
+        timeframe_directions: dict[str, str] | None = None,
     ) -> tuple[bool, str]:
         """
         자동매매 진입 가능 여부를 검사합니다.
@@ -61,6 +63,22 @@ class RiskManager:
         for warning in risk_warnings or []:
             if any(key in warning for key in blocking_keywords):
                 return False, f"위험 필터 발생: {warning}"
+
+        # 단기 추세추종 B등급은 횡보장에서 반대매매가 잦아 자동 진입하지 않는다.
+        if strategy_signal and strategy_signal.endswith("TREND_CONTINUATION") and entry_grade != "A":
+            return False, f"{strategy_signal} 신호가 {entry_grade}등급이므로 추격 진입 차단"
+
+        # 핵심 상위 시간봉(30m/1H/4H) 중 최소 2개가 진입 방향과 같아야 한다.
+        directions = timeframe_directions or {}
+        core = [directions.get(tf, "HOLD") for tf in ("30m", "1H", "4H")]
+        aligned = sum(value == direction for value in core)
+        opposite = "SHORT" if direction == "LONG" else "LONG"
+        opposed = sum(value == opposite for value in core)
+        if aligned < 2 or opposed >= 2:
+            return False, (
+                f"상위 시간봉 불일치: 30m/1H/4H={core} · "
+                f"{direction} 일치 {aligned}개이므로 진입 차단"
+            )
 
         # 3. 신뢰도 확인
         if confidence < s.confidence_threshold:
@@ -131,6 +149,14 @@ class RiskManager:
     def record_order_placed(self):
         """주문 발행 시각만 기록 (아직 체결 전)."""
         self._last_order_ts = time.time()
+
+    def restore_consecutive_losses(self, count: int):
+        """서버 재시작 후 DB의 최근 연속 손실 횟수를 복원한다."""
+        self._consecutive_losses = max(0, int(count))
+
+    def reset_consecutive_losses(self):
+        """사용자가 위험을 확인하고 자동매매를 다시 켤 때 손실 정지를 해제한다."""
+        self._consecutive_losses = 0
 
     def activate_emergency_stop(self):
         self._emergency_stop = True

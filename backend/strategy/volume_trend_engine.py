@@ -113,7 +113,11 @@ class TradingAIEngine:
         price = float(market.get("last_price") or decision.entry_price)
         pricing = self._pricing(price, market)
         direction = decision.direction
-        plan_direction = self._plan_direction(decision.signal, direction)
+        plan_direction = self._plan_direction(
+            decision.signal,
+            direction,
+            frame_info["directions"],
+        )
         planned_entry = self._planned_entry(decision.signal, decision.support_level, decision.breakout_level, price)
         if direction == "LONG":
             entry = pricing["expected_entry_long"]
@@ -338,13 +342,38 @@ class TradingAIEngine:
         )
 
     @staticmethod
-    def _plan_direction(signal: str, direction: str) -> str:
+    def _plan_direction(signal: str, direction: str, timeframe_directions: Optional[dict[str, str]] = None) -> str:
         if direction in ("LONG", "SHORT"):
             return direction
         if signal == "WAIT_RETEST_SHORT":
             return "SHORT"
         if signal == "WAIT_PULLBACK_LONG":
             return "LONG"
+
+        # 실제 진입 신호가 HOLD여도 실시간 시그널에는 단기 추세 후보를 계속 제공한다.
+        # 자동주문은 TradingResult.direction을 사용하므로 이 예상 방향만으로 주문되지는 않는다.
+        directions = timeframe_directions or {}
+        direction_5m = directions.get("5m", "HOLD")
+        direction_15m = directions.get("15m", "HOLD")
+        if direction_5m == direction_15m and direction_5m in ("LONG", "SHORT"):
+            return direction_5m
+
+        intraday = [
+            directions.get(tf, "HOLD")
+            for tf in ("1m", "5m", "15m", "30m")
+        ]
+        long_votes = intraday.count("LONG")
+        short_votes = intraday.count("SHORT")
+        if long_votes > short_votes:
+            return "LONG"
+        if short_votes > long_votes:
+            return "SHORT"
+
+        # 동률이면 짧은 시간봉을 우선해 실시간 표시가 HOLD로 비지 않게 한다.
+        for tf in ("5m", "15m", "1m", "30m"):
+            candidate = directions.get(tf, "HOLD")
+            if candidate in ("LONG", "SHORT"):
+                return candidate
         return "HOLD"
 
     @staticmethod

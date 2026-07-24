@@ -23,9 +23,25 @@ function profitAmount(trade) {
   return DEFAULT_MARGIN * FIXED_LEVERAGE * (Number(trade.pnl_pct) / 100)
 }
 
-export function TradeLogTable({ trades, pendingEntry, currentPrice }) {
+export function TradeLogTable({ trades, signal, pendingEntry, currentPrice }) {
   const [page, setPage] = useState(1)
   const [selectedDate, setSelectedDate] = useState('')
+  const summary = signal?.timeframe_summary?.['1m'] ?? signal?.timeframe_summary?.['5m'] ?? {}
+  const expectedDirection = signal?.planned_direction ?? summary?.plan_direction ?? signal?.direction
+  const expectedEntryPrice = summary?.planned_entry ?? signal?.entry_price
+  const expectedEntry = !pendingEntry
+    && (expectedDirection === 'LONG' || expectedDirection === 'SHORT')
+    && Number(expectedEntryPrice) > 0
+    ? {
+        mode: '예상',
+        direction: expectedDirection,
+        entry_price: expectedEntryPrice,
+        stop_loss: signal?.stop_loss ?? summary?.planned_stop_loss,
+        take_profit_1: signal?.take_profit_1 ?? summary?.planned_take_profit_1,
+      }
+    : null
+  const displayedEntry = pendingEntry ?? expectedEntry
+  const isPendingOrder = Boolean(pendingEntry)
   const baseTrades = useMemo(
     () => trades
       .filter((t) => t.trade_type !== 'PLAN')
@@ -57,14 +73,18 @@ export function TradeLogTable({ trades, pendingEntry, currentPrice }) {
 
   return (
     <div className="trade-log">
-      {pendingEntry && (
+      {displayedEntry && (
         <div className="pending-entry-notice" role="status">
-          <span className="pending-entry-notice__badge">대기중..</span>
-          <strong className={pendingEntry.direction === 'LONG' ? 'tone-long' : 'tone-short'}>
-            {pendingEntry.direction}
+          <span className="pending-entry-notice__badge">
+            {isPendingOrder ? '대기중..' : '예상 진입가'}
+          </span>
+          <strong className={displayedEntry.direction === 'LONG' ? 'tone-long' : 'tone-short'}>
+            {displayedEntry.direction}
           </strong>
           <span>
-            지정가 {money(pendingEntry.entry_price)} 체결을 기다리고 있습니다.
+            {isPendingOrder
+              ? `지정가 ${money(displayedEntry.entry_price)} 체결을 기다리고 있습니다.`
+              : `현재 전략의 예상 진입가는 ${money(displayedEntry.entry_price)}입니다.`}
           </span>
           <span className="pending-entry-notice__price">현재가 {money(currentPrice)}</span>
         </div>
@@ -99,21 +119,21 @@ export function TradeLogTable({ trades, pendingEntry, currentPrice }) {
             <tr>{['구분', '시간', '방향', '진입가', '손절', '익절', '수익금', '청산가', '결과', '수익률'].map((h) => <th key={h}>{h}</th>)}</tr>
           </thead>
           <tbody>
-            {pendingEntry && (
+            {displayedEntry && (
               <tr className="pending-entry-row">
-                <td>{pendingEntry.mode}</td>
-                <td>대기중..</td>
-                <td className={pendingEntry.direction === 'LONG' ? 'tone-long' : 'tone-short'}>{pendingEntry.direction}</td>
-                <td>{money(pendingEntry.entry_price)}</td>
-                <td className="tone-short">{money(pendingEntry.stop_loss)}</td>
-                <td className="tone-long">{money(pendingEntry.take_profit_1)}</td>
+                <td>{displayedEntry.mode}</td>
+                <td>{isPendingOrder ? '대기중..' : '실시간 예상'}</td>
+                <td className={displayedEntry.direction === 'LONG' ? 'tone-long' : 'tone-short'}>{displayedEntry.direction}</td>
+                <td>{money(displayedEntry.entry_price)}</td>
+                <td className="tone-short">{money(displayedEntry.stop_loss)}</td>
+                <td className="tone-long">{money(displayedEntry.take_profit_1)}</td>
                 <td>-</td>
                 <td>-</td>
-                <td className="tone-wait">대기중..</td>
+                <td className="tone-wait">{isPendingOrder ? '대기중..' : '예상'}</td>
                 <td>-</td>
               </tr>
             )}
-            {sortedTrades.length === 0 && !pendingEntry && <tr><td colSpan="10" className="table-empty">거래 기록이 없습니다</td></tr>}
+            {sortedTrades.length === 0 && !displayedEntry && <tr><td colSpan="10" className="table-empty">거래 기록이 없습니다</td></tr>}
             {visibleTrades.map((t) => {
               const pnl = t.pnl_pct
               const dirTone = t.direction === 'LONG' ? 'tone-long' : 'tone-short'

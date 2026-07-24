@@ -54,7 +54,12 @@ export function TradeHistory({ trades, signal, pendingEntry, currentPrice }) {
         <TimeframePositionCards directions={signal?.timeframe_directions} />
       </div>
       <div className="stack stack--lg">
-        <TradeLogTable trades={trades} pendingEntry={pendingEntry} currentPrice={currentPrice} />
+        <TradeLogTable
+          trades={trades}
+          signal={signal}
+          pendingEntry={pendingEntry}
+          currentPrice={currentPrice}
+        />
       </div>
     </section>
   )

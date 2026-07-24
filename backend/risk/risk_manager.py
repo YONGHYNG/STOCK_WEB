@@ -68,16 +68,21 @@ class RiskManager:
         if strategy_signal and strategy_signal.endswith("TREND_CONTINUATION") and entry_grade != "A":
             return False, f"{strategy_signal} 신호가 {entry_grade}등급이므로 추격 진입 차단"
 
-        # 핵심 상위 시간봉(30m/1H/4H) 중 최소 2개가 진입 방향과 같아야 한다.
+        # 단타 진입은 5m·15m 방향 일치를 필수로 하고, 30m가 반대 추세일 때만 차단한다.
+        # 1H·4H는 장기 시장 맥락 표시용이며 자동 진입의 필수 조건으로 사용하지 않는다.
         directions = timeframe_directions or {}
-        core = [directions.get(tf, "HOLD") for tf in ("30m", "1H", "4H")]
-        aligned = sum(value == direction for value in core)
+        short_term = [directions.get(tf, "HOLD") for tf in ("5m", "15m")]
         opposite = "SHORT" if direction == "LONG" else "LONG"
-        opposed = sum(value == opposite for value in core)
-        if aligned < 2 or opposed >= 2:
+        if any(value != direction for value in short_term):
             return False, (
-                f"상위 시간봉 불일치: 30m/1H/4H={core} · "
-                f"{direction} 일치 {aligned}개이므로 진입 차단"
+                f"단기 시간봉 불일치: 5m/15m={short_term} · "
+                f"두 시간봉이 모두 {direction}이어야 진입 허용"
+            )
+        direction_30m = directions.get("30m", "HOLD")
+        if direction_30m == opposite:
+            return False, (
+                f"30분봉 강한 반대 추세: 30m={direction_30m} · "
+                f"{direction} 진입 차단"
             )
 
         # 3. 신뢰도 확인

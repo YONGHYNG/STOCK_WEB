@@ -1752,7 +1752,7 @@ class TradingMainWindow(QMainWindow):
         if not self._last_price:
             QMessageBox.warning(self, "주문 불가", "현재가를 확인할 수 없어 지정가를 계산하지 못했습니다.")
             return
-        limit_price = self._last_price - 150.0 if direction == "LONG" else self._last_price + 150.0
+        limit_price = self._last_price - 250.0 if direction == "LONG" else self._last_price + 250.0
 
         ans = QMessageBox.question(
             self, "주문 확인",

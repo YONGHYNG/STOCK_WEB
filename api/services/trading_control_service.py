@@ -1129,7 +1129,7 @@ async def place_order(payload: OrderPayload):
     side = "buy" if payload.side == "LONG" else "sell"
     if not state.last_price:
         return {"ok": False, "error": "현재가를 확인할 수 없어 지정가를 계산하지 못했습니다"}
-    limit_price = state.last_price - 150.0 if payload.side == "LONG" else state.last_price + 150.0
+    limit_price = state.last_price - 250.0 if payload.side == "LONG" else state.last_price + 250.0
     try:
         result = private_client.place_limit_order(side, str(payload.size), f"{limit_price:.1f}", "open")
         state.pending_live_order_id = str(result.get("orderId") or "pending")

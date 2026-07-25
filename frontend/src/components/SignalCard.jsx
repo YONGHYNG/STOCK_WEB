@@ -59,11 +59,10 @@ export function SignalCard({ signal, price, status, positions = [], trades = [] 
   const direction = signal?.direction ?? 'HOLD'
   const summary = signal?.timeframe_summary?.['1m'] ?? signal?.timeframe_summary?.['5m'] ?? {}
   const plannedDirection = pendingEntry?.direction ?? signal?.planned_direction ?? summary?.plan_direction ?? direction
-  const hasPlannedDirection = plannedDirection === 'LONG' || plannedDirection === 'SHORT'
-  const nextEntryPrice = pendingEntry?.entry_price ?? (hasPlannedDirection ? signal?.entry_price : null)
-  const nextStopLoss = pendingEntry?.stop_loss ?? (hasPlannedDirection ? signal?.stop_loss : null)
-  const nextTakeProfit1 = pendingEntry?.take_profit_1 ?? (hasPlannedDirection ? signal?.take_profit_1 : null)
-  const nextTakeProfit2 = pendingEntry?.take_profit_2 ?? (hasPlannedDirection ? signal?.take_profit_2 : null)
+  const nextEntryPrice = pendingEntry?.entry_price ?? signal?.entry_price
+  const nextStopLoss = pendingEntry?.stop_loss ?? signal?.stop_loss
+  const nextTakeProfit1 = pendingEntry?.take_profit_1 ?? signal?.take_profit_1
+  const nextTakeProfit2 = pendingEntry?.take_profit_2 ?? signal?.take_profit_2
   const activeDirection = hasPaper ? paper?.direction : livePosition?.holdSide?.toUpperCase() ?? openLiveTrade?.direction
   const displayDirection = hasPosition
     ? `${hasPaper ? 'PAPER' : 'LIVE'} ${activeDirection}`
@@ -123,7 +122,6 @@ export function SignalCard({ signal, price, status, positions = [], trades = [] 
     { label: '다음 포지션', value: plannedDirection, tone: toneClass(plannedDirection) },
     { label: '상태', value: state, tone: state.startsWith('WAIT') ? 'tone-wait' : '' },
     { label: pendingEntry ? '예상 진입가 · 대기중' : '실시간 예상 진입가', value: money(nextEntryPrice), tone: toneClass(plannedDirection) },
-    { label: '동적 진입 간격', value: money(signal?.entry_offset_usdt) },
     { label: '예상 손절가', value: money(nextStopLoss), tone: 'tone-short' },
     { label: '실시간 예상 1차 익절가', value: money(nextTakeProfit1), tone: 'tone-long' },
     { label: '예상 2차 익절', value: money(nextTakeProfit2), tone: 'tone-long' },
@@ -132,7 +130,8 @@ export function SignalCard({ signal, price, status, positions = [], trades = [] 
     { label: 'MA90 / MA200', value: `${money(summary?.ma90)} / ${money(summary?.ma200)}` },
     { label: '지지 / 돌파', value: `${money(summary?.support_level)} / ${money(summary?.breakout_level)}` },
   ]
-  const metrics = hasPaper ? positionMetrics : hasLive ? livePositionMetrics : signalMetrics
+  const activePositionMetrics = hasPaper ? positionMetrics : hasLive ? livePositionMetrics : []
+  const metrics = [...activePositionMetrics, ...signalMetrics]
 
   return (
     <div className="signal-card">

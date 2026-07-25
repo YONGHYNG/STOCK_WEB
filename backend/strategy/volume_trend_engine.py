@@ -13,7 +13,11 @@ TAKE_PROFIT_2_R_MULTIPLIER = 1.5
 STRUCTURE_LOOKBACK = 60
 STRUCTURE_STOP_BUFFER_ATR = 0.4
 RISK_TIMEFRAMES = ("5m",)
-LIMIT_ENTRY_OFFSET_USDT = 250.0
+이ENTRY_OFFSET_ATR_MULTIPLIER = 0.8
+ENTRY_OFFSET_MIN_USDT = 100.0
+ENTRY_OFFSET_MAX_USDT = 350.0
+ENTRY_OFFSET_STRONG_VOLUME_MULTIPLIER = 0.8
+ENTRY_OFFSET_WEAK_VOLUME_MULTIPLIER = 1.2
 
 
 @dataclass
@@ -62,6 +66,7 @@ class TradingResult:
     timeframe_summary: Optional[dict[str, dict]] = None
     strategy_signal: str = "HOLD"
     planned_direction: str = "HOLD"
+    entry_offset_usdt: Optional[float] = None
 
     def to_dict(self) -> dict:
         d = self.__dict__.copy()
@@ -127,10 +132,14 @@ class TradingAIEngine:
             entry = planned_entry
         else:
             entry = price
+        entry_offset = self._dynamic_entry_offset(
+            frame_info["summaries"].get("5m"),
+            last,
+        )
         if plan_direction == "LONG":
-            entry -= LIMIT_ENTRY_OFFSET_USDT
+            entry -= entry_offset
         elif plan_direction == "SHORT":
-            entry += LIMIT_ENTRY_OFFSET_USDT
+            entry += entry_offset
         atr = float(last.get("atr14") or 0)
         stop_loss, tp1, tp2, rr = self._risk_prices(
             plan_direction, entry, atr, df, decision, last, frame_info["summaries"], load_risk_settings()
@@ -156,6 +165,10 @@ class TradingAIEngine:
         short_score = 75.0 if direction == "SHORT" else 25.0 if direction == "LONG" else 50.0
         confidence = 100.0 if final_direction in ("LONG", "SHORT") else 0.0
         reasons = decision.reasons + [f"전략 신호: {decision.signal}", "모든 판단은 확정 캔들 기준"]
+        if plan_direction in ("LONG", "SHORT"):
+            reasons.append(
+                f"동적 진입 간격: 5분 ATR·거래량 기준 ${entry_offset:,.2f}"
+            )
         if decision.signal.startswith("WAIT") and plan_direction in ("LONG", "SHORT") and stop_loss and tp1:
             reasons.append(f"{plan_direction} 대기 계획: 예상 진입 ${entry:,.2f}, SL ${stop_loss:,.2f}, TP1 ${tp1:,.2f}")
         if warnings:
@@ -213,6 +226,7 @@ class TradingAIEngine:
             timeframe_summary=self._timeframe_summary(frame_info["summaries"], last, decision, plan_direction, entry, stop_loss, tp1, tp2),
             strategy_signal=decision.signal,
             planned_direction=plan_direction,
+            entry_offset_usdt=round(entry_offset, 2),
         )
 
     @staticmethod
@@ -257,6 +271,30 @@ class TradingAIEngine:
             "expected_entry_short": round(bid, 2),
             "spread_rate": (ask - bid) / mid if mid > 0 else None,
         }
+
+    @staticmethod
+    def _dynamic_entry_offset(
+        timeframe_5m: Optional[dict],
+        fallback_last=None,
+    ) -> float:
+        """5분봉 ATR과 거래량으로 자동매매 지정가 간격을 계산합니다."""
+        summary = timeframe_5m or {}
+        fallback_atr = float(fallback_last.get("atr14") or 0) if fallback_last is not None else 0.0
+        fallback_volume = (
+            float(fallback_last.get("volume_ratio") or 0)
+            if fallback_last is not None
+            else 0.0
+        )
+        atr_5m = float(summary.get("atr14") or fallback_atr)
+        volume_ratio_5m = float(summary.get("volume_ratio") or fallback_volume)
+
+        offset = atr_5m * ENTRY_OFFSET_ATR_MULTIPLIER
+        if volume_ratio_5m >= 1.2:
+            offset *= ENTRY_OFFSET_STRONG_VOLUME_MULTIPLIER
+        elif volume_ratio_5m < 0.7:
+            offset *= ENTRY_OFFSET_WEAK_VOLUME_MULTIPLIER
+
+        return min(max(offset, ENTRY_OFFSET_MIN_USDT), ENTRY_OFFSET_MAX_USDT)
 
     @staticmethod
     def _risk_prices(

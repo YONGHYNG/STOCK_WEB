@@ -123,6 +123,7 @@ export function SignalCard({ signal, price, status, positions = [], trades = [] 
     { label: '다음 포지션', value: plannedDirection, tone: toneClass(plannedDirection) },
     { label: '상태', value: state, tone: state.startsWith('WAIT') ? 'tone-wait' : '' },
     { label: pendingEntry ? '예상 진입가 · 대기중' : '실시간 예상 진입가', value: money(nextEntryPrice), tone: toneClass(plannedDirection) },
+    { label: '동적 진입 간격', value: money(signal?.entry_offset_usdt) },
     { label: '예상 손절가', value: money(nextStopLoss), tone: 'tone-short' },
     { label: '실시간 예상 1차 익절가', value: money(nextTakeProfit1), tone: 'tone-long' },
     { label: '예상 2차 익절', value: money(nextTakeProfit2), tone: 'tone-long' },

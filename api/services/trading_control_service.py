@@ -13,7 +13,7 @@ from backend.bitget.market_api import BitgetClient
 from backend.bitget.client import BitgetPrivateClient
 import backend.credentials as creds_store
 from backend.order.paper_trader import PaperTrader
-from backend.notifications import gmail_is_configured, send_trade_plan_email
+from backend.notifications import gmail_is_configured, send_trade_event_email
 from backend.power_keepawake import keep_awake
 from backend.risk.risk_manager import RiskManager
 import backend.risk.settings as risk_settings_store
@@ -487,6 +487,19 @@ async def _check_tp_sl(price: float):
     state.open_trade_data = None
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "trade_update"})
+    await _send_trade_event_notification(
+        result_code,
+        {
+            "direction": direction,
+            "entry_price": entry,
+            "stop_loss": t.get("sl"),
+            "take_profit_1": t.get("tp1"),
+            "take_profit_2": t.get("tp2"),
+            "exit_price": price,
+            "pnl_pct": pnl_pct,
+        },
+        "LIVE",
+    )
 
 
 async def _check_paper_tp_sl(price: float):
@@ -512,6 +525,19 @@ async def _check_paper_tp_sl(price: float):
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "trade_update"})
     await manager.broadcast({"type": "status", "data": _status_payload()})
+    await _send_trade_event_notification(
+        result_code,
+        {
+            "direction": direction,
+            "entry_price": entry,
+            "stop_loss": t.get("sl"),
+            "take_profit_1": t.get("tp1"),
+            "take_profit_2": t.get("tp2"),
+            "exit_price": limit_exit_price,
+            "pnl_pct": pnl,
+        },
+        "PAPER",
+    )
 
 
 # ── Auto trade ─────────────────────────────────────────────────────────────────
@@ -630,6 +656,7 @@ async def _refresh_pending_paper_order(direction: str, result: dict):
     )
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "status", "data": _status_payload()})
+    await _send_trade_event_notification("PENDING", result, "PAPER")
 
 
 async def _refresh_pending_live_order(direction: str, result: dict):
@@ -682,24 +709,42 @@ async def _auto_paper_trade(direction: str, r: dict):
     )
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "status", "data": _status_payload()})
+    await _send_trade_event_notification(
+        "PENDING",
+        {**r, "direction": direction},
+        "PAPER",
+    )
 
 
-async def _send_filled_position_email(result: dict):
-    if not state.auto_trade_enabled:
-        return
+async def _send_trade_event_notification(event: str, result: dict, mode: Optional[str] = None):
     if not gmail_is_configured():
         email_log = state.add_log("[Gmail 알림 실패] Gmail 설정이 없어 자동 연동할 수 없습니다")
         await manager.broadcast({"type": "log", "data": {"message": email_log}})
         return
+    payload = dict(result)
+    if mode:
+        payload["mode"] = mode
+    event_labels = {
+        "PENDING": "예상 진입가",
+        "ENTRY": "진입 체결",
+        "TP1": "1차 익절",
+        "TP2": "2차 익절",
+        "SL": "손절",
+    }
+    label = event_labels.get(event, event)
     try:
-        sent, detail = await asyncio.to_thread(send_trade_plan_email, result)
+        sent, detail = await asyncio.to_thread(send_trade_event_email, event, payload)
         email_log = state.add_log(
-            f"[Gmail 알림] 포지션 체결 메일 발송 완료 → {detail}"
-            if sent else f"[Gmail 알림 실패] {detail}"
+            f"[Gmail 알림] {label} 메일 발송 완료 → {detail}"
+            if sent else f"[Gmail 알림 실패] {label}: {detail}"
         )
     except Exception as exc:
-        email_log = state.add_log(f"[Gmail 알림 실패] {exc}")
+        email_log = state.add_log(f"[Gmail 알림 실패] {label}: {exc}")
     await manager.broadcast({"type": "log", "data": {"message": email_log}})
+
+
+async def _send_filled_position_email(result: dict, mode: Optional[str] = None):
+    await _send_trade_event_notification("ENTRY", result, mode)
 
 
 async def _check_pending_paper_entry(price: float):
@@ -718,7 +763,7 @@ async def _check_pending_paper_entry(price: float):
         state.paper_account_start_trade_id = trade_id
     msg = state.add_log(f"[모의 지정가 체결] {direction} #{trade_id}  ${limit_price:,.2f}")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
-    await _send_filled_position_email(result)
+    await _send_filled_position_email(result, "PAPER")
     await manager.broadcast({"type": "trade_update"})
     await manager.broadcast({"type": "status", "data": _status_payload()})
 
@@ -807,6 +852,11 @@ async def _auto_live_trade(direction: str, r: dict):
         )
         await manager.broadcast({"type": "log", "data": {"message": msg}})
         await manager.broadcast({"type": "status", "data": _status_payload()})
+        await _send_trade_event_notification(
+            "PENDING",
+            {**r, "direction": direction, "entry_price": float(limit_price)},
+            "LIVE",
+        )
     except Exception as exc:
         msg = state.add_log(f"[자동매매] 주문 실패: {exc}")
         await manager.broadcast({"type": "log", "data": {"message": msg}})
@@ -894,7 +944,7 @@ async def account_loop():
                     if cleared_pending:
                         if filled_result:
                             await _place_live_limit_protection(state.cached_positions, filled_result)
-                            await _send_filled_position_email(filled_result)
+                            await _send_filled_position_email(filled_result, "LIVE")
                         await manager.broadcast({"type": "status", "data": _status_payload()})
         except Exception:
             pass
@@ -1108,11 +1158,11 @@ async def set_auto_trade(payload: AutoTradePayload):
     ok, power_msg = keep_awake.enable() if enabled else keep_awake.disable()
     msg = state.add_log(f"[자동매매] {'ON' if enabled else 'OFF'}  모드={state.trading_mode}")
     gmail_log = state.add_log(
-        "[Gmail 알림] 자동매매 ON · 체결 메일 자동 연동 완료"
+        "[Gmail 알림] 자동매매 ON · 대기/진입/익절/손절 메일 연동 완료"
         if enabled and gmail_is_configured()
         else "[Gmail 알림] 자동매매 ON · Gmail 설정 필요"
         if enabled
-        else "[Gmail 알림] 자동매매 OFF · 체결 메일 연동 해제"
+        else "[Gmail 알림] 자동매매 OFF · 거래 이벤트 메일 연동 해제"
     )
     power_log = state.add_log(f"[전원관리] {power_msg}" if ok else f"[전원관리 경고] {power_msg}")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
@@ -1269,6 +1319,7 @@ async def place_paper_pending_order(payload: PaperPendingOrderPayload):
     )
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "status", "data": _status_payload()})
+    await _send_trade_event_notification("PENDING", result, "PAPER")
     return {"ok": True, "pending_entry": _status_payload().get("pending_entry")}
 
 

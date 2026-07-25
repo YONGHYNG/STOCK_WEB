@@ -1,5 +1,6 @@
 # 역할: 자동매매 시작, 중지, 새로고침을 제어하는 서비스.
 import asyncio
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Optional
@@ -64,6 +65,16 @@ risk_cfg = risk_settings_store.load()
 risk_mgr = RiskManager(risk_cfg)
 PAPER_ACCOUNT_INITIAL_BALANCE = 100.0
 PAPER_ACCOUNT_LEVERAGE = 20
+PENDING_ORDER_TTL_SECONDS = 2 * 60 * 60
+PENDING_CANCEL_RETRY_SECONDS = 60
+
+
+def _pending_order_timestamps(now: Optional[float] = None) -> dict:
+    created_at = float(now if now is not None else time.time())
+    return {
+        "created_at": created_at,
+        "expires_at": created_at + PENDING_ORDER_TTL_SECONDS,
+    }
 
 
 def _make_private_client() -> Optional[BitgetPrivateClient]:
@@ -607,7 +618,11 @@ async def _refresh_pending_paper_order(direction: str, result: dict):
     new_entry = float(result.get("entry_price") or 0)
     if old_entry == new_entry:
         return
-    state.pending_paper_order = {"direction": direction, "result": dict(result)}
+    state.pending_paper_order = {
+        "direction": direction,
+        "result": dict(result),
+        **_pending_order_timestamps(),
+    }
     update_reason = "강한 추세 추격" if strong_trend and not better_entry else "진입 조건 개선"
     msg = state.add_log(
         f"[모의 대기 주문 개선] {direction} ${old_entry:,.2f} → ${new_entry:,.2f}  "
@@ -655,7 +670,11 @@ async def _auto_paper_trade(direction: str, r: dict):
     if paper_trader.is_open or state.pending_paper_order:
         return
 
-    state.pending_paper_order = {"direction": direction, "result": dict(r)}
+    state.pending_paper_order = {
+        "direction": direction,
+        "result": dict(r),
+        **_pending_order_timestamps(),
+    }
     risk_mgr.record_order_placed()
     msg = state.add_log(
         f"[모의 지정가 대기] {direction} ${float(r.get('entry_price') or 0):,.2f}  "
@@ -704,6 +723,63 @@ async def _check_pending_paper_entry(price: float):
     await manager.broadcast({"type": "status", "data": _status_payload()})
 
 
+async def _expire_pending_order_if_needed(now: Optional[float] = None) -> bool:
+    """2시간 지난 미체결 주문을 취소하고 최신 확정 신호로 다시 평가한다."""
+    checked_at = float(now if now is not None else time.time())
+    pending = state.pending_paper_order or state.pending_live_order
+    if not pending:
+        return False
+
+    expires_at = float(pending.get("expires_at") or 0)
+    if expires_at <= 0:
+        timestamps = _pending_order_timestamps(checked_at)
+        pending.update(timestamps)
+        await manager.broadcast({"type": "status", "data": _status_payload()})
+        return False
+    if checked_at < expires_at:
+        return False
+
+    mode = "PAPER" if state.pending_paper_order else "LIVE"
+    direction = str(pending.get("direction") or "HOLD")
+    old_entry_value = (
+        (pending.get("result") or {}).get("entry_price")
+        if mode == "PAPER"
+        else pending.get("entry_price")
+    )
+    old_entry = float(old_entry_value or 0)
+
+    if mode == "LIVE":
+        order_id = str(pending.get("order_id") or "")
+        if private_client and order_id and order_id != "pending":
+            try:
+                await asyncio.to_thread(private_client.cancel_order, order_id)
+            except Exception as exc:
+                pending["expires_at"] = checked_at + PENDING_CANCEL_RETRY_SECONDS
+                msg = state.add_log(
+                    f"[LIVE 대기 주문 2시간 만료] 취소 실패, "
+                    f"{PENDING_CANCEL_RETRY_SECONDS}초 후 재시도: {exc}"
+                )
+                await manager.broadcast({"type": "log", "data": {"message": msg}})
+                await manager.broadcast({"type": "status", "data": _status_payload()})
+                return False
+        state.pending_live_order_id = None
+        state.pending_live_order = None
+    else:
+        state.pending_paper_order = None
+
+    msg = state.add_log(
+        f"[{mode} 대기 주문 2시간 만료] {direction} ${old_entry:,.2f} 취소 · "
+        "최신 확정 신호로 재계산"
+    )
+    await manager.broadcast({"type": "log", "data": {"message": msg}})
+    await manager.broadcast({"type": "status", "data": _status_payload()})
+
+    latest = state.last_result
+    if latest and state.auto_trade_enabled and not state.emergency_stopped:
+        await _check_auto_trade(latest)
+    return True
+
+
 async def _auto_live_trade(direction: str, r: dict):
     if not private_client:
         return
@@ -722,6 +798,7 @@ async def _auto_live_trade(direction: str, r: dict):
             "entry_price": float(limit_price),
             "order_id": state.pending_live_order_id,
             "result": dict(r),
+            **_pending_order_timestamps(),
         }
         risk_mgr.record_order_placed()
         msg = state.add_log(
@@ -774,6 +851,7 @@ async def signal_loop():
 async def price_loop():
     while True:
         try:
+            await _expire_pending_order_if_needed()
             price = await asyncio.to_thread(_worker_price)
             if price:
                 state.last_price = price
@@ -931,8 +1009,10 @@ def _status_payload() -> dict:
 
 
 def _pending_entry_payload() -> Optional[dict]:
+    now = time.time()
     if state.pending_paper_order:
         result = state.pending_paper_order.get("result") or {}
+        expires_at = float(state.pending_paper_order.get("expires_at") or 0)
         return {
             "mode": "PAPER",
             "direction": state.pending_paper_order.get("direction"),
@@ -940,13 +1020,24 @@ def _pending_entry_payload() -> Optional[dict]:
             "stop_loss": result.get("stop_loss"),
             "take_profit_1": result.get("take_profit_1"),
             "take_profit_2": result.get("take_profit_2"),
+            "created_at": state.pending_paper_order.get("created_at"),
+            "expires_at": expires_at or None,
+            "remaining_seconds": max(0, int(expires_at - now)) if expires_at else None,
         }
     if state.pending_live_order:
+        expires_at = float(state.pending_live_order.get("expires_at") or 0)
+        result = state.pending_live_order.get("result") or {}
         return {
             "mode": "LIVE",
             "direction": state.pending_live_order.get("direction"),
             "entry_price": state.pending_live_order.get("entry_price"),
             "order_id": state.pending_live_order.get("order_id"),
+            "stop_loss": result.get("stop_loss"),
+            "take_profit_1": result.get("take_profit_1"),
+            "take_profit_2": result.get("take_profit_2"),
+            "created_at": state.pending_live_order.get("created_at"),
+            "expires_at": expires_at or None,
+            "remaining_seconds": max(0, int(expires_at - now)) if expires_at else None,
         }
     return None
 
@@ -1137,6 +1228,7 @@ async def place_order(payload: OrderPayload):
             "direction": payload.side,
             "entry_price": limit_price,
             "order_id": state.pending_live_order_id,
+            **_pending_order_timestamps(),
         }
         msg = state.add_log(
             f"[수동 지정가 주문] {payload.side} {payload.size} BTC @ ${limit_price:,.1f}  "
@@ -1165,7 +1257,11 @@ async def place_paper_pending_order(payload: PaperPendingOrderPayload):
         "entry_grade": "A",
         "reasons": ["사용자가 복원한 모의 지정가 대기 주문"],
     }
-    state.pending_paper_order = {"direction": direction, "result": result}
+    state.pending_paper_order = {
+        "direction": direction,
+        "result": result,
+        **_pending_order_timestamps(),
+    }
     risk_mgr.record_order_placed()
     msg = state.add_log(
         f"[모의 지정가 대기 복원] {direction} ${payload.entry_price:,.2f}  "

@@ -520,6 +520,8 @@ async def _check_paper_tp_sl(price: float):
     tid, pnl = paper_trader.close_trade(exit_price=limit_exit_price, result=result_code,
                                         profit_reason=profit_reason, loss_reason=loss_reason)
     risk_mgr.record_trade_result(pnl)
+    if risk_mgr.consecutive_losses >= risk_cfg.consecutive_loss_limit:
+        await _activate_consecutive_loss_stop()
     emoji = "익절" if result_code.startswith("TP") else "손절"
     msg = state.add_log(f"[모의매매 {emoji}] #{tid}  {result_code}  {sign}{pnl:.2f}%")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
@@ -999,12 +1001,7 @@ async def startup_event():
     restored_losses = _recent_consecutive_paper_losses()
     risk_mgr.restore_consecutive_losses(restored_losses)
     if restored_losses >= risk_cfg.consecutive_loss_limit:
-        state.auto_trade_enabled = False
-        state.pending_paper_order = None
-        keep_awake.disable()
-        state.add_log(
-            f"[리스크 복원] 최근 연속 손실 {restored_losses}회 — 자동매매 OFF"
-        )
+        await _activate_consecutive_loss_stop(restored=True)
     if state.paper_account_start_trade_id is None and paper_trader.is_open:
         state.paper_account_start_trade_id = paper_trader.open_id
     asyncio.create_task(signal_loop())
@@ -1121,9 +1118,7 @@ async def save_risk_settings(payload: RiskSettingsPayload):
     risk_mgr = RiskManager(s)
     risk_mgr.restore_consecutive_losses(_recent_consecutive_paper_losses())
     if risk_mgr.consecutive_losses >= s.consecutive_loss_limit:
-        state.auto_trade_enabled = False
-        state.pending_paper_order = None
-        keep_awake.disable()
+        await _activate_consecutive_loss_stop(restored=True)
     msg = state.add_log(f"[리스크 설정] 저장 완료  실거래허용={s.live_trading_allowed}")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "status", "data": _status_payload()})
@@ -1195,8 +1190,21 @@ async def emergency_stop():
     return {"ok": True, "has_position": has_pos}
 
 
+async def _activate_consecutive_loss_stop(restored: bool = False):
+    """연속 손실 한도 도달을 사용자가 직접 해제해야 하는 긴급정지로 전환한다."""
+    if state.emergency_stopped:
+        return
+    await emergency_stop()
+    prefix = "리스크 복원" if restored else "연속 손실 정지"
+    msg = state.add_log(
+        f"[{prefix}] 연속 손실 {risk_mgr.consecutive_losses}회 — 긴급정지 ON"
+    )
+    await manager.broadcast({"type": "log", "data": {"message": msg}})
+
+
 async def emergency_resume():
     risk_mgr.deactivate_emergency_stop()
+    risk_mgr.reset_consecutive_losses()
     state.emergency_stopped = False
     previous_enabled = state.auto_trade_enabled_before_emergency
     state.auto_trade_enabled = previous_enabled if previous_enabled is not None else state.trading_mode == "PAPER_TRADING"

@@ -141,7 +141,12 @@ export function TradingStatusCard({ status, signal, positions = [], updatedAt, o
         </div>
       </div>
 
-      <button className="btn-short btn-block" onClick={onEmergencyStop}>긴급정지</button>
+      <button
+        className={`btn-block ${status?.emergency_stopped ? 'btn-resume' : 'btn-short'}`}
+        onClick={status?.emergency_stopped ? onEmergencyResume : onEmergencyStop}
+      >
+        {status?.emergency_stopped ? '긴급정지 해제' : '긴급정지'}
+      </button>
     </div>
   )
 }

@@ -634,6 +634,7 @@ hr {
 /* ---- buttons ---- */
 
 .btn-short { color: var(--red); border-color: var(--red); }
+.btn-resume { color: var(--green); border-color: var(--green); }
 
 .switch-inline {
   display: flex;

@@ -65,7 +65,7 @@ risk_cfg = risk_settings_store.load()
 risk_mgr = RiskManager(risk_cfg)
 PAPER_ACCOUNT_INITIAL_BALANCE = 100.0
 PAPER_ACCOUNT_LEVERAGE = 20
-PENDING_ORDER_TTL_SECONDS = 2 * 60 * 60
+PENDING_ORDER_TTL_SECONDS = 30 * 60
 PENDING_CANCEL_RETRY_SECONDS = 60
 
 
@@ -181,12 +181,14 @@ def _worker_analyze() -> tuple[Optional[dict], list[str]]:
         market = clients["5m"].fetch_market_snapshot().to_dict()
     except Exception as exc:
         errors.append(f"market: {exc}")
+        # OI/호가 같은 보조 데이터 실패는 캔들 분석 전체를 중단하지 않는다.
+        market = {"last_price": float((usable.get("5m") or usable[next(iter(usable))])[-1]["close"])}
     result = engine.analyze_multi_timeframe(
         usable,
         all_time_high=ath,
         all_time_low=atl,
         market=market,
-        account_equity=_account_equity_from_cache(),
+        account_equity=_analysis_account_equity(),
     ).to_dict()
     insert_signal(SYMBOL, DEFAULT_TIMEFRAME, result)
     return result, errors
@@ -226,6 +228,15 @@ def _account_equity_from_cache() -> Optional[float]:
     return None
 
 
+def _analysis_account_equity() -> Optional[float]:
+    if state.trading_mode == "PAPER_TRADING":
+        try:
+            return float(get_paper_account(PAPER_ACCOUNT_INITIAL_BALANCE, PAPER_ACCOUNT_LEVERAGE)["balance"])
+        except Exception:
+            return PAPER_ACCOUNT_INITIAL_BALANCE
+    return _account_equity_from_cache()
+
+
 def _paper_position_payload() -> Optional[dict]:
     if not paper_trader.is_open or not paper_trader.open_data:
         paper_trader.restore_from_db()
@@ -258,7 +269,7 @@ def _paper_position_payload() -> Optional[dict]:
         "gross_pnl_pct": gross_pnl_pct,
         "fee_pct": fee_pct,
         "pnl_pct": net_pnl_pct,
-        "size_btc": risk_cfg.order_size_btc,
+        "size_btc": data.get("size") or risk_cfg.order_size_btc,
         "entry_reason": row.get("entry_reason") if row else "",
     }
 
@@ -329,6 +340,7 @@ def _trade_data_from_row(row: dict) -> dict:
         "sl": row["stop_loss"],
         "tp1": row["take_profit_1"],
         "tp2": row["take_profit_2"],
+        "size": row.get("size_btc"),
     }
 
 
@@ -339,6 +351,7 @@ def _trade_data_from_signal(result: dict) -> dict:
         "sl": result.get("stop_loss"),
         "tp1": result.get("take_profit_1"),
         "tp2": result.get("take_profit_2"),
+        "size": result.get("position_size_btc"),
     }
 
 
@@ -519,8 +532,11 @@ async def _check_paper_tp_sl(price: float):
     loss_reason = f"[모의 지정가] 손절 체결: ${entry:,.2f} → ${limit_exit_price:,.2f}  ({sign}{pnl_pct:.2f}%)" if result_code == "SL" else ""
     tid, pnl = paper_trader.close_trade(exit_price=limit_exit_price, result=result_code,
                                         profit_reason=profit_reason, loss_reason=loss_reason)
-    risk_mgr.record_trade_result(pnl)
-    if risk_mgr.consecutive_losses >= risk_cfg.consecutive_loss_limit:
+    risk_mgr.record_trade_result(pnl, result_code)
+    if (
+        state.trading_mode != "PAPER_TRADING"
+        and risk_mgr.consecutive_losses >= risk_cfg.consecutive_loss_limit
+    ):
         await _activate_consecutive_loss_stop()
     emoji = "익절" if result_code.startswith("TP") else "손절"
     msg = state.add_log(f"[모의매매 {emoji}] #{tid}  {result_code}  {sign}{pnl:.2f}%")
@@ -555,7 +571,10 @@ async def _check_auto_trade(result: dict):
     confidence = result.get("confidence", 0.0)
     mode = TradingMode(state.trading_mode)
 
-    if risk_mgr.consecutive_losses >= risk_cfg.consecutive_loss_limit:
+    if (
+        state.trading_mode != "PAPER_TRADING"
+        and risk_mgr.consecutive_losses >= risk_cfg.consecutive_loss_limit
+    ):
         if state.pending_paper_order or state.pending_live_order:
             await _cancel_pending_for_risk(
                 f"연속 손실 {risk_mgr.consecutive_losses}회로 신규 대기 주문 취소"
@@ -586,9 +605,13 @@ async def _check_auto_trade(result: dict):
         return
 
     if state.trading_mode == "PAPER_TRADING":
-        await _auto_paper_trade(direction, result)
+        created = await _auto_paper_trade(direction, result)
     elif state.trading_mode == "LIVE_TRADING":
-        await _auto_live_trade(direction, result)
+        created = await _auto_live_trade(direction, result)
+    else:
+        created = False
+    if created:
+        engine.consume_signal(direction, int(result.get("timestamp") or 0))
 
 
 async def _cancel_pending_for_risk(reason: str):
@@ -697,7 +720,7 @@ async def _refresh_pending_live_order(direction: str, result: dict):
 
 async def _auto_paper_trade(direction: str, r: dict):
     if paper_trader.is_open or state.pending_paper_order:
-        return
+        return False
 
     state.pending_paper_order = {
         "direction": direction,
@@ -716,6 +739,7 @@ async def _auto_paper_trade(direction: str, r: dict):
         {**r, "direction": direction},
         "PAPER",
     )
+    return True
 
 
 async def _send_trade_event_notification(event: str, result: dict, mode: Optional[str] = None):
@@ -771,7 +795,7 @@ async def _check_pending_paper_entry(price: float):
 
 
 async def _expire_pending_order_if_needed(now: Optional[float] = None) -> bool:
-    """2시간 지난 미체결 주문을 취소하고 최신 확정 신호로 다시 평가한다."""
+    """30분 지난 미체결 주문을 취소하고 최신 확정 신호로 다시 평가한다."""
     checked_at = float(now if now is not None else time.time())
     pending = state.pending_paper_order or state.pending_live_order
     if not pending:
@@ -803,7 +827,7 @@ async def _expire_pending_order_if_needed(now: Optional[float] = None) -> bool:
             except Exception as exc:
                 pending["expires_at"] = checked_at + PENDING_CANCEL_RETRY_SECONDS
                 msg = state.add_log(
-                    f"[LIVE 대기 주문 2시간 만료] 취소 실패, "
+                    f"[LIVE 대기 주문 30분 만료] 취소 실패, "
                     f"{PENDING_CANCEL_RETRY_SECONDS}초 후 재시도: {exc}"
                 )
                 await manager.broadcast({"type": "log", "data": {"message": msg}})
@@ -815,7 +839,7 @@ async def _expire_pending_order_if_needed(now: Optional[float] = None) -> bool:
         state.pending_paper_order = None
 
     msg = state.add_log(
-        f"[{mode} 대기 주문 2시간 만료] {direction} ${old_entry:,.2f} 취소 · "
+        f"[{mode} 대기 주문 30분 만료] {direction} ${old_entry:,.2f} 취소 · "
         "최신 확정 신호로 재계산"
     )
     await manager.broadcast({"type": "log", "data": {"message": msg}})
@@ -829,12 +853,13 @@ async def _expire_pending_order_if_needed(now: Optional[float] = None) -> bool:
 
 async def _auto_live_trade(direction: str, r: dict):
     if not private_client:
-        return
+        return False
     btc_positions = [p for p in state.cached_positions if p.get("symbol") == SYMBOL]
     if btc_positions or state.pending_live_order_id:
-        return
+        return False
 
-    size = f"{risk_cfg.order_size_btc:.3f}"
+    size_value = float(r.get("position_size_btc") or risk_cfg.order_size_btc)
+    size = f"{size_value:.8f}".rstrip("0").rstrip(".")
     side = "buy" if direction == "LONG" else "sell"
     try:
         limit_price = f"{float(r.get('entry_price') or 0):.1f}"
@@ -859,9 +884,11 @@ async def _auto_live_trade(direction: str, r: dict):
             {**r, "direction": direction, "entry_price": float(limit_price)},
             "LIVE",
         )
+        return True
     except Exception as exc:
         msg = state.add_log(f"[자동매매] 주문 실패: {exc}")
         await manager.broadcast({"type": "log", "data": {"message": msg}})
+        return False
 
 
 # ── Background loops ───────────────────────────────────────────────────────────
@@ -1112,7 +1139,12 @@ async def save_risk_settings(payload: RiskSettingsPayload):
     global risk_cfg, risk_mgr
     s = RiskSettings(**payload.model_dump())
     s.consecutive_loss_limit = 3
-    s.reentry_wait_seconds = max(1800, s.reentry_wait_seconds)
+    s.risk_per_trade_pct = 0.2
+    s.stop_reentry_wait_seconds = 600
+    s.take_profit_reentry_wait_seconds = 180
+    s.two_loss_pause_seconds = 1800
+    s.atr_stop_multiplier = 1.5
+    s.max_ma_distance_atr = 2.5
     risk_settings_store.save(s)
     risk_cfg = s
     risk_mgr = RiskManager(s)
@@ -1130,6 +1162,10 @@ async def save_risk_settings(payload: RiskSettingsPayload):
 async def set_mode(payload: ModePayload):
     state.trading_mode = payload.mode
     if state.trading_mode == "PAPER_TRADING":
+        risk_mgr.deactivate_emergency_stop()
+        risk_mgr.reset_consecutive_losses()
+        state.emergency_stopped = False
+        state.auto_trade_enabled_before_emergency = None
         state.auto_trade_enabled = True
         keep_awake.enable()
     msg = state.add_log(f"[모드변경] {state.trading_mode}")
@@ -1168,6 +1204,16 @@ async def set_auto_trade(payload: AutoTradePayload):
 
 
 async def emergency_stop():
+    if state.trading_mode == "PAPER_TRADING":
+        risk_mgr.deactivate_emergency_stop()
+        state.emergency_stopped = False
+        state.auto_trade_enabled_before_emergency = None
+        state.auto_trade_enabled = True
+        keep_awake.enable()
+        msg = state.add_log("[모의매매] 긴급정지는 적용하지 않음 · 자동매매 계속")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        await manager.broadcast({"type": "status", "data": _status_payload()})
+        return {"ok": True, "ignored": True, "has_position": False}
     if not state.emergency_stopped:
         state.auto_trade_enabled_before_emergency = state.auto_trade_enabled
     risk_mgr.activate_emergency_stop()
@@ -1192,6 +1238,8 @@ async def emergency_stop():
 
 async def _activate_consecutive_loss_stop(restored: bool = False):
     """연속 손실 한도 도달을 사용자가 직접 해제해야 하는 긴급정지로 전환한다."""
+    if state.trading_mode == "PAPER_TRADING":
+        return
     if state.emergency_stopped:
         return
     await emergency_stop()
@@ -1233,7 +1281,7 @@ async def emergency_close():
     state.pending_live_order = None
     if paper_trader.is_open and state.last_price:
         tid, pnl = paper_trader.force_close(state.last_price)
-        risk_mgr.record_trade_result(pnl)
+        risk_mgr.record_trade_result(pnl, "EMERGENCY_CLOSE")
         msg = state.add_log(f"[모의매매 긴급청산] #{tid}  PnL={pnl:+.2f}%")
         await manager.broadcast({"type": "log", "data": {"message": msg}})
         await manager.broadcast({"type": "trade_update"})

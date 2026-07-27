@@ -22,6 +22,10 @@ class MarketSnapshot:
     best_ask: Optional[float] = None
     funding_rate: Optional[float] = None
     next_funding_time: Optional[int] = None
+    open_interest: Optional[float] = None
+    open_interest_change_rate: Optional[float] = None
+    min_trade_num: Optional[float] = None
+    size_multiplier: Optional[float] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -46,6 +50,8 @@ class BitgetClient:
         self.timeframe = timeframe
         self.demo_mode = demo_mode
         self.demo_price = 100000.0
+        self._last_open_interest: Optional[float] = None
+        self._contract_rules: Optional[dict] = None
 
     def fetch_recent_candles_rest(self, limit: int = 200) -> list[dict]:
         """
@@ -163,6 +169,19 @@ class BitgetClient:
         ticker = self._fetch_ticker_item()
         orderbook = self._fetch_orderbook()
         funding = self._fetch_current_funding()
+        try:
+            open_interest = self._fetch_open_interest()
+        except Exception:
+            open_interest = None
+        try:
+            rules = self._fetch_contract_rules()
+        except Exception:
+            rules = {}
+        oi_change = None
+        if self._last_open_interest and open_interest is not None:
+            oi_change = (open_interest - self._last_open_interest) / self._last_open_interest * 100
+        if open_interest is not None:
+            self._last_open_interest = open_interest
 
         def f(value):
             return float(value) if value not in (None, "") else None
@@ -175,7 +194,36 @@ class BitgetClient:
             best_ask=orderbook.get("best_ask"),
             funding_rate=f(funding.get("fundingRate")),
             next_funding_time=int(funding["nextFundingTime"]) if funding.get("nextFundingTime") else None,
+            open_interest=open_interest,
+            open_interest_change_rate=oi_change,
+            min_trade_num=f(rules.get("minTradeNum")),
+            size_multiplier=f(rules.get("sizeMultiplier")),
         )
+
+    def _fetch_open_interest(self) -> Optional[float]:
+        path = "/api/v2/mix/market/open-interest"
+        params = {"symbol": self.symbol, "productType": self.product_type}
+        res = requests.get(BITGET_REST_BASE + path, params=params, timeout=API_TIMEOUT_SECONDS)
+        res.raise_for_status()
+        payload = res.json()
+        if payload.get("code") not in (None, "00000"):
+            raise RuntimeError(f"Bitget open interest error: {payload.get('msg')}")
+        rows = (payload.get("data") or {}).get("openInterestList") or []
+        return float(rows[0]["size"]) if rows and rows[0].get("size") else None
+
+    def _fetch_contract_rules(self) -> dict:
+        if self._contract_rules is not None:
+            return self._contract_rules
+        path = "/api/v2/mix/market/contracts"
+        params = {"symbol": self.symbol, "productType": self.product_type}
+        res = requests.get(BITGET_REST_BASE + path, params=params, timeout=API_TIMEOUT_SECONDS)
+        res.raise_for_status()
+        payload = res.json()
+        if payload.get("code") not in (None, "00000"):
+            raise RuntimeError(f"Bitget contract config error: {payload.get('msg')}")
+        rows = payload.get("data") or []
+        self._contract_rules = rows[0] if isinstance(rows, list) and rows else {}
+        return self._contract_rules
 
     def _fetch_ticker_item(self) -> dict:
         path = "/api/v2/mix/market/ticker"

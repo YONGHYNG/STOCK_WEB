@@ -38,12 +38,19 @@ def add_indicators(candles: list[dict] | pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     out = df.copy()
+    out["ema20"] = out["close"].ewm(span=20, adjust=False).mean()
+    out["ema50"] = out["close"].ewm(span=50, adjust=False).mean()
     out["ma90"] = out["close"].rolling(90).mean()
     out["ma200"] = out["close"].rolling(200).mean()
+    out["ema20_slope"] = out["ema20"].diff()
+    out["ma90_slope"] = out["ma90"].diff()
     out["rsi14"] = _rsi(out["close"], 14)
     out["atr14"] = _atr(out, 14)
     out["volume_ma20"] = out["volume"].rolling(20).mean()
     out["volume_ratio"] = out["volume"] / out["volume_ma20"].replace(0, 1e-9)
+    typical_price = (out["high"] + out["low"] + out["close"]) / 3
+    volume_sum = out["volume"].rolling(90).sum()
+    out["vwap"] = (typical_price * out["volume"]).rolling(90).sum() / volume_sum.replace(0, 1e-9)
     candle_range = (out["high"] - out["low"]).replace(0, 1e-9)
     out["upper_wick"] = out["high"] - out[["open", "close"]].max(axis=1)
     out["lower_wick"] = out[["open", "close"]].min(axis=1) - out["low"]

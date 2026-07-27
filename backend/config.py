@@ -9,9 +9,9 @@ DB_PATH = DATA_DIR / "trading.db"
 SYMBOL = "BTCUSDT"
 PRODUCT_TYPE = "USDT-FUTURES"
 
-# 분석 대상 시간봉: 전략 판단은 1m/5m를 우선 사용하고, 나머지는 화면 표시와 추세 확인용으로 유지합니다.
+# 분석 대상 시간봉: 5m가 진입 기준이며 15m는 강한 반대 추세 차단에 사용합니다.
 TIMEFRAMES = ["1m", "5m", "15m", "30m", "1H", "4H", "6H", "1D"]
-DEFAULT_TIMEFRAME = "1m"
+DEFAULT_TIMEFRAME = "5m"
 TIMEFRAME = DEFAULT_TIMEFRAME
 
 # MA200/RSI/ATR/거래량 지표 안정화를 위해 최근 660개 확정 캔들을 유지합니다.

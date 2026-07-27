@@ -87,7 +87,8 @@ def init_db() -> None:
                 pnl_pct       REAL,
                 profit_reason TEXT,
                 loss_reason   TEXT,
-                notes         TEXT
+                notes         TEXT,
+                size_btc      REAL
             )
             """
         )
@@ -98,6 +99,10 @@ def init_db() -> None:
             pass   # 이미 존재하면 무시
         try:
             conn.execute("ALTER TABLE trades ADD COLUMN realized_pnl_amount REAL")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE trades ADD COLUMN size_btc REAL")
         except Exception:
             pass
         conn.execute(
@@ -127,13 +132,20 @@ def reconcile_paper_account(initial_balance: float = 100.0, leverage: float = 20
         account_leverage = float(account["leverage"])
         rows = conn.execute(
             """
-            SELECT id, pnl_pct FROM trades
+            SELECT id, entry_price, pnl_pct, size_btc FROM trades
             WHERE trade_type='PAPER' AND result != 'OPEN' AND pnl_pct IS NOT NULL
             ORDER BY id ASC
             """
         ).fetchall()
         for row in rows:
-            pnl_amount = balance * account_leverage * (float(row["pnl_pct"]) / 100)
+            if row["size_btc"] is not None:
+                pnl_amount = (
+                    float(row["size_btc"])
+                    * float(row["entry_price"])
+                    * (float(row["pnl_pct"]) / 100)
+                )
+            else:
+                pnl_amount = balance * account_leverage * (float(row["pnl_pct"]) / 100)
             pnl_amount = max(pnl_amount, -balance)
             balance += pnl_amount
             conn.execute(
@@ -277,6 +289,7 @@ def open_trade(
     tf_directions: dict,
     entry_reason: str,
     trade_type: str = "LIVE",
+    size_btc: Optional[float] = None,
 ) -> int:
     """새 거래를 열고 trade ID를 반환합니다. trade_type: 'LIVE' | 'PAPER' | 'PLAN'"""
     with get_connection() as conn:
@@ -284,14 +297,15 @@ def open_trade(
             """
             INSERT INTO trades
             (symbol, trade_type, direction, entry_price, stop_loss, take_profit_1, take_profit_2,
-             risk_reward, confidence, long_prob, short_prob, tf_directions, entry_reason, result)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
+             risk_reward, confidence, long_prob, short_prob, tf_directions, entry_reason, size_btc, result)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
             """,
             (
                 symbol, trade_type, direction, entry_price, stop_loss, take_profit_1, take_profit_2,
                 risk_reward, confidence, long_prob, short_prob,
                 json.dumps(tf_directions, ensure_ascii=False),
                 entry_reason,
+                size_btc,
             ),
         )
         conn.commit()

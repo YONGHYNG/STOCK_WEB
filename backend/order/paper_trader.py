@@ -67,6 +67,7 @@ class PaperTrader:
             tf_directions = r.get("timeframe_directions", {}),
             entry_reason  = reasons,
             trade_type    = "PAPER",
+            size_btc      = r.get("position_size_btc"),
         )
         self._open_id   = trade_id
         self._open_data = {
@@ -75,6 +76,7 @@ class PaperTrader:
             "sl":        r.get("stop_loss"),
             "tp1":       r.get("take_profit_1"),
             "tp2":       r.get("take_profit_2"),
+            "size":      r.get("position_size_btc"),
         }
         return trade_id
 
@@ -160,4 +162,5 @@ class PaperTrader:
                 "sl":        row["stop_loss"],
                 "tp1":       row["take_profit_1"],
                 "tp2":       row["take_profit_2"],
+                "size":      row.get("size_btc"),
             }

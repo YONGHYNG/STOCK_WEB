@@ -8,6 +8,7 @@ check_entry() 가 (allowed: bool, reason: str) 를 반환합니다.
 """
 
 import time
+from datetime import date
 from dataclasses import dataclass
 from backend.risk.settings import RiskSettings
 from backend.trading_modes import TradingMode
@@ -20,8 +21,10 @@ class RiskManager:
         self._daily_pnl_pct: float = 0.0        # 당일 누적 손익률
         self._consecutive_losses: int = 0        # 연속 손실 횟수
         self._last_order_ts: float = 0.0         # 마지막 주문 타임스탬프
+        self._entry_block_until: float = 0.0
+        self._daily_entry_blocked: bool = False
         self._emergency_stop: bool = False        # 긴급정지 여부
-        self._daily_reset_date: str = ""          # 일일 리셋 날짜 기록
+        self._daily_reset_date: str = str(date.today())
 
     # ── 외부에서 호출 ──────────────────────────────────────────────────────────
 
@@ -49,7 +52,7 @@ class RiskManager:
         s = self.settings
 
         # 1. 긴급정지
-        if self._emergency_stop:
+        if self._emergency_stop and mode != TradingMode.PAPER_TRADING:
             return False, "[긴급정지] 자동매매 차단됨"
 
         # 2. 방향 확인
@@ -68,20 +71,12 @@ class RiskManager:
         if strategy_signal and strategy_signal.endswith("TREND_CONTINUATION") and entry_grade != "A":
             return False, f"{strategy_signal} 신호가 {entry_grade}등급이므로 추격 진입 차단"
 
-        # 단타 진입은 5m·15m 방향 일치를 필수로 하고, 30m가 반대 추세일 때만 차단한다.
-        # 1H·4H는 장기 시장 맥락 표시용이며 자동 진입의 필수 조건으로 사용하지 않는다.
+        # 15분봉은 같은 방향일 필요가 없고 강한 반대 추세일 때만 차단한다.
         directions = timeframe_directions or {}
-        short_term = [directions.get(tf, "HOLD") for tf in ("5m", "15m")]
         opposite = "SHORT" if direction == "LONG" else "LONG"
-        if any(value != direction for value in short_term):
+        if directions.get("15m", "HOLD") == opposite:
             return False, (
-                f"단기 시간봉 불일치: 5m/15m={short_term} · "
-                f"두 시간봉이 모두 {direction}이어야 진입 허용"
-            )
-        direction_30m = directions.get("30m", "HOLD")
-        if direction_30m == opposite:
-            return False, (
-                f"30분봉 강한 반대 추세: 30m={direction_30m} · "
+                f"15분봉 강한 반대 추세: 15m={opposite} · "
                 f"{direction} 진입 차단"
             )
 
@@ -103,30 +98,28 @@ class RiskManager:
             if not s.live_trading_allowed:
                 return False, "리스크 설정에서 실거래 허용이 비활성화되어 있음"
 
-        # 6. 1회 최대 손실률 체크
-        if entry_price and stop_loss:
-            expected_loss_pct = abs(entry_price - stop_loss) / entry_price * 100
-            if expected_loss_pct > s.max_loss_pct:
-                return False, (
-                    f"예상 손실률 {expected_loss_pct:.2f}% > "
-                    f"1회 최대 손실률 {s.max_loss_pct:.2f}%"
-                )
-
-        # 7. 재진입 대기 시간
-        elapsed = time.time() - self._last_order_ts
-        if self._last_order_ts > 0 and elapsed < s.reentry_wait_seconds:
-            remaining = int(s.reentry_wait_seconds - elapsed)
+        # 6. 거래 결과별 재진입/연속 손실 대기
+        if self._daily_entry_blocked and mode != TradingMode.PAPER_TRADING:
+            return False, "연속 3회 손절로 당일 신규 진입 중단"
+        if time.time() < self._entry_block_until:
+            remaining = int(self._entry_block_until - time.time())
             return False, f"재진입 대기 중 ({remaining}초 남음)"
 
         # 8. 일일 손실 제한
-        if self._daily_pnl_pct <= -abs(s.daily_max_loss_pct):
+        if (
+            mode != TradingMode.PAPER_TRADING
+            and self._daily_pnl_pct <= -abs(s.daily_max_loss_pct)
+        ):
             return False, (
                 f"일일 손실 한도 도달 ({self._daily_pnl_pct:.2f}% / "
                 f"-{s.daily_max_loss_pct:.1f}%)"
             )
 
         # 9. 연속 손실 제한
-        if self._consecutive_losses >= s.consecutive_loss_limit:
+        if (
+            mode != TradingMode.PAPER_TRADING
+            and self._consecutive_losses >= s.consecutive_loss_limit
+        ):
             return False, (
                 f"연속 손실 {self._consecutive_losses}회 → "
                 f"한도({s.consecutive_loss_limit}회) 도달, 자동매매 중단"
@@ -142,7 +135,7 @@ class RiskManager:
 
         return True, ""
 
-    def record_trade_result(self, pnl_pct: float):
+    def record_trade_result(self, pnl_pct: float, result: str | None = None):
         """거래 결과를 기록합니다."""
         self._daily_pnl_pct += pnl_pct
         if pnl_pct < 0:
@@ -150,6 +143,15 @@ class RiskManager:
         else:
             self._consecutive_losses = 0
         self._last_order_ts = time.time()
+        if result == "SL" or pnl_pct < 0:
+            wait_seconds = self.settings.stop_reentry_wait_seconds
+        else:
+            wait_seconds = self.settings.take_profit_reentry_wait_seconds
+        if self._consecutive_losses == 2:
+            wait_seconds = max(wait_seconds, self.settings.two_loss_pause_seconds)
+        if self._consecutive_losses >= 3:
+            self._daily_entry_blocked = True
+        self._entry_block_until = time.time() + max(0, wait_seconds)
 
     def record_order_placed(self):
         """주문 발행 시각만 기록 (아직 체결 전)."""
@@ -162,6 +164,8 @@ class RiskManager:
     def reset_consecutive_losses(self):
         """사용자가 위험을 확인하고 자동매매를 다시 켤 때 손실 정지를 해제한다."""
         self._consecutive_losses = 0
+        self._daily_entry_blocked = False
+        self._entry_block_until = 0.0
 
     def activate_emergency_stop(self):
         self._emergency_stop = True
@@ -184,11 +188,12 @@ class RiskManager:
     # ── Internal ───────────────────────────────────────────────────────────────
 
     def _maybe_reset_daily(self):
-        from datetime import date
         today = str(date.today())
         if today != self._daily_reset_date:
             self._daily_pnl_pct = 0.0
             self._consecutive_losses = 0
+            self._daily_entry_blocked = False
+            self._entry_block_until = 0.0
             self._daily_reset_date = today
 
 

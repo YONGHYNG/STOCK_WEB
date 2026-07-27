@@ -6,16 +6,23 @@ from pydantic import BaseModel
 
 class RiskSettingsPayload(BaseModel):
     order_size_btc: float
+    risk_per_trade_pct: float = 0.2
     max_loss_pct: float
     daily_max_loss_pct: float
     consecutive_loss_limit: int
     confidence_threshold: float
     reentry_wait_seconds: int
+    stop_reentry_wait_seconds: int = 900
+    take_profit_reentry_wait_seconds: int = 300
+    two_loss_pause_seconds: int = 3600
     stop_gap_min_usdt: float = 400.0
     stop_gap_max_usdt: float = 700.0
     take_profit_1_min_usdt: float = 500.0
     take_profit_1_max_usdt: float = 600.0
     take_profit_2_usdt: float = 800.0
+    atr_stop_multiplier: float = 1.5
+    max_ma_distance_atr: float = 2.0
+    oi_sharp_drop_pct: float = 2.0
     max_leverage: int
     live_trading_allowed: bool
 

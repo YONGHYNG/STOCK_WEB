@@ -1,30 +1,20 @@
-# 역할: 거래량, 추세, RSI 기반 BTCUSDT 선물 전략 조건을 판정합니다.
-from dataclasses import dataclass, field
+# 역할: 5분봉 추세·VWAP·RSI 재돌파 기반 BTCUSDT 진입 조건을 판정합니다.
+from dataclasses import dataclass
 from typing import Optional
 
 import pandas as pd
 
 
 SIGNAL_TO_DIRECTION = {
-    "SHORT_REBOUND": "SHORT",
-    "SHORT_BREAKDOWN": "SHORT",
-    "LONG_BOUNCE": "LONG",
-    "LONG_TREND_CHANGE": "LONG",
-    "SHORT_TREND_CONTINUATION": "SHORT",
-    "LONG_TREND_CONTINUATION": "LONG",
+    "LONG_RSI_RECLAIM": "LONG",
+    "SHORT_RSI_REJECT": "SHORT",
 }
 
-BASE_VOLUME_RATIO = 0.5
-BREAKOUT_VOLUME_RATIO = 0.8
-
-
-@dataclass
-class StrategyState:
-    mode: str = "IDLE"
-    support_level: Optional[float] = None
-    breakout_level: Optional[float] = None
-    wait_started_index: Optional[int] = None
-    logs: list[str] = field(default_factory=list)
+VOLUME_RATIO_MIN = 0.65
+STRUCTURE_WINDOW = 6
+RSI_ARM_LOOKBACK = 60
+LONG_ARM_RSI = 48.5
+SHORT_ARM_RSI = 51.5
 
 
 @dataclass
@@ -40,181 +30,141 @@ class StrategyDecision:
 
 
 class VolumeTrendRsiStrategy:
+    """한 RSI 사이클과 한 5분봉에서 방향별 신호를 한 번만 소비합니다."""
+
     def __init__(self) -> None:
-        self.state = StrategyState()
+        self.long_armed = False
+        self.short_armed = False
+        self.last_long_candle: Optional[int] = None
+        self.last_short_candle: Optional[int] = None
+        self._initialized = False
 
     def evaluate(self, df: pd.DataFrame) -> StrategyDecision:
         if len(df) < 220:
-            return self._decision("HOLD", df, ["MA200 계산을 위한 캔들 데이터 부족"], ["데이터 부족"])
+            return self._decision("HOLD", df, ["MA200 계산을 위한 5분봉 부족"], ["데이터 부족"])
+
         last = df.iloc[-1]
         prev = df.iloc[-2]
-        if pd.isna(last.get("ma90")) or pd.isna(last.get("ma200")) or pd.isna(last.get("rsi14")):
+        required = ("ema20", "ema50", "ema20_slope", "ma90", "vwap", "rsi14", "atr14", "volume_ratio")
+        if any(pd.isna(last.get(key)) for key in required) or pd.isna(prev.get("rsi14")):
             return self._decision("HOLD", df, ["필수 지표 계산 전"], ["지표 데이터 부족"])
 
-        support_level = float(df["low"].iloc[-21:-1].min())
-        reasons: list[str] = []
-        warnings: list[str] = []
+        if not self._initialized:
+            history = df["rsi14"].iloc[-RSI_ARM_LOOKBACK:-1].dropna()
+            self.long_armed = bool((history <= LONG_ARM_RSI).any())
+            self.short_armed = bool((history >= SHORT_ARM_RSI).any())
+            self._initialized = True
 
-        if self._short_breakdown_setup(last, support_level):
-            self.state.mode = "WAIT_RETEST_SHORT"
-            self.state.support_level = support_level
-            self.state.wait_started_index = len(df) - 1
-            reasons.append(
-                f"저점 이탈 감지: close < support {support_level:.2f}, "
-                f"volume_ratio >= {BREAKOUT_VOLUME_RATIO:.1f}"
-            )
-            warnings.append("저점 이탈 직후 시장가 추격 금지, 리테스트 대기")
-            return self._decision("WAIT_RETEST_SHORT", df, reasons, warnings, support_level=support_level)
-
-        if self.state.mode == "WAIT_RETEST_SHORT" and self._short_breakdown_entry(last):
-            reasons.append("support_level 리테스트 후 종가가 아래에서 마감, RSI < 50")
-            signal = self._consume("SHORT_BREAKDOWN")
-            return self._decision(signal, df, reasons, warnings, support_level=support_level)
-
-        if self._long_trend_change_setup(last, prev):
-            self.state.mode = "WAIT_PULLBACK_LONG"
-            self.state.breakout_level = max(float(last["ma90"]), float(last["ma200"]))
-            self.state.wait_started_index = len(df) - 1
-            reasons.append(
-                f"MA90/MA200 상향 돌파 + RSI > 50 + "
-                f"volume_ratio >= {BREAKOUT_VOLUME_RATIO:.1f}"
-            )
-            warnings.append("돌파 직후 시장가 추격 금지, 눌림 대기")
-            return self._decision("WAIT_PULLBACK_LONG", df, reasons, warnings, breakout_level=self.state.breakout_level)
-
-        if self.state.mode == "WAIT_PULLBACK_LONG" and self._long_trend_change_entry(last):
-            reasons.append("breakout_level 눌림 확인 후 종가 회복, RSI 45~60")
-            signal = self._consume("LONG_TREND_CHANGE")
-            return self._decision(signal, df, reasons, warnings, support_level=support_level)
-
-        if self._short_rebound(last, prev):
-            reasons.append("하락 추세에서 MA90/MA200 반등 실패 + RSI 하락 전환 + 거래량 확인")
-            return self._decision("SHORT_REBOUND", df, reasons, warnings, support_level=support_level)
-
-        if self._long_bounce(last, prev, support_level):
-            reasons.append("최근 20캔들 저점 지지 + 긴 아래꼬리 + RSI 상승 전환 + 거래량 확인")
-            return self._decision("LONG_BOUNCE", df, reasons, warnings, support_level=support_level)
-
-        if self._short_trend_continuation(last):
-            reasons.append("하락 추세 지속 + 음봉 확정 + RSI 약세 + 기본 거래량 충족")
-            return self._decision("SHORT_TREND_CONTINUATION", df, reasons, warnings, support_level=support_level)
-
-        if self._long_trend_continuation(last):
-            reasons.append("상승 추세 지속 + 양봉 확정 + RSI 강세 + 기본 거래량 충족")
-            return self._decision("LONG_TREND_CONTINUATION", df, reasons, warnings, support_level=support_level)
-
-        if self.state.mode.startswith("WAIT"):
-            reasons.append(f"{self.state.mode} 상태 유지, 확정 캔들 조건 미충족")
-            return self._decision(self.state.mode, df, reasons, warnings, support_level=support_level)
-        return self._decision("HOLD", df, ["전략 조건 미충족"], warnings, support_level=support_level)
-
-    @staticmethod
-    def _near_ma_rejection(last) -> bool:
-        ma90 = float(last["ma90"])
-        ma200 = float(last["ma200"])
-        high = float(last["high"])
-        close = float(last["close"])
-        touched_ma90 = high >= ma90 and close < ma90
-        touched_ma200 = high >= ma200 and close < ma200
-        return touched_ma90 or touched_ma200
-
-    def _short_rebound(self, last, prev) -> bool:
-        downtrend = float(last["close"]) < float(last["ma90"]) < float(last["ma200"])
-        rsi_turn_down = float(prev["rsi14"]) >= 55 and float(last["rsi14"]) < float(prev["rsi14"])
-        return bool(
-            downtrend
-            and self._near_ma_rejection(last)
-            and rsi_turn_down
-            and float(last["volume_ratio"]) >= BASE_VOLUME_RATIO
-        )
-
-    @staticmethod
-    def _short_breakdown_setup(last, support_level: float) -> bool:
-        return bool(
-            float(last["close"]) < support_level
-            and float(last["volume_ratio"]) >= BREAKOUT_VOLUME_RATIO
-        )
-
-    def _short_breakdown_entry(self, last) -> bool:
-        support = self.state.support_level
-        if support is None:
-            return False
-        return bool(float(last["high"]) >= support and float(last["close"]) < support and float(last["rsi14"]) < 50)
-
-    @staticmethod
-    def _long_bounce(last, prev, support_level: float) -> bool:
-        support_hold = float(last["low"]) <= support_level and float(last["close"]) > support_level
-        longer_lower_wick = float(last["lower_wick"]) > float(last["upper_wick"])
-        rsi_turn_up = float(prev["rsi14"]) <= 40 and float(last["rsi14"]) > float(prev["rsi14"])
-        return bool(
-            support_hold
-            and longer_lower_wick
-            and rsi_turn_up
-            and float(last["volume_ratio"]) >= BASE_VOLUME_RATIO
-        )
-
-    @staticmethod
-    def _long_trend_change_setup(last, prev) -> bool:
-        prev_below_ma90 = float(prev["close"]) < float(prev["ma90"])
-        current_above_mas = float(last["close"]) > float(last["ma90"]) and float(last["close"]) > float(last["ma200"])
-        return bool(
-            prev_below_ma90
-            and current_above_mas
-            and float(last["rsi14"]) > 50
-            and float(last["volume_ratio"]) >= BREAKOUT_VOLUME_RATIO
-        )
-
-    def _long_trend_change_entry(self, last) -> bool:
-        breakout = self.state.breakout_level
-        if breakout is None:
-            return False
         rsi = float(last["rsi14"])
-        return bool(float(last["low"]) <= breakout and float(last["close"]) > breakout and 45 <= rsi <= 60)
+        previous_rsi = float(prev["rsi14"])
+        if rsi <= LONG_ARM_RSI:
+            self.long_armed = True
+        if rsi >= SHORT_ARM_RSI:
+            self.short_armed = True
 
-    @staticmethod
-    def _short_trend_continuation(last) -> bool:
-        close = float(last["close"])
-        return bool(
-            close < float(last["open"])
-            and close < float(last["ma90"]) < float(last["ma200"])
-            and float(last["rsi14"]) <= 48
-            and float(last["volume_ratio"]) >= BASE_VOLUME_RATIO
+        timestamp = int(last.get("timestamp") or len(df) - 1)
+        recent = df.iloc[-STRUCTURE_WINDOW:]
+        older = df.iloc[-(STRUCTURE_WINDOW * 2):-STRUCTURE_WINDOW]
+        rising_structure = (
+            float(recent["high"].max()) > float(older["high"].max())
+            and float(recent["low"].min()) > float(older["low"].min())
+        )
+        falling_structure = (
+            float(recent["high"].max()) < float(older["high"].max())
+            and float(recent["low"].min()) < float(older["low"].min())
         )
 
-    @staticmethod
-    def _long_trend_continuation(last) -> bool:
         close = float(last["close"])
-        return bool(
-            close > float(last["open"])
-            and close > float(last["ma90"]) > float(last["ma200"])
-            and float(last["rsi14"]) >= 52
-            and float(last["volume_ratio"]) >= BASE_VOLUME_RATIO
+        ema20 = float(last["ema20"])
+        ema50 = float(last["ema50"])
+        ema_slope = float(last["ema20_slope"])
+        vwap = float(last["vwap"])
+        volume_ok = float(last["volume_ratio"]) >= VOLUME_RATIO_MIN
+        # 정확히 50선을 한 봉에서 통과할 때만 기다리지 않고,
+        # 50선 부근에서 방향을 되돌리는 초기 움직임도 진입 후보로 사용한다.
+        long_cross = rsi >= 48.0 and rsi > previous_rsi and previous_rsi <= 52.0
+        short_cross = rsi <= 52.0 and rsi < previous_rsi and previous_rsi >= 48.0
+        long_structure_ok = rising_structure or (
+            close > ema20 and float(last["low"]) >= float(prev["low"])
+        )
+        short_structure_ok = falling_structure or (
+            close < ema20 and float(last["high"]) <= float(prev["high"])
         )
 
-    def _consume(self, signal: str) -> str:
-        self.state = StrategyState()
-        return signal
+        if (
+            self.long_armed
+            and self.last_long_candle != timestamp
+            and ema20 > ema50
+            and ema_slope > 0
+            and close > vwap
+            and long_cross
+        ):
+            return self._decision(
+                "LONG_RSI_RECLAIM",
+                df,
+                [
+                    "5분봉 상승 구조 확인" if long_structure_ok else "EMA·VWAP 상승 방향 우선",
+                    "EMA20 > EMA50, EMA20 기울기 상승",
+                    "종가가 VWAP 위",
+                    "RSI14가 50선 부근에서 상승 전환",
+                    (
+                        f"거래량 확인 {float(last['volume_ratio']):.2f}"
+                        if volume_ok
+                        else f"저거래량 {float(last['volume_ratio']):.2f}, 추세 조건으로 진입"
+                    ),
+                ],
+                [],
+            )
 
-    def _decision(
-        self,
-        signal: str,
-        df: pd.DataFrame,
-        reasons: list[str],
-        warnings: list[str],
-        support_level: Optional[float] = None,
-        breakout_level: Optional[float] = None,
-    ) -> StrategyDecision:
-        last_close = float(df.iloc[-1]["close"]) if len(df) else 0.0
+        if (
+            self.short_armed
+            and self.last_short_candle != timestamp
+            and ema20 < ema50
+            and ema_slope < 0
+            and close < vwap
+            and short_cross
+        ):
+            return self._decision(
+                "SHORT_RSI_REJECT",
+                df,
+                [
+                    "5분봉 하락 구조 확인" if short_structure_ok else "EMA·VWAP 하락 방향 우선",
+                    "EMA20 < EMA50, EMA20 기울기 하락",
+                    "종가가 VWAP 아래",
+                    "RSI14가 50선 부근에서 하락 전환",
+                    (
+                        f"거래량 확인 {float(last['volume_ratio']):.2f}"
+                        if volume_ok
+                        else f"저거래량 {float(last['volume_ratio']):.2f}, 추세 조건으로 진입"
+                    ),
+                ],
+                [],
+            )
+
+        return self._decision("HOLD", df, ["5분봉 진입 조건 대기"], [])
+
+    def consume(self, direction: str, timestamp: int) -> None:
+        """실제 주문이 생성된 경우에만 해당 RSI 사이클과 5분봉을 소비합니다."""
+        if direction == "LONG":
+            self.long_armed = False
+            self.last_long_candle = int(timestamp)
+        elif direction == "SHORT":
+            self.short_armed = False
+            self.last_short_candle = int(timestamp)
+
+    @staticmethod
+    def _decision(signal: str, df: pd.DataFrame, reasons: list[str], warnings: list[str]) -> StrategyDecision:
+        close = float(df.iloc[-1]["close"]) if len(df) else 0.0
         return StrategyDecision(
             signal=signal,
             direction=SIGNAL_TO_DIRECTION.get(signal, "HOLD"),
-            state=self.state.mode,
-            entry_price=last_close,
-            support_level=support_level if support_level is not None else self.state.support_level,
-            breakout_level=breakout_level if breakout_level is not None else self.state.breakout_level,
+            state="READY" if signal != "HOLD" else "IDLE",
+            entry_price=close,
+            support_level=None,
+            breakout_level=None,
             reasons=reasons,
             warnings=warnings,
         )
 
 
-__all__ = ["SIGNAL_TO_DIRECTION", "StrategyDecision", "StrategyState", "VolumeTrendRsiStrategy"]
+__all__ = ["SIGNAL_TO_DIRECTION", "StrategyDecision", "VolumeTrendRsiStrategy"]

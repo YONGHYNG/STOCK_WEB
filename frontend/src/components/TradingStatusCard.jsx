@@ -67,7 +67,7 @@ function statusReason(signal, status, activePosition) {
   if (activePosition) {
     return plainReason(firstReason(activePosition.entry_reason), activePosition.direction ?? activePosition.side)
   }
-  if (status?.emergency_stopped) return '긴급정지 상태'
+  if (status?.emergency_stopped && status?.trading_mode !== 'PAPER_TRADING') return '긴급정지 상태'
   const warnings = signal?.risk_warnings ?? signal?.warnings ?? []
   if (warnings.length) return warnings[0]
   if (signal?.strategy_signal?.startsWith('WAIT')) return signal.strategy_signal
@@ -76,6 +76,8 @@ function statusReason(signal, status, activePosition) {
 
 export function TradingStatusCard({ status, signal, positions = [], updatedAt, onModeChange, onEmergencyStop, onEmergencyResume }) {
   const mode = status?.trading_mode ?? 'PAPER_TRADING'
+  const isPaper = mode === 'PAPER_TRADING'
+  const isStopped = !isPaper && Boolean(status?.emergency_stopped)
   const autoEnabled = mode === 'PAPER_TRADING' ? true : Boolean(status?.auto_trade_enabled)
   const livePosition = positions.find((p) => p.symbol === 'BTCUSDT')
   const paperPosition = status?.paper_position
@@ -93,7 +95,7 @@ export function TradingStatusCard({ status, signal, positions = [], updatedAt, o
   return (
     <div className="ops-card">
       <div className="ops-head">
-        {status?.emergency_stopped ? (
+        {isStopped ? (
           <button
             type="button"
             className="ops-badge ops-badge--stop ops-badge--button"
@@ -141,12 +143,16 @@ export function TradingStatusCard({ status, signal, positions = [], updatedAt, o
         </div>
       </div>
 
-      <button
-        className={`btn-block ${status?.emergency_stopped ? 'btn-resume' : 'btn-short'}`}
-        onClick={status?.emergency_stopped ? onEmergencyResume : onEmergencyStop}
-      >
-        {status?.emergency_stopped ? '긴급정지 해제' : '긴급정지'}
-      </button>
+      {isPaper ? (
+        <div className="clear-card">모의투자 자동매매 계속 실행 · 긴급정지 미적용</div>
+      ) : (
+        <button
+          className={`btn-block ${isStopped ? 'btn-resume' : 'btn-short'}`}
+          onClick={isStopped ? onEmergencyResume : onEmergencyStop}
+        >
+          {isStopped ? '긴급정지 해제' : '긴급정지'}
+        </button>
+      )}
     </div>
   )
 }

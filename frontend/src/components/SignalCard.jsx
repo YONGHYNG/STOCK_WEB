@@ -74,7 +74,7 @@ export function SignalCard({ signal, price, status, positions = [], trades = [] 
   const activeGrossPnl = hasPaper
     ? paperGrossPnl(activeDirection, paper?.entry_price, currentPrice || paper?.current_price)
     : 0
-  const paperNotional = Number(status?.paper_account?.notional ?? 0)
+  const paperNotional = Number(paper?.size_btc ?? 0) * Number(paper?.entry_price ?? 0)
   const activeGrossUsdt = paperNotional * activeGrossPnl / 100
   const fixedFeeUsdt = paperNotional * fixedFeePct / 100
   const activeNetUsdt = activeGrossUsdt - fixedFeeUsdt

@@ -49,29 +49,24 @@ export function ProfitSummary({ trades, paperAccount }) {
   }
   const entries = actualTrades.filter((t) => inRange(t.entry_time))
   const closed = actualTrades.filter((t) => t.pnl_pct != null && inRange(t.exit_time ?? t.entry_time))
-  const safeMargin = Math.max(0, Number(paperAccount?.equity ?? paperAccount?.balance ?? 100) || 0)
-  const settlement = closed
-    .slice()
-    .sort((a, b) => parseBackendTime(a.exit_time ?? a.entry_time) - parseBackendTime(b.exit_time ?? b.entry_time))
-    .reduce((state, trade) => {
-      const notional = state.balance * FIXED_LEVERAGE
-      // 지정가 청산은 0.03%, 긴급 시장가 청산은 0.06%를 적용한다.
-      const storedNetPnlPct = Number(trade.pnl_pct) || 0
+  const safeMargin = Math.max(0, Number(paperAccount?.balance ?? 100) || 0)
+  const settlement = closed.reduce((state, trade) => {
+      const tradeNotional = Number(trade.size_btc ?? 0) * Number(trade.entry_price ?? 0)
       const emergencyExit = trade.result === 'SIGNAL_CHANGE' || String(trade.result).includes('EMERGENCY')
-      const storedFeePct = DEFAULT_LIMIT_FEE_RATE_PCT + (emergencyExit ? EMERGENCY_MARKET_FEE_RATE_PCT : DEFAULT_LIMIT_FEE_RATE_PCT)
       const appliedFeePct = Number(feeRatePct || 0) + (emergencyExit ? EMERGENCY_MARKET_FEE_RATE_PCT : Number(feeRatePct || 0))
-      const grossPnlPct = storedNetPnlPct + storedFeePct
-      const adjustedNetPnlPct = grossPnlPct - appliedFeePct
-      const profit = Math.max(notional * (adjustedNetPnlPct / 100), -state.balance)
+      const realized = trade.realized_pnl_amount != null
+        ? Number(trade.realized_pnl_amount)
+        : tradeNotional * (Number(trade.pnl_pct || 0) / 100)
       return {
-        balance: state.balance + profit,
-        includedFee: state.includedFee + notional * (appliedFeePct / 100),
+        realized: state.realized + realized,
+        includedFee: state.includedFee + tradeNotional * (appliedFeePct / 100),
       }
-    }, { balance: safeMargin, includedFee: 0 })
+    }, { realized: 0, includedFee: 0 })
   const notional = safeMargin * FIXED_LEVERAGE
-  const netProfit = settlement.balance - safeMargin
+  const netProfit = settlement.realized
   const totalFee = settlement.includedFee
-  const netPnlPct = safeMargin > 0 ? (netProfit / safeMargin) * 100 : 0
+  const periodStartBalance = Math.max(0, safeMargin - netProfit)
+  const netPnlPct = periodStartBalance > 0 ? (netProfit / periodStartBalance) * 100 : 0
   const netTone = netProfit >= 0 ? 'tone-long' : 'tone-short'
 
   return (

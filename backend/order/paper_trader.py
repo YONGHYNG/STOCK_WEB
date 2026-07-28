@@ -151,6 +151,13 @@ class PaperTrader:
             exit_fee_rate = TAKER_FEE_RATE,
         )
 
+    def update_open_size(self, size_btc: float) -> None:
+        if not self._open_id or not self._open_data:
+            return
+        size = float(size_btc)
+        db.update_trade_size(self._open_id, size)
+        self._open_data["size"] = size
+
     def restore_from_db(self):
         """프로그램 재시작 시 PAPER_OPEN 상태의 거래를 복구합니다."""
         row = db.get_open_trade(SYMBOL, trade_type="PAPER")

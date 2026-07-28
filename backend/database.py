@@ -334,6 +334,15 @@ def close_trade(
         conn.commit()
 
 
+def update_trade_size(trade_id: int, size_btc: float) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE trades SET size_btc=? WHERE id=? AND trade_type='PAPER' AND result='OPEN'",
+            (float(size_btc), int(trade_id)),
+        )
+        conn.commit()
+
+
 def get_open_trade(symbol: str, trade_type: str = "LIVE") -> Optional[dict]:
     """현재 오픈 중인 거래를 반환합니다. trade_type: 'LIVE' | 'PAPER' | 'PLAN'"""
     with get_connection() as conn:

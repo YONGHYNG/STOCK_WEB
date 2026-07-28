@@ -69,6 +69,16 @@ PENDING_ORDER_TTL_SECONDS = 30 * 60
 PENDING_CANCEL_RETRY_SECONDS = 60
 
 
+def _paper_full_leverage_size(entry_price: float) -> float:
+    """현재 모의 잔액 전부를 고정 20배 명목금액으로 환산한 BTC 수량."""
+    entry = float(entry_price or 0)
+    if entry <= 0:
+        return 0.0
+    account = get_paper_account(PAPER_ACCOUNT_INITIAL_BALANCE, PAPER_ACCOUNT_LEVERAGE)
+    notional = max(0.0, float(account["balance"])) * PAPER_ACCOUNT_LEVERAGE
+    return round(notional / entry, 8)
+
+
 def _pending_order_timestamps(now: Optional[float] = None) -> dict:
     created_at = float(now if now is not None else time.time())
     return {
@@ -315,7 +325,11 @@ def _paper_account_payload() -> dict:
     paper_position = _paper_position_payload()
     unrealized_pnl = 0.0
     if paper_position:
-        unrealized_pnl = balance * leverage * (float(paper_position.get("pnl_pct") or 0) / 100)
+        position_notional = (
+            float(paper_position.get("size_btc") or 0)
+            * float(paper_position.get("entry_price") or 0)
+        )
+        unrealized_pnl = position_notional * (float(paper_position.get("pnl_pct") or 0) / 100)
         unrealized_pnl = max(unrealized_pnl, -balance)
     equity = balance + unrealized_pnl
     return {
@@ -669,9 +683,11 @@ async def _refresh_pending_paper_order(direction: str, result: dict):
     new_entry = float(result.get("entry_price") or 0)
     if old_entry == new_entry:
         return
+    paper_result = dict(result)
+    paper_result["position_size_btc"] = _paper_full_leverage_size(new_entry)
     state.pending_paper_order = {
         "direction": direction,
-        "result": dict(result),
+        "result": paper_result,
         **_pending_order_timestamps(),
     }
     update_reason = "강한 추세 추격" if strong_trend and not better_entry else "진입 조건 개선"
@@ -722,9 +738,13 @@ async def _auto_paper_trade(direction: str, r: dict):
     if paper_trader.is_open or state.pending_paper_order:
         return False
 
+    paper_result = dict(r)
+    paper_result["position_size_btc"] = _paper_full_leverage_size(
+        float(paper_result.get("entry_price") or 0)
+    )
     state.pending_paper_order = {
         "direction": direction,
-        "result": dict(r),
+        "result": paper_result,
         **_pending_order_timestamps(),
     }
     risk_mgr.record_order_placed()
@@ -736,7 +756,7 @@ async def _auto_paper_trade(direction: str, r: dict):
     await manager.broadcast({"type": "status", "data": _status_payload()})
     await _send_trade_event_notification(
         "PENDING",
-        {**r, "direction": direction},
+        {**paper_result, "direction": direction},
         "PAPER",
     )
     return True
@@ -1025,6 +1045,10 @@ async def startup_event():
         state.plan_trade_id = existing_plan["id"]
         state.plan_trade_data = _trade_data_from_row(existing_plan)
     paper_trader.restore_from_db()
+    if paper_trader.is_open and paper_trader.open_data:
+        paper_trader.update_open_size(
+            _paper_full_leverage_size(float(paper_trader.open_data.get("entry") or 0))
+        )
     restored_losses = _recent_consecutive_paper_losses()
     risk_mgr.restore_consecutive_losses(restored_losses)
     if restored_losses >= risk_cfg.consecutive_loss_limit:
@@ -1362,6 +1386,7 @@ async def place_paper_pending_order(payload: PaperPendingOrderPayload):
         "strategy_signal": f"MANUAL_{direction}_LIMIT",
         "entry_grade": "A",
         "reasons": ["사용자가 복원한 모의 지정가 대기 주문"],
+        "position_size_btc": _paper_full_leverage_size(payload.entry_price),
     }
     state.pending_paper_order = {
         "direction": direction,

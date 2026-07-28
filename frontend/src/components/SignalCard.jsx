@@ -17,11 +17,11 @@ function signedUsdt(value) {
 }
 
 const GRADE_LABELS = {
-  A: '진입 조건 충족',
-  B: '진입 조건 양호',
-  C: '추가 확인 필요',
-  D: '진입 조건 부족',
-  F: '확정 신호 대기',
+  A: '진입 조건 충족 · A',
+  B: '진입 조건 양호 · B',
+  C: '추가 확인 필요 · C',
+  D: '진입 조건 부족 · D',
+  F: '확정 신호 대기 · F',
 }
 
 function gradeTone(grade) {

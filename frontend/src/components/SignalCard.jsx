@@ -17,11 +17,11 @@ function signedUsdt(value) {
 }
 
 const GRADE_LABELS = {
-  A: 'A · 최상',
-  B: 'B · 양호',
-  C: 'C · 진입 대기',
-  D: 'D · 조건 미흡',
-  F: 'F · 위험/계산 불가',
+  A: '진입 조건 충족',
+  B: '진입 조건 양호',
+  C: '추가 확인 필요',
+  D: '진입 조건 부족',
+  F: '확정 신호 대기',
 }
 
 function gradeTone(grade) {
@@ -138,7 +138,7 @@ export function SignalCard({ signal, price, status, positions = [], trades = [] 
   ] : []
 
   const signalMetrics = hasPosition ? [] : [
-    { label: '진입 등급', value: GRADE_LABELS[signal?.entry_grade] ?? '-', tone: gradeTone(signal?.entry_grade) },
+    { label: '진입 판단', value: GRADE_LABELS[signal?.entry_grade] ?? '분석 대기', tone: gradeTone(signal?.entry_grade) },
     { label: '전략 신호', value: strategySignal, tone: strategySignal.startsWith('WAIT') ? 'tone-wait' : toneClass(direction) },
     { label: 'RSI14 · 5분봉', value: rsi },
     ...orderMetrics,

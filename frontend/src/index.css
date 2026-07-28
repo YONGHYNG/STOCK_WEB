@@ -701,7 +701,7 @@ hr {
 
 .signal-card__metrics--signal .stat-value {
   margin-top: 8px;
-  font-size: 21px;
+  font-size: 18px;
   font-weight: 950;
   line-height: 1.2;
   font-variant-numeric: tabular-nums;

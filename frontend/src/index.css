@@ -695,6 +695,22 @@ hr {
   gap: 8px;
 }
 
+.signal-card__metrics--signal {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.signal-card__metrics--signal .stat-value {
+  margin-top: 8px;
+  font-size: 21px;
+  font-weight: 950;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.signal-card__metric--wide {
+  grid-column: 1 / -1;
+}
+
 .signal-card__metric {
   min-height: 72px;
   padding: 11px;
@@ -1233,6 +1249,10 @@ hr {
   }
 
   .signal-card__metrics--position {
+    grid-template-columns: 1fr;
+  }
+
+  .signal-card__metrics--signal {
     grid-template-columns: 1fr;
   }
 

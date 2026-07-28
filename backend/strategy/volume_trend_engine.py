@@ -1,4 +1,5 @@
 # 역할: 5분봉 진입 전략과 1시간봉 ATR 손절·익절을 결합해 API 결과로 변환합니다.
+import math
 from dataclasses import dataclass
 from typing import Optional
 
@@ -99,6 +100,7 @@ class TradingAIEngine:
         analysis_price = float(market.get("last_price") or last["close"])
         pricing = self._pricing(analysis_price, market)
         direction = decision.direction
+        candidate_direction = decision.direction
         warnings = list(decision.warnings)
         reasons = list(decision.reasons)
         settings = load_risk_settings()
@@ -119,6 +121,8 @@ class TradingAIEngine:
             if len(risk_frame)
             else float(last.get("atr14") or 0)
         )
+        if not math.isfinite(atr) or atr <= 0:
+            atr = float(last.get("atr14") or 0)
         ma90 = float(last.get("ma90") or 0)
         distance_atr = abs(analysis_price - ma90) / atr if atr > 0 else float("inf")
         if direction in ("LONG", "SHORT") and distance_atr > settings.max_ma_distance_atr:
@@ -144,12 +148,27 @@ class TradingAIEngine:
         elif oi_change is None:
             reasons.append("OI 데이터 없음: OI 조건만 제외")
 
+        preview_direction = (
+            direction
+            if direction in ("LONG", "SHORT")
+            else candidate_direction
+            if candidate_direction in ("LONG", "SHORT")
+            else frame_info["directions"].get("5m")
+            if frame_info["directions"].get("5m") in ("LONG", "SHORT")
+            else "LONG"
+            if float(last.get("close") or 0) >= float(last.get("ema20") or 0)
+            else "SHORT"
+        )
         entry = (
-            pricing["expected_entry_long"] if direction == "LONG"
-            else pricing["expected_entry_short"] if direction == "SHORT"
+            pricing["expected_entry_long"]
+            if direction == "LONG"
+            else pricing["expected_entry_short"]
+            if direction == "SHORT"
             else analysis_price
         )
-        stop, tp1, tp2, rr = self._risk_prices(direction, entry, atr, settings.atr_stop_multiplier)
+        stop, tp1, tp2, rr = self._risk_prices(
+            preview_direction, entry, atr, settings.atr_stop_multiplier
+        )
         risk_amount = float(account_equity or 100.0) * settings.risk_per_trade_pct / 100
         size = self._position_size(
             risk_amount,
@@ -220,7 +239,7 @@ class TradingAIEngine:
             market_mode=direction,
             timeframe_summary=summaries,
             strategy_signal=final_signal,
-            planned_direction=direction,
+            planned_direction=preview_direction,
             entry_offset_usdt=0.0,
             open_interest=self._optional_float(market.get("open_interest")),
             open_interest_change_rate=oi_change,

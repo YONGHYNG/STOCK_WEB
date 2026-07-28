@@ -57,19 +57,34 @@ export function SignalCard({ signal, price, status, positions = [], trades = [] 
   const hasLive = Boolean(livePosition || openLiveTrade)
   const hasPosition = hasPaper || hasLive
   const direction = signal?.direction ?? 'HOLD'
-  const summary = signal?.timeframe_summary?.['5m'] ?? {}
-  const plannedDirection = pendingEntry?.direction ?? signal?.planned_direction ?? summary?.plan_direction ?? direction
+  const entrySummary = signal?.timeframe_summary?.['5m'] ?? {}
+  const volumeSummary = signal?.timeframe_summary?.['1m'] ?? {}
+  const trend15m = signal?.timeframe_summary?.['15m']?.direction ?? signal?.timeframe_directions?.['15m'] ?? 'HOLD'
+  const atr1h = signal?.timeframe_summary?.['1H']?.atr14
+  const rawPlannedDirection = pendingEntry?.direction ?? signal?.planned_direction ?? entrySummary?.plan_direction ?? direction
+  const plannedDirection = ['LONG', 'SHORT'].includes(rawPlannedDirection)
+    ? rawPlannedDirection
+    : Number(entrySummary?.close ?? signal?.entry_price ?? 0) >= Number(entrySummary?.ema20 ?? 0)
+      ? 'LONG'
+      : 'SHORT'
   const activeDirection = hasPaper ? paper?.direction : livePosition?.holdSide?.toUpperCase() ?? openLiveTrade?.direction
   const displayDirection = hasPosition
     ? `${hasPaper ? 'PAPER' : 'LIVE'} ${activeDirection}`
     : direction === 'HOLD' && plannedDirection !== 'HOLD' ? `WAIT ${plannedDirection}` : direction
   const displayTone = toneClass(displayDirection)
   const strategySignal = signal?.strategy_signal ?? 'HOLD'
-  const state = signal?.market_mode ?? 'HOLD'
-  const volumeRatio = summary?.volume_ratio != null ? `평균 대비 ${Number(summary.volume_ratio).toFixed(2)}배` : '-'
-  const rsi = summary?.rsi14 != null ? Number(summary.rsi14).toFixed(1) : '-'
+  const volumeRatio = volumeSummary?.volume_ratio != null ? `평균 대비 ${Number(volumeSummary.volume_ratio).toFixed(2)}배` : '-'
+  const rsi = entrySummary?.rsi14 != null ? Number(entrySummary.rsi14).toFixed(1) : '-'
   const currentPrice = Number(price ?? paper?.current_price ?? signal?.last_price ?? signal?.entry_price ?? 0)
   const displayPrice = currentPrice || signal?.last_price || price || signal?.entry_price
+  const previewEntry = Number(currentPrice || signal?.entry_price || 0)
+  const previewGap = Number(atr1h || 0) * 1.5
+  const previewStop = previewEntry && previewGap
+    ? plannedDirection === 'SHORT' ? previewEntry + previewGap : previewEntry - previewGap
+    : null
+  const previewTakeProfit1 = previewEntry && previewGap
+    ? plannedDirection === 'SHORT' ? previewEntry - previewGap : previewEntry + previewGap
+    : null
   const fixedFeePct = Number(paper?.fee_pct ?? 0.06)
   const activeGrossPnl = hasPaper
     ? paperGrossPnl(activeDirection, paper?.entry_price, currentPrice || paper?.current_price)
@@ -113,28 +128,23 @@ export function SignalCard({ signal, price, status, positions = [], trades = [] 
   ] : []
 
   const orderMetrics = pendingEntry ? [
-    { label: '지정가 주문 · 체결 대기', value: money(pendingEntry.entry_price), tone: toneClass(pendingEntry.direction) },
-    { label: '주문 손절가', value: money(pendingEntry.stop_loss), tone: 'tone-short' },
-    { label: '주문 1차 익절가', value: money(pendingEntry.take_profit_1), tone: 'tone-long' },
-    { label: '주문 2차 익절가', value: money(pendingEntry.take_profit_2), tone: 'tone-long' },
+    { label: '주문 진입가 · 체결 대기', value: money(pendingEntry.entry_price), tone: toneClass(pendingEntry.direction) },
+    { label: '손절가', value: money(pendingEntry.stop_loss), tone: 'tone-short' },
+    { label: '1차 익절가', value: money(pendingEntry.take_profit_1), tone: 'tone-long' },
   ] : !hasPosition ? [
-    {
-      label: '진입 준비',
-      value: direction === 'HOLD' ? '확정 신호 대기' : '주문 생성 준비',
-      tone: direction === 'HOLD' ? 'tone-wait' : toneClass(direction),
-    },
+    { label: '진입가', value: money(previewEntry || signal?.entry_price), tone: toneClass(plannedDirection) },
+    { label: '손절가', value: money(signal?.stop_loss ?? previewStop), tone: 'tone-short' },
+    { label: '1차 익절가', value: money(signal?.take_profit_1 ?? previewTakeProfit1), tone: 'tone-long' },
   ] : []
 
   const signalMetrics = hasPosition ? [] : [
     { label: '진입 등급', value: GRADE_LABELS[signal?.entry_grade] ?? '-', tone: gradeTone(signal?.entry_grade) },
     { label: '전략 신호', value: strategySignal, tone: strategySignal.startsWith('WAIT') ? 'tone-wait' : toneClass(direction) },
-    { label: '다음 포지션', value: plannedDirection, tone: toneClass(plannedDirection) },
-    { label: '상태', value: state, tone: state.startsWith('WAIT') ? 'tone-wait' : '' },
+    { label: 'RSI14 · 5분봉', value: rsi },
     ...orderMetrics,
-    { label: 'RSI14', value: rsi },
-    { label: '5분봉 거래량 배수', value: volumeRatio },
-    { label: 'MA90 / MA200', value: `${money(summary?.ma90)} / ${money(summary?.ma200)}` },
-    { label: '지지 / 돌파', value: `${money(summary?.support_level)} / ${money(summary?.breakout_level)}` },
+    { label: '거래량 · 1분봉', value: volumeRatio },
+    { label: '추세 · 15분봉', value: trend15m, tone: toneClass(trend15m) },
+    { label: 'ATR · 1시간봉', value: atr1h != null ? money(atr1h) : '-' },
   ]
   const activePositionMetrics = hasPaper ? positionMetrics : hasLive ? livePositionMetrics : []
   const metrics = [...activePositionMetrics, ...signalMetrics]
@@ -150,16 +160,16 @@ export function SignalCard({ signal, price, status, positions = [], trades = [] 
           {displayDirection}
         </div>
       </div>
-      <div className={`signal-card__metrics ${hasPosition ? 'signal-card__metrics--position' : ''}`}>
+      <div className={`signal-card__metrics ${hasPosition ? 'signal-card__metrics--position' : 'signal-card__metrics--signal'}`}>
         {metrics.map((m) => <Metric key={m.label} {...m} />)}
       </div>
     </div>
   )
 }
 
-function Metric({ label, value, tone = '' }) {
+function Metric({ label, value, tone = '', className = '' }) {
   return (
-    <div className="stat-box signal-card__metric">
+    <div className={`stat-box signal-card__metric ${className}`}>
       <div className="eyebrow">{label}</div>
       <div className={`stat-value ${tone}`}>{value}</div>
     </div>

@@ -9,7 +9,7 @@ DB_PATH = DATA_DIR / "trading.db"
 SYMBOL = "BTCUSDT"
 PRODUCT_TYPE = "USDT-FUTURES"
 
-# 분석 대상 시간봉: 5m가 진입 기준이며 15m는 강한 반대 추세 차단에 사용합니다.
+# 분석 대상 시간봉: 5m가 진입 기준이며 1H ATR은 손절·익절 거리에 사용합니다.
 TIMEFRAMES = ["1m", "5m", "15m", "30m", "1H", "4H", "6H", "1D"]
 DEFAULT_TIMEFRAME = "5m"
 TIMEFRAME = DEFAULT_TIMEFRAME

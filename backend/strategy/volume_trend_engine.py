@@ -1,4 +1,4 @@
-# 역할: 5분봉 진입 전략을 15분봉·OI·ATR 리스크 조건과 결합해 API 결과로 변환합니다.
+# 역할: 5분봉 진입 전략과 1시간봉 ATR 손절·익절을 결합해 API 결과로 변환합니다.
 from dataclasses import dataclass
 from typing import Optional
 
@@ -87,15 +87,15 @@ class TradingAIEngine:
     ) -> TradingResult:
         market = market or {}
         frame_info = self._analyze_frames(candles_by_timeframe)
-        candles_5m = candles_by_timeframe.get("5m") or []
+        entry_candles = candles_by_timeframe.get("5m") or []
         # Bitget 최신 항목은 진행 중인 봉이므로 제외하고 확정된 5분봉만 판단한다.
-        frame_5m = add_indicators(candles_5m[:-1] if len(candles_5m) > 1 else [])
-        if len(frame_5m) < 220:
-            price = float(frame_5m.iloc[-1]["close"]) if len(frame_5m) else 0.0
+        entry_frame = add_indicators(entry_candles[:-1] if len(entry_candles) > 1 else [])
+        if len(entry_frame) < 220:
+            price = float(entry_frame.iloc[-1]["close"]) if len(entry_frame) else 0.0
             return self._empty(price, "5분봉 MA200 계산을 위한 확정 캔들이 부족합니다.", frame_info)
 
-        decision = self.strategy.evaluate(frame_5m)
-        last = frame_5m.iloc[-1]
+        decision = self.strategy.evaluate(entry_frame)
+        last = entry_frame.iloc[-1]
         analysis_price = float(market.get("last_price") or last["close"])
         pricing = self._pricing(analysis_price, market)
         direction = decision.direction
@@ -111,7 +111,14 @@ class TradingAIEngine:
             warnings.append("15분봉 강한 상승 추세로 SHORT 진입 차단")
             direction = "HOLD"
 
-        atr = float(last.get("atr14") or 0)
+        risk_candles = candles_by_timeframe.get("1H") or []
+        risk_frame = add_indicators(risk_candles[:-1] if len(risk_candles) > 1 else [])
+        # 단일 시간봉 분석 호환을 위해 1H 데이터가 없을 때만 진입봉 ATR로 대체한다.
+        atr = (
+            float(risk_frame.iloc[-1].get("atr14") or 0)
+            if len(risk_frame)
+            else float(last.get("atr14") or 0)
+        )
         ma90 = float(last.get("ma90") or 0)
         distance_atr = abs(analysis_price - ma90) / atr if atr > 0 else float("inf")
         if direction in ("LONG", "SHORT") and distance_atr > settings.max_ma_distance_atr:
@@ -127,7 +134,7 @@ class TradingAIEngine:
                 warnings.append(f"OI 급감 {oi_change:.2f}%로 진입 보류")
                 direction = "HOLD"
             elif oi_change > 0:
-                price_change = float(last["close"]) - float(frame_5m.iloc[-2]["close"])
+                price_change = float(last["close"]) - float(entry_frame.iloc[-2]["close"])
                 if direction == "LONG" and price_change > 0:
                     reasons.append(f"가격 상승과 OI 증가({oi_change:+.2f}%) 확인")
                     oi_bonus = 5.0
@@ -161,7 +168,7 @@ class TradingAIEngine:
         confidence = 100.0 if direction in ("LONG", "SHORT") else 0.0
         long_score = 75.0 + oi_bonus if direction == "LONG" else 25.0 if direction == "SHORT" else 50.0
         short_score = 75.0 + oi_bonus if direction == "SHORT" else 25.0 if direction == "LONG" else 50.0
-        reasons += [f"전략 신호: {final_signal}", "5분봉 확정 캔들 기준"]
+        reasons += [f"전략 신호: {final_signal}", "5분봉 진입 · 1시간봉 ATR 손절/익절 기준"]
         reasons += [f"경고: {warning}" for warning in warnings]
 
         summaries = dict(frame_info["summaries"])

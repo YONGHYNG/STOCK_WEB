@@ -57,7 +57,7 @@ export function SignalCard({ signal, price, status, positions = [], trades = [] 
   const hasLive = Boolean(livePosition || openLiveTrade)
   const hasPosition = hasPaper || hasLive
   const direction = signal?.direction ?? 'HOLD'
-  const summary = signal?.timeframe_summary?.['1m'] ?? signal?.timeframe_summary?.['5m'] ?? {}
+  const summary = signal?.timeframe_summary?.['5m'] ?? {}
   const plannedDirection = pendingEntry?.direction ?? signal?.planned_direction ?? summary?.plan_direction ?? direction
   const activeDirection = hasPaper ? paper?.direction : livePosition?.holdSide?.toUpperCase() ?? openLiveTrade?.direction
   const displayDirection = hasPosition
@@ -132,7 +132,7 @@ export function SignalCard({ signal, price, status, positions = [], trades = [] 
     { label: '상태', value: state, tone: state.startsWith('WAIT') ? 'tone-wait' : '' },
     ...orderMetrics,
     { label: 'RSI14', value: rsi },
-    { label: '1분봉 거래량 배수', value: volumeRatio },
+    { label: '5분봉 거래량 배수', value: volumeRatio },
     { label: 'MA90 / MA200', value: `${money(summary?.ma90)} / ${money(summary?.ma200)}` },
     { label: '지지 / 돌파', value: `${money(summary?.support_level)} / ${money(summary?.breakout_level)}` },
   ]

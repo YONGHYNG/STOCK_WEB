@@ -49,6 +49,7 @@ export function Dashboard({ state, setStatusPatch, onModeChange, onEmergencyStop
                 positions={state.positions}
                 status={state.status}
                 price={state.price}
+                signal={state.signal}
                 trades={state.trades}
               />
             </SectionBlock>

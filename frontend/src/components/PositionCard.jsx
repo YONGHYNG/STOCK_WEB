@@ -25,7 +25,7 @@ function paperPnl(direction, entry, current) {
   return gross - 0.06
 }
 
-export function PositionCard({ account, positions, status, price, trades = [] }) {
+export function PositionCard({ account, positions, status, price, signal, trades = [] }) {
   const [apiModalOpen, setApiModalOpen] = useState(false)
   const [credentials, setCredentials] = useState({ api_key: '', secret_key: '', passphrase: '' })
   const [credentialState, setCredentialState] = useState({ saving: false, message: '', ok: false })
@@ -55,6 +55,27 @@ export function PositionCard({ account, positions, status, price, trades = [] })
     : ''
   const hasPaper = !btc && Boolean(paper)
   const currentPrice = hasPaper ? num(price ?? paper?.current_price) : num(price)
+  const pendingEntry = status?.pending_entry
+  const entrySummary = signal?.timeframe_summary?.['5m'] ?? {}
+  const atr1h = num(signal?.timeframe_summary?.['1H']?.atr14)
+  const rawPreviewDirection = pendingEntry?.direction ?? signal?.planned_direction ?? signal?.direction
+  const previewDirection = ['LONG', 'SHORT'].includes(rawPreviewDirection)
+    ? rawPreviewDirection
+    : num(entrySummary?.close ?? signal?.entry_price) >= num(entrySummary?.ema20)
+      ? 'LONG'
+      : 'SHORT'
+  const previewEntry = num(pendingEntry?.entry_price) || currentPrice || num(signal?.entry_price)
+  const previewGap = atr1h * 1.5
+  const previewStop = num(pendingEntry?.stop_loss ?? signal?.stop_loss) || (
+    previewEntry && previewGap
+      ? previewDirection === 'SHORT' ? previewEntry + previewGap : previewEntry - previewGap
+      : 0
+  )
+  const previewTakeProfit1 = num(pendingEntry?.take_profit_1 ?? signal?.take_profit_1) || (
+    previewEntry && previewGap
+      ? previewDirection === 'SHORT' ? previewEntry - previewGap : previewEntry + previewGap
+      : 0
+  )
 
   const side = hasPaper ? paper?.direction : btc?.holdSide?.toUpperCase()
   const paperPnlPct = hasPaper && paper?.pnl_pct != null ? num(paper.pnl_pct) : hasPaper ? paperPnl(side, paper?.entry_price, currentPrice || paper?.current_price) : 0
@@ -113,13 +134,13 @@ export function PositionCard({ account, positions, status, price, trades = [] })
     <div className="account-position">
       <div className="account-position__summary">
         <button type="button" className="stat-box account-position__main account-link-card" onClick={openApiModal}>
-          <div className="eyebrow">계정 연동</div>
+          <div className="eyebrow">계정</div>
           <div className={`account-connection ${apiConnected ? 'tone-long' : apiConfigured ? 'tone-wait' : 'tone-muted'}`}>{apiConnectionLabel}</div>
           <div className="value-sub">{apiConnected ? 'Bitget 계정 연결됨 · 클릭하여 변경' : apiConfigured ? '저장된 API로 계정 확인 중' : '클릭하여 API 계정 연결'}</div>
         </button>
 
         <div className="stat-box account-position__main">
-          <div className="eyebrow">{accountLabel}</div>
+          <div className="eyebrow">{apiConnected ? accountLabel : '현재 잔액'}</div>
           <div className={`value-xl ${accountTone}`}>
             {apiConnected || displayEquity
               ? `$${displayEquity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -159,6 +180,25 @@ export function PositionCard({ account, positions, status, price, trades = [] })
             <div>
               <span className="eyebrow">2차 익절</span>
               <strong className="tone-long">{money(paper?.take_profit_2)}</strong>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!hasPaper && !btc && (
+        <div className="paper-position">
+          <div className="paper-position__levels">
+            <div>
+              <span className="eyebrow">진입가</span>
+              <strong className={previewDirection === 'LONG' ? 'tone-long' : 'tone-short'}>{money(previewEntry)}</strong>
+            </div>
+            <div>
+              <span className="eyebrow">손절가</span>
+              <strong className="tone-short">{money(previewStop)}</strong>
+            </div>
+            <div>
+              <span className="eyebrow">1차 익절가</span>
+              <strong className="tone-long">{money(previewTakeProfit1)}</strong>
             </div>
           </div>
         </div>

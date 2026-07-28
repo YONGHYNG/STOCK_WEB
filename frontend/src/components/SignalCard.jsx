@@ -140,10 +140,10 @@ export function SignalCard({ signal, price, status, positions = [], trades = [] 
   const signalMetrics = hasPosition ? [] : [
     { label: '진입 판단', value: GRADE_LABELS[signal?.entry_grade] ?? '분석 대기', tone: gradeTone(signal?.entry_grade) },
     { label: '전략 신호', value: strategySignal, tone: strategySignal.startsWith('WAIT') ? 'tone-wait' : toneClass(direction) },
-    { label: 'RSI14 · 5분봉', value: rsi },
+    { label: '추세 · 15분봉', value: trend15m, tone: toneClass(trend15m) },
     ...orderMetrics,
     { label: '거래량 · 1분봉', value: volumeRatio },
-    { label: '추세 · 15분봉', value: trend15m, tone: toneClass(trend15m) },
+    { label: 'RSI14 · 5분봉', value: rsi },
     { label: 'ATR · 1시간봉', value: atr1h != null ? money(atr1h) : '-' },
   ]
   const activePositionMetrics = hasPaper ? positionMetrics : hasLive ? livePositionMetrics : []

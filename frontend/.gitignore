@@ -1,0 +1,5 @@
+# Generated desktop and Android packages
+release/
+
+# Electron Builder temporary output
+*.blockmap

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Trading AI</string>
+    <string name="title_activity_main">Trading AI</string>
+    <string name="package_name">com.tradingai.dashboard</string>
+    <string name="custom_url_scheme">com.tradingai.dashboard</string>
+</resources>

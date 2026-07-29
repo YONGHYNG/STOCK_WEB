@@ -1,6 +1,6 @@
 // 역할: 프론트엔드 화면 구성과 주요 상태 관리를 담당하는 파일.
-import { useCallback, useEffect, useReducer, useRef } from 'react'
-import { tradingApi } from './api/tradingApi'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { getServerUrl, getWebSocketUrl, setServerUrl, tradingApi } from './api/tradingApi'
 import { Dashboard } from './pages/Dashboard'
 import { RiskStatus } from './pages/RiskStatus'
 import { StrategySetting } from './pages/StrategySetting'
@@ -57,6 +57,11 @@ const PAGES = [
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, INITIAL)
+  const [serverDraft, setServerDraft] = useState(getServerUrl())
+  const [showServerSettings, setShowServerSettings] = useState(
+    !localStorage.getItem('trading-server-url') && location.hostname === 'localhost',
+  )
+  const [connectionState, setConnectionState] = useState('확인 전')
   const tradeNeedsRefresh = useRef(false)
 
   const handleWsMessage = useCallback((msg) => {
@@ -69,16 +74,20 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(`${proto}://${location.host}/ws`)
+    const ws = new WebSocket(getWebSocketUrl())
     ws.onmessage = (event) => handleWsMessage(JSON.parse(event.data))
     return () => ws.close()
   }, [handleWsMessage])
 
   useEffect(() => {
-    tradingApi.getStatus().then((s) => dispatch({ type: 'STATUS', data: s }))
-    tradingApi.getTrades().then((t) => dispatch({ type: 'TRADES', trades: t }))
-    tradingApi.getRiskSettings().then((s) => dispatch({ type: 'RISK_SETTINGS', settings: s }))
+    tradingApi.getStatus()
+      .then((s) => {
+        dispatch({ type: 'STATUS', data: s })
+        setConnectionState('연결됨')
+      })
+      .catch(() => setConnectionState('연결 안 됨'))
+    tradingApi.getTrades().then((t) => dispatch({ type: 'TRADES', trades: t })).catch(() => {})
+    tradingApi.getRiskSettings().then((s) => dispatch({ type: 'RISK_SETTINGS', settings: s })).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -121,6 +130,50 @@ export default function App() {
   return (
     <div className="app-shell">
       <main className="dashboard">
+        <div className="server-toolbar">
+          <button type="button" onClick={() => setShowServerSettings((shown) => !shown)}>
+            서버 설정 · {connectionState}
+          </button>
+          {showServerSettings && (
+            <form
+              className="server-settings"
+              onSubmit={(event) => {
+                event.preventDefault()
+                setServerUrl(serverDraft)
+                location.reload()
+              }}
+            >
+              <input
+                aria-label="백엔드 서버 주소"
+                value={serverDraft}
+                onChange={(event) => setServerDraft(event.target.value)}
+                placeholder="PC의 Tailscale IP (100.x.x.x)"
+              />
+              <p className="server-settings__help">
+                PC와 휴대폰의 Tailscale을 켠 뒤 PC의 100.x.x.x 주소를 입력하세요.
+                포트를 생략하면 8000번을 사용합니다.
+              </p>
+              <div className="server-settings__actions">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      setServerUrl(serverDraft)
+                      setConnectionState('확인 중')
+                      await tradingApi.testConnection()
+                      setConnectionState('연결됨')
+                    } catch {
+                      setConnectionState('연결 안 됨')
+                    }
+                  }}
+                >
+                  연결 확인
+                </button>
+                <button type="submit">저장 후 연결</button>
+              </div>
+            </form>
+          )}
+        </div>
         <Dashboard
           state={state}
           setStatusPatch={(patch) => dispatch({ type: 'STATUS', data: patch })}

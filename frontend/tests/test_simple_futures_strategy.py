@@ -69,6 +69,32 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual((stop, tp1, tp2, rr), (85.0, 115.0, 122.5, 1.5))
         self.assertEqual(TradingAIEngine._position_size(2.0, 100.0, 90.0, 0.001, 0.001), 0.2)
 
+    def test_long_entry_waits_for_nearest_retest_support(self):
+        entry, anchor, distance = TradingAIEngine._retest_entry(
+            "LONG", market_entry=105.0, ema20=102.0, vwap=100.0, atr=10.0
+        )
+        self.assertEqual(anchor, "EMA20")
+        self.assertEqual(entry, 102.75)
+        self.assertEqual(distance, 2.25)
+
+    def test_short_entry_waits_for_nearest_retest_resistance(self):
+        entry, anchor, distance = TradingAIEngine._retest_entry(
+            "SHORT", market_entry=95.0, ema20=98.0, vwap=101.0, atr=10.0
+        )
+        self.assertEqual(anchor, "EMA20")
+        self.assertEqual(entry, 97.25)
+        self.assertEqual(distance, 2.25)
+
+    def test_retest_never_crosses_market_price(self):
+        long_entry, _, _ = TradingAIEngine._retest_entry(
+            "LONG", market_entry=100.0, ema20=99.9, vwap=90.0, atr=10.0
+        )
+        short_entry, _, _ = TradingAIEngine._retest_entry(
+            "SHORT", market_entry=100.0, ema20=100.1, vwap=110.0, atr=10.0
+        )
+        self.assertEqual(long_entry, 100.0)
+        self.assertEqual(short_entry, 100.0)
+
     def test_15m_strong_trend_requires_ma90_slope(self):
         self.assertEqual(
             TradingAIEngine._strong_direction(

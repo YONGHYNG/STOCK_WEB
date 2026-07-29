@@ -159,13 +159,36 @@ class TradingAIEngine:
             if float(last.get("close") or 0) >= float(last.get("ema20") or 0)
             else "SHORT"
         )
-        entry = (
+        market_entry = (
             pricing["expected_entry_long"]
             if direction == "LONG"
             else pricing["expected_entry_short"]
             if direction == "SHORT"
             else analysis_price
         )
+        entry = market_entry
+        entry_atr = float(last.get("atr14") or 0)
+        if direction in ("LONG", "SHORT"):
+            entry, anchor_name, retest_distance = self._retest_entry(
+                direction=direction,
+                market_entry=market_entry,
+                ema20=float(last.get("ema20") or 0),
+                vwap=float(last.get("vwap") or 0),
+                atr=entry_atr,
+            )
+            max_retest_distance = entry_atr * 0.5
+            if entry_atr > 0 and retest_distance > max_retest_distance:
+                warnings.append(
+                    f"{anchor_name} 재테스트 거리 ${retest_distance:,.2f} > "
+                    f"5분봉 ATR 0.5배 ${max_retest_distance:,.2f}, 추격 진입 보류"
+                )
+                direction = "HOLD"
+                entry = analysis_price
+            elif retest_distance > 0:
+                reasons.append(
+                    f"{anchor_name} 재테스트 지정가 ${entry:,.2f} "
+                    f"(현재 진입가 대비 ${retest_distance:,.2f} 대기)"
+                )
         stop, tp1, tp2, rr = self._risk_prices(
             preview_direction, entry, atr, settings.atr_stop_multiplier
         )
@@ -240,7 +263,7 @@ class TradingAIEngine:
             timeframe_summary=summaries,
             strategy_signal=final_signal,
             planned_direction=preview_direction,
-            entry_offset_usdt=0.0,
+            entry_offset_usdt=round(abs(analysis_price - entry), 2),
             open_interest=self._optional_float(market.get("open_interest")),
             open_interest_change_rate=oi_change,
         )
@@ -286,6 +309,36 @@ class TradingAIEngine:
             "expected_entry_short": round(bid, 2),
             "spread_rate": (ask - bid) / mid if mid > 0 else None,
         }
+
+    @staticmethod
+    def _retest_entry(
+        direction: str,
+        market_entry: float,
+        ema20: float,
+        vwap: float,
+        atr: float,
+    ) -> tuple[float, str, float]:
+        """현재가를 추격하지 않고 가장 가까운 EMA20/VWAP 재테스트에 지정가를 둡니다."""
+        market_entry = float(market_entry or 0)
+        indicators = [("EMA20", float(ema20 or 0)), ("VWAP", float(vwap or 0))]
+        buffer = max(0.0, float(atr or 0) * 0.075)
+
+        if direction == "LONG":
+            supports = [(name, value) for name, value in indicators if 0 < value <= market_entry]
+            if not supports:
+                return market_entry, "현재가", 0.0
+            anchor_name, anchor = max(supports, key=lambda item: item[1])
+            entry = min(market_entry, anchor + buffer)
+        elif direction == "SHORT":
+            resistances = [(name, value) for name, value in indicators if value >= market_entry]
+            if not resistances:
+                return market_entry, "현재가", 0.0
+            anchor_name, anchor = min(resistances, key=lambda item: item[1])
+            entry = max(market_entry, anchor - buffer)
+        else:
+            return market_entry, "현재가", 0.0
+
+        return entry, anchor_name, abs(market_entry - entry)
 
     @staticmethod
     def _strong_direction(last) -> str:

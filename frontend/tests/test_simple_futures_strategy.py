@@ -414,6 +414,29 @@ class LiveOrderSizingTests(unittest.TestCase):
         self.assertEqual(captured["body"]["stopLossExecutePrice"], "0")
         self.assertEqual([row["orderId"] for row in result], ["tp-order", "sl-order"])
 
+    def test_order_detail_uses_the_pending_order_id(self):
+        client = BitgetPrivateClient("key", "secret", "passphrase")
+        captured = {}
+
+        def fake_get(path, params):
+            captured["path"] = path
+            captured["params"] = params
+            return {
+                "data": {
+                    "orderId": "entry-order",
+                    "state": "partially_filled",
+                    "baseVolume": "0.012",
+                }
+            }
+
+        client._get = fake_get
+        detail = client.get_order_detail("entry-order")
+
+        self.assertEqual(captured["path"], "/api/v2/mix/order/detail")
+        self.assertEqual(captured["params"]["orderId"], "entry-order")
+        self.assertEqual(detail["state"], "partially_filled")
+        self.assertEqual(detail["baseVolume"], "0.012")
+
 
 if __name__ == "__main__":
     unittest.main()

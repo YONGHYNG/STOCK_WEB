@@ -171,6 +171,15 @@ class BitgetPrivateClient:
         }
         return (self._post("/api/v2/mix/order/cancel-order", body)).get("data") or {}
 
+    def get_order_detail(self, order_id: str) -> dict:
+        """지정가 주문의 체결·부분 체결·취소 상태를 조회합니다."""
+        data = self._get("/api/v2/mix/order/detail", {
+            "symbol": SYMBOL,
+            "productType": PRODUCT_TYPE,
+            "orderId": order_id,
+        })
+        return data.get("data") or {}
+
     def place_tpsl_limit_order(
         self,
         plan_type: str,

@@ -1,6 +1,7 @@
 # 역할: 데스크톱 매매 화면과 사용자 조작을 담당하는 파일.
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from time import monotonic
 
 from PySide6.QtCore import QObject, QTimer, Signal, Qt
 from PySide6.QtGui import QColor, QFont
@@ -51,6 +52,7 @@ from backend.config import (
     AUTO_LIVE_LEVERAGE,
     DEFAULT_TIMEFRAME,
     INITIAL_CANDLE_LIMIT,
+    LIVE_LIMIT_ORDER_TIMEOUT_SECONDS,
     RECENT_CANDLE_LIMIT_BY_TIMEFRAME,
     REFRESH_INTERVAL_MS,
     REFRESH_CANDLE_LIMIT,
@@ -312,6 +314,8 @@ class TradingMainWindow(QMainWindow):
         self._cached_account: dict | None = None
         self._cached_positions: list = []
         self._pending_live_order_id: str | None = None
+        self._pending_live_order_started_at: float | None = None
+        self._pending_live_cancel_requested = False
         self._pending_live_protection: dict | None = None
         self._trading_mode = TradingMode.SIGNAL_ONLY
         self._risk_cfg  = risk_settings_store.load()
@@ -1661,8 +1665,12 @@ class TradingMainWindow(QMainWindow):
             )
             self._private_client.set_leverage(AUTO_LIVE_LEVERAGE)
             result = self._private_client.place_limit_order(side, size, f"{limit_price:.1f}", "open")
-            order_id = result.get("orderId", "?")
+            order_id = result.get("orderId")
+            if not order_id:
+                raise RuntimeError(f"거래소 주문 ID가 없습니다: {result}")
             self._pending_live_order_id = str(order_id)
+            self._pending_live_order_started_at = monotonic()
+            self._pending_live_cancel_requested = False
             self._pending_live_protection = {
                 "direction": direction,
                 "take_profit": take_profit,
@@ -1678,6 +1686,66 @@ class TradingMainWindow(QMainWindow):
         except Exception as exc:
             self._log(f"[자동매매] 주문 실패 (ORDER_FAILED): {exc}")
 
+    def _clear_pending_live_order(self, clear_protection: bool = False) -> None:
+        self._pending_live_order_id = None
+        self._pending_live_order_started_at = None
+        self._pending_live_cancel_requested = False
+        if clear_protection:
+            self._pending_live_protection = None
+
+    def _manage_pending_live_order(self, positions: list[dict]) -> None:
+        """미체결 주문을 추적하고 60초 경과 또는 부분 체결 시 잔여분을 취소합니다."""
+        order_id = self._pending_live_order_id
+        if not order_id or not self._private_client:
+            return
+
+        try:
+            detail = self._private_client.get_order_detail(order_id)
+        except Exception as exc:
+            self._log(f"[미체결 주문 조회 실패] orderId={order_id}: {exc}")
+            return
+
+        state = str(detail.get("state") or "").lower()
+        filled_size = float(detail.get("baseVolume") or 0)
+        has_position = bool(positions)
+
+        if state == "filled":
+            # 주문 체결과 포지션 조회 사이의 짧은 지연에는 신규 주문 잠금을 유지합니다.
+            if has_position:
+                self._clear_pending_live_order()
+            return
+
+        if state == "canceled":
+            self._log(
+                f"[미체결 주문 취소 확인] orderId={order_id}, 체결수량={filled_size:g} BTC"
+            )
+            self._clear_pending_live_order(clear_protection=not has_position)
+            return
+
+        age = (
+            monotonic() - self._pending_live_order_started_at
+            if self._pending_live_order_started_at is not None
+            else 0
+        )
+        should_cancel = state == "partially_filled" or (
+            state == "live" and age >= LIVE_LIMIT_ORDER_TIMEOUT_SECONDS
+        )
+        if should_cancel and not self._pending_live_cancel_requested:
+            reason = (
+                f"부분 체결 {filled_size:g} BTC"
+                if state == "partially_filled"
+                else f"{age:.0f}초 미체결"
+            )
+            try:
+                self._private_client.cancel_order(order_id)
+                self._pending_live_cancel_requested = True
+                self._log(
+                    f"[미체결 주문 취소 요청] orderId={order_id} · {reason}; "
+                    "거래소 취소 확인 대기"
+                )
+            except Exception as exc:
+                self._log(f"[미체결 주문 취소 실패] orderId={order_id}: {exc}")
+
     def _install_live_position_protection(self, position: dict) -> None:
         """체결된 실거래 포지션 전체에 거래소 서버 측 TP1·SL을 설치합니다."""
         protection = self._pending_live_protection
@@ -1692,7 +1760,7 @@ class TradingMainWindow(QMainWindow):
                 "— 긴급 시장가 청산 시도"
             )
             self._pending_live_protection = None
-            self._pending_live_order_id = None
+            self._clear_pending_live_order()
             try:
                 self._private_client.close_position(hold_side)
                 self._log("[긴급청산 완료] 방향 불일치 포지션을 시장가로 청산했습니다.")
@@ -1732,7 +1800,7 @@ class TradingMainWindow(QMainWindow):
             )
         except Exception as exc:
             self._pending_live_protection = None
-            self._pending_live_order_id = None
+            self._clear_pending_live_order()
             self._log(f"[보호주문 실패] {exc} — 무방비 포지션 긴급 시장가 청산 시도")
             try:
                 self._private_client.close_position(hold_side)
@@ -1805,7 +1873,12 @@ class TradingMainWindow(QMainWindow):
         self._cached_positions = positions if isinstance(positions, list) else []
 
         equity    = float(acct.get("accountEquity") or acct.get("equity") or 0)
-        available = float(acct.get("available") or acct.get("crossMaxAvailable") or 0)
+        available = float(
+            acct.get("available")
+            or acct.get("crossedMaxAvailable")
+            or acct.get("crossMaxAvailable")
+            or 0
+        )
         upl       = float(acct.get("unrealizedPL") or 0)
 
         self._bal_lbl.setText(f"${equity:,.2f} USDT")
@@ -1818,8 +1891,8 @@ class TradingMainWindow(QMainWindow):
         self._avail_lbl.setTextFormat(Qt.TextFormat.RichText)
 
         btc_pos = [p for p in (positions or []) if p.get("symbol") == SYMBOL]
+        self._manage_pending_live_order(btc_pos)
         if btc_pos:
-            self._pending_live_order_id = None
             self._install_live_position_protection(btc_pos[0])
         if btc_pos:
             p       = btc_pos[0]

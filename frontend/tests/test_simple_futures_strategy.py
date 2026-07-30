@@ -119,6 +119,29 @@ class StrategyTests(unittest.TestCase):
         }
         self.assertEqual(trader.check_tp_sl(125.0), "TP1")
 
+    def test_entry_grade_uses_real_score_bands(self):
+        self.assertEqual(TradingAIEngine._entry_grade(80.0), "A")
+        self.assertEqual(TradingAIEngine._entry_grade(65.0), "B")
+        self.assertEqual(TradingAIEngine._entry_grade(50.0), "C")
+        self.assertEqual(TradingAIEngine._entry_grade(49.9), "F")
+
+    def test_range_quality_score_rewards_stable_range(self):
+        frame = range_frame("LONG")
+        decision = VolumeTrendRsiStrategy().evaluate(frame)
+        score = TradingAIEngine._signal_score(
+            decision=decision,
+            last=frame.iloc[-1],
+            previous=frame.iloc[-2],
+            direction="LONG",
+            strong_15m="HOLD",
+            volume_ratio=0.9,
+            oi_confirmed=False,
+            risk_reward=1.5,
+            retest_distance=0.0,
+            entry_atr=10.0,
+        )
+        self.assertGreaterEqual(score, 80.0)
+
     def test_long_entry_waits_for_nearest_retest_support(self):
         entry, anchor, distance = TradingAIEngine._retest_entry(
             "LONG", market_entry=105.0, ema20=102.0, vwap=100.0, atr=10.0

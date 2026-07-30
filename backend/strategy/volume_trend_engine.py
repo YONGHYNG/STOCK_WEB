@@ -136,7 +136,7 @@ class TradingAIEngine:
             direction = "HOLD"
 
         oi_change = self._optional_float(market.get("open_interest_change_rate"))
-        oi_bonus = 0.0
+        oi_confirmed = False
         if direction in ("LONG", "SHORT") and oi_change is not None:
             if oi_change <= -abs(settings.oi_sharp_drop_pct):
                 warnings.append(f"OI 급감 {oi_change:.2f}%로 진입 보류")
@@ -145,10 +145,10 @@ class TradingAIEngine:
                 price_change = float(last["close"]) - float(entry_frame.iloc[-2]["close"])
                 if direction == "LONG" and price_change > 0:
                     reasons.append(f"가격 상승과 OI 증가({oi_change:+.2f}%) 확인")
-                    oi_bonus = 5.0
+                    oi_confirmed = True
                 elif direction == "SHORT" and price_change < 0:
                     reasons.append(f"가격 하락과 OI 증가({oi_change:+.2f}%) 확인")
-                    oi_bonus = 5.0
+                    oi_confirmed = True
         elif oi_change is None:
             reasons.append("OI 데이터 없음: OI 조건만 제외")
 
@@ -172,6 +172,7 @@ class TradingAIEngine:
         )
         entry = market_entry
         entry_atr = float(last.get("atr14") or 0)
+        retest_distance = 0.0
         if direction in ("LONG", "SHORT") and not is_range_signal:
             entry, anchor_name, retest_distance = self._retest_entry(
                 direction=direction,
@@ -230,9 +231,28 @@ class TradingAIEngine:
         fee = value * float(market.get("fee_rate") or TAKER_FEE_RATE) * 2 if value else None
 
         final_signal = decision.signal if direction in ("LONG", "SHORT") else "HOLD"
-        confidence = 100.0 if direction in ("LONG", "SHORT") else 0.0
-        long_score = 75.0 + oi_bonus if direction == "LONG" else 25.0 if direction == "SHORT" else 50.0
-        short_score = 75.0 + oi_bonus if direction == "SHORT" else 25.0 if direction == "LONG" else 50.0
+        confidence = (
+            self._signal_score(
+                decision=decision,
+                last=last,
+                previous=entry_frame.iloc[-2],
+                direction=direction,
+                strong_15m=strong_15m,
+                volume_ratio=float(last.get("volume_ratio") or 0),
+                oi_confirmed=oi_confirmed,
+                risk_reward=rr,
+                retest_distance=retest_distance,
+                entry_atr=entry_atr,
+            )
+            if direction in ("LONG", "SHORT")
+            else 0.0
+        )
+        entry_grade = self._entry_grade(confidence) if direction in ("LONG", "SHORT") else "F"
+        directional_score = confidence
+        opposite_score = max(0.0, 100.0 - confidence)
+        long_score = directional_score if direction == "LONG" else opposite_score if direction == "SHORT" else 50.0
+        short_score = directional_score if direction == "SHORT" else opposite_score if direction == "LONG" else 50.0
+        reasons.append(f"진입 품질 점수: {confidence:.1f}점 ({entry_grade}등급)")
         reasons += [f"전략 신호: {final_signal}", "5분봉 진입 · 1시간봉 ATR 손절/익절 기준"]
         reasons += [f"경고: {warning}" for warning in warnings]
 
@@ -276,7 +296,7 @@ class TradingAIEngine:
             expected_entry_short=pricing["expected_entry_short"],
             long_score=long_score,
             short_score=short_score,
-            entry_grade="A" if direction in ("LONG", "SHORT") else "F",
+            entry_grade=entry_grade,
             risk_warnings=warnings,
             spread_rate=pricing["spread_rate"],
             funding_rate=self._optional_float(market.get("funding_rate")),
@@ -327,6 +347,62 @@ class TradingAIEngine:
             reward, risk = entry - tp1, stop - entry
         rr = reward / risk if reward > 0 and risk > 0 else None
         return stop, tp1, tp2, rr
+
+    @staticmethod
+    def _entry_grade(score: float) -> str:
+        if score >= 80:
+            return "A"
+        if score >= 65:
+            return "B"
+        if score >= 50:
+            return "C"
+        return "F"
+
+    @staticmethod
+    def _signal_score(
+        decision,
+        last,
+        previous,
+        direction: str,
+        strong_15m: str,
+        volume_ratio: float,
+        oi_confirmed: bool,
+        risk_reward: Optional[float],
+        retest_distance: float,
+        entry_atr: float,
+    ) -> float:
+        """확정 조건의 품질을 0~100점으로 환산합니다."""
+        if direction not in ("LONG", "SHORT"):
+            return 0.0
+
+        score = 40.0
+        if strong_15m == direction:
+            score += 15.0
+        elif strong_15m == "HOLD":
+            score += 8.0
+
+        rsi_move = abs(float(last.get("rsi14") or 0) - float(previous.get("rsi14") or 0))
+        score += 10.0 if rsi_move >= 3.0 else 5.0 if rsi_move >= 1.0 else 0.0
+        if oi_confirmed:
+            score += 10.0
+
+        rr = float(risk_reward or 0)
+        score += 10.0 if rr >= 1.5 else 5.0 if rr >= 1.0 else 0.0
+
+        if decision.market_regime == "RANGE":
+            adx = float(last.get("adx14") or 100)
+            width = float(last.get("bb_width") or 1)
+            score += 12.0 if adx <= 18 else 7.0 if adx <= 22 else 0.0
+            score += 10.0 if width <= 0.02 else 5.0 if width <= 0.03 else 0.0
+            # 횡보 반전은 거래량 급증보다 안정적인 밴드 왕복을 높게 평가합니다.
+            score += 8.0 if 0.5 <= volume_ratio <= 1.2 else 3.0 if volume_ratio < 1.5 else 0.0
+        else:
+            score += 10.0 if volume_ratio >= 1.0 else 5.0 if volume_ratio >= 0.65 else 0.0
+            if entry_atr > 0:
+                normalized_retest = retest_distance / entry_atr
+                score += 10.0 if normalized_retest <= 0.20 else 5.0 if normalized_retest <= 0.50 else 0.0
+
+        return round(min(100.0, max(0.0, score)), 1)
 
     @staticmethod
     def _position_size(risk_amount, entry, stop, minimum=None, step=None) -> Optional[float]:

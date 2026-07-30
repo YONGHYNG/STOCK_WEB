@@ -622,7 +622,8 @@ async def _check_auto_trade(result: dict):
         pending_direction = str(pending.get("direction") or "HOLD")
         pending_is_range = _is_range_result(_pending_result(pending))
         opposite_signal = (
-            direction in ("LONG", "SHORT")
+            _is_order_eligible(result)
+            and direction in ("LONG", "SHORT")
             and direction != pending_direction
         )
         range_ended = pending_is_range and result.get("market_mode") != "RANGE"
@@ -735,9 +736,18 @@ def _is_strong_trend_entry(direction: str, result: dict) -> bool:
     )
 
 
+def _is_order_eligible(result: dict) -> bool:
+    return (
+        result.get("direction") in ("LONG", "SHORT")
+        and result.get("entry_grade") in ("A", "B")
+        and float(result.get("confidence") or 0) >= risk_cfg.confidence_threshold
+        and not result.get("risk_warnings")
+    )
+
+
 async def _refresh_pending_paper_order(direction: str, result: dict):
     pending = state.pending_paper_order
-    if not pending or direction != pending.get("direction"):
+    if not pending or direction != pending.get("direction") or not _is_order_eligible(result):
         return
     previous = pending.get("result") or {}
     better_entry = _is_better_entry(direction, previous.get("entry_price"), result.get("entry_price"))
@@ -768,7 +778,12 @@ async def _refresh_pending_paper_order(direction: str, result: dict):
 
 async def _refresh_pending_live_order(direction: str, result: dict):
     pending = state.pending_live_order
-    if not private_client or not pending or direction != pending.get("direction"):
+    if (
+        not private_client
+        or not pending
+        or direction != pending.get("direction")
+        or not _is_order_eligible(result)
+    ):
         return
     better_entry = _is_better_entry(direction, pending.get("entry_price"), result.get("entry_price"))
     strong_trend = _is_strong_trend_entry(direction, result)

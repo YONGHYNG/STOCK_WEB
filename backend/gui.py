@@ -1677,6 +1677,8 @@ class TradingMainWindow(QMainWindow):
             stop_loss        = r.get("stop_loss"),
             entry_grade      = r.get("entry_grade"),
             risk_warnings    = r.get("risk_warnings", []),
+            strategy_signal  = r.get("strategy_signal"),
+            timeframe_directions = r.get("timeframe_directions", {}),
         )
         if not allowed:
             # 이유가 있으면 로그에 남기되, 같은 이유 반복 시 스팸 방지

@@ -132,6 +132,42 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(decision.signal, "SHORT_RANGE_REVERSION")
         self.assertEqual(decision.direction, "SHORT")
 
+    def test_relaxed_range_rsi_boundaries_create_more_setups(self):
+        long_frame = range_frame("LONG")
+        long_frame.loc[218, "rsi14"] = 41.5
+        long_frame.loc[219, "rsi14"] = 43.0
+        self.assertEqual(
+            VolumeTrendRsiStrategy().evaluate(long_frame).direction,
+            "LONG",
+        )
+
+        short_frame = range_frame("SHORT")
+        short_frame.loc[218, "rsi14"] = 58.5
+        short_frame.loc[219, "rsi14"] = 57.0
+        self.assertEqual(
+            VolumeTrendRsiStrategy().evaluate(short_frame).direction,
+            "SHORT",
+        )
+
+    def test_confirmed_trend_adds_ema_vwap_pullback_entry(self):
+        long_frame = strategy_frame("LONG")
+        long_frame.loc[218, "rsi14"] = 59.0
+        long_frame.loc[219, ["low", "high", "close", "rsi14"]] = [
+            100.5, 104.0, 103.0, 60.0
+        ]
+        long_decision = VolumeTrendRsiStrategy().evaluate(long_frame)
+        self.assertEqual(long_decision.signal, "LONG_TREND_CONTINUATION")
+        self.assertEqual(long_decision.direction, "LONG")
+
+        short_frame = strategy_frame("SHORT")
+        short_frame.loc[218, "rsi14"] = 41.0
+        short_frame.loc[219, ["low", "high", "close", "rsi14"]] = [
+            96.0, 99.0, 97.0, 40.0
+        ]
+        short_decision = VolumeTrendRsiStrategy().evaluate(short_frame)
+        self.assertEqual(short_decision.signal, "SHORT_TREND_CONTINUATION")
+        self.assertEqual(short_decision.direction, "SHORT")
+
     def test_regime_changes_only_after_three_confirmed_five_minute_bars(self):
         strategy = VolumeTrendRsiStrategy()
         self.assertEqual(strategy.evaluate(transitioning_frame(0)).market_regime, "TREND")

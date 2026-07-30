@@ -10,6 +10,8 @@ SIGNAL_TO_DIRECTION = {
     "SHORT_RSI_REJECT": "SHORT",
     "LONG_RANGE_REVERSION": "LONG",
     "SHORT_RANGE_REVERSION": "SHORT",
+    "LONG_TREND_CONTINUATION": "LONG",
+    "SHORT_TREND_CONTINUATION": "SHORT",
 }
 
 VOLUME_RATIO_MIN = 0.65
@@ -21,8 +23,10 @@ RANGE_ADX_MAX = 22.0
 RANGE_EMA_GAP_ATR_MAX = 0.60
 RANGE_EMA_SLOPE_ATR_MAX = 0.08
 RANGE_BB_WIDTH_MAX = 0.03
-RANGE_LONG_RSI_MAX = 38.0
-RANGE_SHORT_RSI_MIN = 62.0
+RANGE_LONG_RSI_MAX = 42.0
+RANGE_SHORT_RSI_MIN = 58.0
+TREND_PULLBACK_DISTANCE_ATR_MAX = 0.25
+TREND_PULLBACK_VOLUME_RATIO_MIN = 0.70
 REGIME_CONFIRMATION_BARS = 3
 BREAKOUT_VOLUME_RATIO_MIN = 2.5
 BREAKOUT_ADX_MIN = 23.0
@@ -308,6 +312,61 @@ class VolumeTrendRsiStrategy:
                         if volume_ok
                         else f"저거래량 {float(last['volume_ratio']):.2f}, 추세 조건으로 진입"
                     ),
+                ],
+                [],
+            )
+
+        # RSI 50선 재돌파가 없더라도 확정 추세에서 EMA20/VWAP 눌림 후
+        # 추세 방향으로 다시 마감하면 추가 타점을 제공합니다.
+        previous_close = float(prev["close"])
+        pullback_distance = min(
+            abs(float(last["low"]) - ema20),
+            abs(float(last["low"]) - vwap),
+        )
+        long_pullback = (
+            self._trend_direction == "LONG"
+            and self.last_long_candle != timestamp
+            and pullback_distance <= atr * TREND_PULLBACK_DISTANCE_ATR_MAX
+            and close > ema20
+            and close > vwap
+            and close > previous_close
+            and float(last["volume_ratio"]) >= TREND_PULLBACK_VOLUME_RATIO_MIN
+        )
+        if long_pullback:
+            return self._decision(
+                "LONG_TREND_CONTINUATION",
+                df,
+                [
+                    "확정 상승 추세의 EMA20/VWAP 눌림 확인",
+                    f"눌림 거리 {pullback_distance / atr:.2f} ATR",
+                    "종가가 EMA20·VWAP 위에서 상승 재개",
+                    f"거래량 비율 {float(last['volume_ratio']):.2f}",
+                ],
+                [],
+            )
+
+        short_pullback_distance = min(
+            abs(float(last["high"]) - ema20),
+            abs(float(last["high"]) - vwap),
+        )
+        short_pullback = (
+            self._trend_direction == "SHORT"
+            and self.last_short_candle != timestamp
+            and short_pullback_distance <= atr * TREND_PULLBACK_DISTANCE_ATR_MAX
+            and close < ema20
+            and close < vwap
+            and close < previous_close
+            and float(last["volume_ratio"]) >= TREND_PULLBACK_VOLUME_RATIO_MIN
+        )
+        if short_pullback:
+            return self._decision(
+                "SHORT_TREND_CONTINUATION",
+                df,
+                [
+                    "확정 하락 추세의 EMA20/VWAP 반등 확인",
+                    f"반등 거리 {short_pullback_distance / atr:.2f} ATR",
+                    "종가가 EMA20·VWAP 아래에서 하락 재개",
+                    f"거래량 비율 {float(last['volume_ratio']):.2f}",
                 ],
                 [],
             )

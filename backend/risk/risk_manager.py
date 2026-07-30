@@ -70,8 +70,12 @@ class RiskManager:
             if any(key in warning for key in blocking_keywords):
                 return False, f"위험 필터 발생: {warning}"
 
-        # 단기 추세추종 B등급은 횡보장에서 반대매매가 잦아 자동 진입하지 않는다.
-        if strategy_signal and strategy_signal.endswith("TREND_CONTINUATION") and entry_grade != "A":
+        # 추세 눌림목도 다른 전략과 동일하게 A·B등급까지 자동 진입합니다.
+        if (
+            strategy_signal
+            and strategy_signal.endswith("TREND_CONTINUATION")
+            and entry_grade not in ("A", "B")
+        ):
             return False, f"{strategy_signal} 신호가 {entry_grade}등급이므로 추격 진입 차단"
 
         # 15분봉은 같은 방향일 필요가 없고 강한 반대 추세일 때만 차단한다.

@@ -262,18 +262,37 @@ class SignalDiagnosticsDatabaseTests(unittest.TestCase):
                         "block_reasons": ["횡보장 밴드 반전 조건 대기"],
                     },
                 )
+                database.insert_signal(
+                    "BTCUSDT",
+                    "5m",
+                    {
+                        "timestamp": 1,
+                        "entry_price": 101.0,
+                        "direction": "LONG",
+                        "confidence": 72.0,
+                        "market_mode": "RANGE",
+                        "strategy_signal": "LONG_RANGE_REVERSION",
+                        "entry_grade": "B",
+                        "diagnostics": {
+                            "failed_conditions": {"long": []},
+                        },
+                        "block_reasons": [],
+                    },
+                )
                 with database.get_connection() as conn:
                     row = conn.execute(
                         "SELECT market_regime, entry_grade, diagnostics_json, block_reason "
                         "FROM signals ORDER BY id DESC LIMIT 1"
                     ).fetchone()
+                    count = conn.execute("SELECT COUNT(*) AS n FROM signals").fetchone()["n"]
+                self.assertEqual(count, 1)
                 self.assertEqual(row["market_regime"], "RANGE")
-                self.assertEqual(row["entry_grade"], "F")
-                self.assertIn(
-                    "rsi_turn_up_near_50",
+                self.assertEqual(row["entry_grade"], "B")
+                self.assertEqual(
                     json.loads(row["diagnostics_json"])["failed_conditions"]["long"],
+                    [],
                 )
-                self.assertIn("밴드 반전", row["block_reason"])
+                self.assertEqual(row["block_reason"], "")
             finally:
                 database.DATA_DIR = original_data_dir
                 database.DB_PATH = original_db_path

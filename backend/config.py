@@ -1,7 +1,9 @@
 # 역할: 거래 심볼, 시간봉, 기본 설정값을 정의하는 파일.
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parents[2]
+# backend/config.py의 상위 프로젝트 디렉터리를 기준으로 모든 실행 환경에서
+# 데이터와 모델을 프로젝트 내부에 보관합니다.
+BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
 MODEL_DIR = BASE_DIR / "models"
 DB_PATH = DATA_DIR / "trading.db"

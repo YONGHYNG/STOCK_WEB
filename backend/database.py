@@ -79,6 +79,24 @@ def init_db() -> None:
                 conn.execute(migration)
             except sqlite3.OperationalError:
                 pass
+        # 이전 버전이 15초마다 같은 확정 5분봉을 INSERT한 중복 기록을 정리합니다.
+        # 가장 최근 분석만 남긴 뒤 동일 봉이 다시 늘어나지 않도록 고유 인덱스를 둡니다.
+        conn.execute(
+            """
+            DELETE FROM signals
+            WHERE id NOT IN (
+                SELECT MAX(id)
+                FROM signals
+                GROUP BY symbol, timeframe, timestamp
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_signals_unique_bar
+            ON signals (symbol, timeframe, timestamp)
+            """
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS trades (
@@ -405,6 +423,25 @@ def insert_signal(symbol: str, timeframe: str, result: dict) -> None:
              risk_reward_ratio, all_time_high_mode, all_time_low_mode, market_regime,
              strategy_signal, entry_grade, diagnostics_json, block_reason, reason)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(symbol, timeframe, timestamp) DO UPDATE SET
+                entry_price=excluded.entry_price,
+                direction=excluded.direction,
+                long_probability=excluded.long_probability,
+                short_probability=excluded.short_probability,
+                confidence=excluded.confidence,
+                stop_loss=excluded.stop_loss,
+                take_profit_1=excluded.take_profit_1,
+                take_profit_2=excluded.take_profit_2,
+                risk_reward_ratio=excluded.risk_reward_ratio,
+                all_time_high_mode=excluded.all_time_high_mode,
+                all_time_low_mode=excluded.all_time_low_mode,
+                market_regime=excluded.market_regime,
+                strategy_signal=excluded.strategy_signal,
+                entry_grade=excluded.entry_grade,
+                diagnostics_json=excluded.diagnostics_json,
+                block_reason=excluded.block_reason,
+                reason=excluded.reason,
+                created_at=CURRENT_TIMESTAMP
             """,
             (
                 symbol,

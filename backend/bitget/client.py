@@ -193,6 +193,28 @@ class BitgetPrivateClient:
         }
         return (self._post("/api/v2/mix/order/place-tpsl-order", body)).get("data") or {}
 
+    def place_position_tpsl(
+        self,
+        hold_side: str,
+        take_profit_price: str,
+        stop_loss_price: str,
+    ) -> list[dict]:
+        """현재 포지션 전체에 시장가 실행 방식의 TP와 SL을 동시에 설정합니다."""
+        body = {
+            "marginCoin": "USDT",
+            "productType": PRODUCT_TYPE,
+            "symbol": SYMBOL,
+            "stopSurplusTriggerPrice": take_profit_price,
+            "stopSurplusTriggerType": "mark_price",
+            "stopSurplusExecutePrice": "0",
+            "stopLossTriggerPrice": stop_loss_price,
+            "stopLossTriggerType": "mark_price",
+            "stopLossExecutePrice": "0",
+            "holdSide": hold_side.lower(),
+        }
+        data = (self._post("/api/v2/mix/order/place-pos-tpsl", body)).get("data") or []
+        return data if isinstance(data, list) else []
+
     def close_position(self, hold_side: str) -> dict:
         """
         포지션 전체 시장가 청산

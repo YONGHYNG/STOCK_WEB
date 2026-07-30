@@ -312,6 +312,7 @@ class TradingMainWindow(QMainWindow):
         self._cached_account: dict | None = None
         self._cached_positions: list = []
         self._pending_live_order_id: str | None = None
+        self._pending_live_protection: dict | None = None
         self._trading_mode = TradingMode.SIGNAL_ONLY
         self._risk_cfg  = risk_settings_store.load()
         self._auto_threshold = self._risk_cfg.confidence_threshold
@@ -1631,6 +1632,18 @@ class TradingMainWindow(QMainWindow):
         side = "buy" if direction == "LONG" else "sell"
         try:
             limit_price = float(r.get("entry_price") or 0)
+            take_profit = float(r.get("take_profit_1") or 0)
+            stop_loss = float(r.get("stop_loss") or 0)
+            prices_valid = (
+                take_profit > limit_price > stop_loss
+                if direction == "LONG"
+                else take_profit < limit_price < stop_loss
+            )
+            if not prices_valid:
+                raise ValueError(
+                    f"{direction} 보호 가격이 올바르지 않습니다 "
+                    f"(TP1={take_profit}, 진입={limit_price}, SL={stop_loss})"
+                )
             account = self._private_client.get_account()
             available = float(
                 account.get("available")
@@ -1650,6 +1663,11 @@ class TradingMainWindow(QMainWindow):
             result = self._private_client.place_limit_order(side, size, f"{limit_price:.1f}", "open")
             order_id = result.get("orderId", "?")
             self._pending_live_order_id = str(order_id)
+            self._pending_live_protection = {
+                "direction": direction,
+                "take_profit": take_profit,
+                "stop_loss": stop_loss,
+            }
             self._log(
                 f"[자동매매 LIVE 지정가] {direction} {size} BTC @ ${limit_price:,.1f}  "
                 f"가용잔액=${available:,.2f} × {AUTO_LIVE_LEVERAGE}배  "
@@ -1659,6 +1677,71 @@ class TradingMainWindow(QMainWindow):
             QTimer.singleShot(2000, self._fetch_account)
         except Exception as exc:
             self._log(f"[자동매매] 주문 실패 (ORDER_FAILED): {exc}")
+
+    def _install_live_position_protection(self, position: dict) -> None:
+        """체결된 실거래 포지션 전체에 거래소 서버 측 TP1·SL을 설치합니다."""
+        protection = self._pending_live_protection
+        if not protection or not self._private_client:
+            return
+
+        hold_side = str(position.get("holdSide") or "").lower()
+        expected_side = protection["direction"].lower()
+        if hold_side != expected_side:
+            self._log(
+                f"[보호주문 실패] 체결 방향 불일치: 예상={expected_side}, 실제={hold_side} "
+                "— 긴급 시장가 청산 시도"
+            )
+            self._pending_live_protection = None
+            self._pending_live_order_id = None
+            try:
+                self._private_client.close_position(hold_side)
+                self._log("[긴급청산 완료] 방향 불일치 포지션을 시장가로 청산했습니다.")
+                QTimer.singleShot(2000, self._fetch_account)
+            except Exception as close_exc:
+                self._log(
+                    f"[긴급청산 실패] {close_exc} — 거래소에서 즉시 포지션을 확인하세요."
+                )
+            return
+
+        # 거래소 응답에 양쪽 보호 주문 ID가 이미 있으면 중복 등록하지 않습니다.
+        if position.get("takeProfitId") and position.get("stopLossId"):
+            self._pending_live_protection = None
+            self._log("[보호주문] 거래소 TP1·SL이 이미 등록되어 있습니다.")
+            return
+
+        tp = float(protection["take_profit"])
+        sl = float(protection["stop_loss"])
+        try:
+            orders = self._private_client.place_position_tpsl(
+                hold_side=hold_side,
+                take_profit_price=f"{tp:.1f}",
+                stop_loss_price=f"{sl:.1f}",
+            )
+            order_ids = [
+                str(order.get("orderId"))
+                for order in orders
+                if order.get("orderId")
+            ]
+            if len(order_ids) < 2:
+                raise RuntimeError(f"TP/SL 주문 ID 확인 실패: {orders}")
+            self._pending_live_protection = None
+            self._log(
+                f"[보호주문 완료] {hold_side.upper()} 전체 포지션 "
+                f"TP1=${tp:,.1f} · SL=${sl:,.1f}  "
+                f"orderIds={','.join(order_ids)}"
+            )
+        except Exception as exc:
+            self._pending_live_protection = None
+            self._pending_live_order_id = None
+            self._log(f"[보호주문 실패] {exc} — 무방비 포지션 긴급 시장가 청산 시도")
+            try:
+                self._private_client.close_position(hold_side)
+                self._log("[긴급청산 완료] TP/SL 등록 실패 포지션을 시장가로 청산했습니다.")
+                QTimer.singleShot(2000, self._fetch_account)
+            except Exception as close_exc:
+                self._log(
+                    f"[긴급청산 실패] {close_exc} — 거래소에서 즉시 포지션을 확인하세요."
+                )
 
     # ── Account ────────────────────────────────────────────────────────────────
 
@@ -1737,6 +1820,7 @@ class TradingMainWindow(QMainWindow):
         btc_pos = [p for p in (positions or []) if p.get("symbol") == SYMBOL]
         if btc_pos:
             self._pending_live_order_id = None
+            self._install_live_position_protection(btc_pos[0])
         if btc_pos:
             p       = btc_pos[0]
             side    = p.get("holdSide", "").upper()

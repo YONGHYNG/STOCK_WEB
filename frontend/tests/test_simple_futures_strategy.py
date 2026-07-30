@@ -8,6 +8,7 @@ import pandas as pd
 
 import backend.database as database
 from backend.order.paper_trader import PaperTrader
+from backend.bitget.client import BitgetPrivateClient
 from backend.risk.risk_manager import RiskManager
 from backend.risk.settings import RiskSettings
 from backend.order.sizing import full_balance_size
@@ -388,6 +389,30 @@ class LiveOrderSizingTests(unittest.TestCase):
                 size_step="0.001",
                 minimum_size="0.001",
             )
+
+    def test_position_tpsl_protects_the_entire_position_at_market(self):
+        client = BitgetPrivateClient("key", "secret", "passphrase")
+        captured = {}
+
+        def fake_post(path, body):
+            captured["path"] = path
+            captured["body"] = body
+            return {
+                "data": [
+                    {"orderId": "tp-order"},
+                    {"orderId": "sl-order"},
+                ]
+            }
+
+        client._post = fake_post
+        result = client.place_position_tpsl("long", "66000.0", "64500.0")
+
+        self.assertEqual(captured["path"], "/api/v2/mix/order/place-pos-tpsl")
+        self.assertNotIn("stopSurplusSize", captured["body"])
+        self.assertNotIn("stopLossSize", captured["body"])
+        self.assertEqual(captured["body"]["stopSurplusExecutePrice"], "0")
+        self.assertEqual(captured["body"]["stopLossExecutePrice"], "0")
+        self.assertEqual([row["orderId"] for row in result], ["tp-order", "sl-order"])
 
 
 if __name__ == "__main__":

@@ -278,6 +278,7 @@ class TradingAIEngine:
             "regime_transition_pending": decision.regime_transition_pending,
             "regime_confirmation_count": decision.regime_confirmation_count,
             "breakout_direction": decision.breakout_direction,
+            "breakout_level": decision.breakout_level,
         }
         diagnostics, block_reasons = self._build_diagnostics(
             decision=decision,
@@ -513,6 +514,7 @@ class TradingAIEngine:
             "regime_confirmation_required": 3,
             "breakout_direction": decision.breakout_direction,
             "breakout_volume_ratio_required": 2.5,
+            "breakout_level": decision.breakout_level,
             "candidate_signal": decision.signal,
             "candidate_direction": decision.direction,
             "final_direction": final_direction,

@@ -168,6 +168,44 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(short_decision.signal, "SHORT_TREND_CONTINUATION")
         self.assertEqual(short_decision.direction, "SHORT")
 
+    def test_breakout_retest_adds_long_and_short_entries_without_chasing(self):
+        long_frame = strategy_frame("LONG")
+        long_frame.loc[216, "adx14"] = 24.0
+        long_frame.loc[217, ["low", "high", "close"]] = [100.0, 112.0, 111.0]
+        long_frame.loc[217, "volume_ratio"] = 2.5
+        long_frame.loc[217, "adx14"] = 30.0
+        long_frame.loc[218, ["close", "rsi14"]] = [100.0, 60.0]
+        long_frame.loc[219, ["low", "high", "close", "rsi14"]] = [
+            109.5, 111.0, 110.5, 61.0
+        ]
+        long_decision = VolumeTrendRsiStrategy().evaluate(long_frame)
+        self.assertEqual(long_decision.signal, "LONG_BREAKOUT_RETEST")
+        self.assertEqual(long_decision.breakout_level, 110.0)
+
+        short_frame = strategy_frame("SHORT")
+        short_frame.loc[216, "adx14"] = 24.0
+        short_frame.loc[217, ["low", "high", "close"]] = [88.0, 100.0, 89.0]
+        short_frame.loc[217, "volume_ratio"] = 2.5
+        short_frame.loc[217, "adx14"] = 30.0
+        short_frame.loc[218, ["close", "rsi14"]] = [100.0, 40.0]
+        short_frame.loc[219, ["low", "high", "close", "rsi14"]] = [
+            89.0, 90.5, 89.5, 39.0
+        ]
+        short_decision = VolumeTrendRsiStrategy().evaluate(short_frame)
+        self.assertEqual(short_decision.signal, "SHORT_BREAKOUT_RETEST")
+        self.assertEqual(short_decision.breakout_level, 90.0)
+
+        chase_frame = strategy_frame("LONG")
+        chase_frame.loc[218, "adx14"] = 24.0
+        chase_frame.loc[219, ["low", "high", "close", "rsi14"]] = [
+            100.0, 112.0, 111.0, 61.0
+        ]
+        chase_frame.loc[219, "volume_ratio"] = 2.5
+        chase_frame.loc[219, "adx14"] = 30.0
+        chase_decision = VolumeTrendRsiStrategy().evaluate(chase_frame)
+        self.assertEqual(chase_decision.direction, "HOLD")
+        self.assertIn("추격 진입 금지", chase_decision.reasons[0])
+
     def test_regime_changes_only_after_three_confirmed_five_minute_bars(self):
         strategy = VolumeTrendRsiStrategy()
         self.assertEqual(strategy.evaluate(transitioning_frame(0)).market_regime, "TREND")

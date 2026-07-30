@@ -21,6 +21,7 @@ class RiskManager:
     def __init__(self, settings: RiskSettings):
         self.settings = settings
         self._daily_pnl_pct: float = 0.0        # 당일 누적 손익률
+        self._daily_net_profit: float = 0.0
         self._consecutive_losses: int = 0        # 연속 손실 횟수
         self._last_order_ts: float = 0.0         # 마지막 주문 타임스탬프
         self._entry_block_until: float = 0.0
@@ -163,6 +164,28 @@ class RiskManager:
         """서버 재시작 후 DB의 최근 연속 손실 횟수를 복원한다."""
         self._consecutive_losses = max(0, int(count))
 
+    def restore_live_risk(
+        self,
+        today_net_profit: float,
+        account_equity: float,
+        consecutive_losses: int,
+        emergency_stopped: bool = False,
+    ) -> None:
+        """DB의 실제 순손익과 정지 상태를 재시작 후 복원합니다."""
+        self._daily_net_profit = float(today_net_profit)
+        # 현재 잔고 = 일 시작 잔고 + 당일 순손익으로 보고 시작 잔고를 역산합니다.
+        start_equity = float(account_equity) - self._daily_net_profit
+        self._daily_pnl_pct = (
+            self._daily_net_profit / start_equity * 100
+            if start_equity > 0
+            else 0.0
+        )
+        self._consecutive_losses = max(0, int(consecutive_losses))
+        self._daily_entry_blocked = (
+            self._consecutive_losses >= self.settings.consecutive_loss_limit
+        )
+        self._emergency_stop = bool(emergency_stopped)
+
     def reset_consecutive_losses(self):
         """사용자가 위험을 확인하고 자동매매를 다시 켤 때 손실 정지를 해제한다."""
         self._consecutive_losses = 0
@@ -193,6 +216,7 @@ class RiskManager:
         today = str(date.today())
         if today != self._daily_reset_date:
             self._daily_pnl_pct = 0.0
+            self._daily_net_profit = 0.0
             self._consecutive_losses = 0
             self._daily_entry_blocked = False
             self._entry_block_until = 0.0

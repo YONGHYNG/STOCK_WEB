@@ -11,7 +11,11 @@ from backend.order.paper_trader import PaperTrader
 from backend.bitget.client import BitgetPrivateClient
 from backend.risk.risk_manager import RiskManager
 from backend.risk.settings import RiskSettings
-from backend.order.sizing import full_balance_size
+from backend.order.sizing import (
+    entry_price_deviation_pct,
+    full_balance_size,
+    normalize_limit_price,
+)
 from backend.strategy.strategy import VolumeTrendRsiStrategy
 from backend.strategy.volume_trend_engine import TradingAIEngine
 from backend.trading_modes import TradingMode
@@ -390,6 +394,25 @@ class LiveOrderSizingTests(unittest.TestCase):
                 minimum_size="0.001",
             )
 
+    def test_exchange_cost_buffer_and_price_tick_are_applied(self):
+        size = full_balance_size(
+            available_usdt=100,
+            leverage=20,
+            entry_price=65000,
+            size_step="0.001",
+            minimum_size="0.001",
+            minimum_notional="5",
+            fee_rate="0.0004",
+            open_cost_up_ratio="0.1",
+        )
+        self.assertEqual(size, "0.027")
+        self.assertEqual(normalize_limit_price("65000.17", 1, 1, "buy"), "65000.1")
+        self.assertEqual(normalize_limit_price("65000.17", 1, 1, "sell"), "65000.2")
+        self.assertAlmostEqual(
+            entry_price_deviation_pct(65000, 65130),
+            0.2,
+        )
+
     def test_position_tpsl_protects_the_entire_position_at_market(self):
         client = BitgetPrivateClient("key", "secret", "passphrase")
         captured = {}
@@ -533,9 +556,42 @@ class LiveExecutionDatabaseTests(unittest.TestCase):
 
                 database.clear_live_execution_state("BTCUSDT")
                 self.assertIsNone(database.get_live_execution_state("BTCUSDT"))
+
+                snapshot = database.get_live_risk_snapshot()
+                self.assertEqual(snapshot["today_net_profit"], 16.4)
+                self.assertEqual(snapshot["consecutive_losses"], 0)
+                database.set_live_emergency_stop(True, "청산 실패")
+                snapshot = database.get_live_risk_snapshot()
+                self.assertTrue(snapshot["emergency_stopped"])
+                self.assertEqual(snapshot["emergency_reason"], "청산 실패")
             finally:
                 database.DATA_DIR = original_data_dir
                 database.DB_PATH = original_db_path
+
+    def test_risk_manager_restores_actual_net_loss(self):
+        manager = RiskManager(
+            RiskSettings(
+                daily_max_loss_pct=3.0,
+                consecutive_loss_limit=3,
+                live_trading_allowed=True,
+            )
+        )
+        manager.restore_live_risk(
+            today_net_profit=-4.0,
+            account_equity=96.0,
+            consecutive_losses=3,
+            emergency_stopped=False,
+        )
+        allowed, reason = manager.check_entry(
+            direction="LONG",
+            confidence=100,
+            mode=TradingMode.LIVE_TRADING,
+            cached_positions=[],
+            private_client=object(),
+            entry_grade="A",
+        )
+        self.assertFalse(allowed)
+        self.assertTrue("연속" in reason or "일일 손실" in reason)
 
 
 if __name__ == "__main__":

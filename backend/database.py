@@ -171,6 +171,19 @@ def init_db() -> None:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS live_risk_state (
+                id                INTEGER PRIMARY KEY CHECK (id = 1),
+                emergency_stopped INTEGER NOT NULL DEFAULT 0,
+                reason            TEXT,
+                updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO live_risk_state (id, emergency_stopped) VALUES (1, 0)"
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS paper_account (
                 id              INTEGER PRIMARY KEY CHECK (id = 1),
                 initial_balance REAL NOT NULL,
@@ -579,6 +592,57 @@ def sync_closed_live_position(symbol: str, history: dict) -> Optional[dict]:
         conn.commit()
         synced = conn.execute("SELECT * FROM trades WHERE id=?", (trade["id"],)).fetchone()
     return dict(synced)
+
+
+def get_live_risk_snapshot() -> dict:
+    """실제 LIVE 순손익으로 오늘 손익과 최근 연속 손실 횟수를 반환합니다."""
+    with get_connection() as conn:
+        today = conn.execute(
+            """
+            SELECT COALESCE(SUM(net_profit), 0) AS net_profit
+            FROM trades
+            WHERE trade_type='LIVE'
+              AND result != 'OPEN'
+              AND date(exit_time, 'localtime') = date('now', 'localtime')
+            """
+        ).fetchone()
+        recent = conn.execute(
+            """
+            SELECT net_profit FROM trades
+            WHERE trade_type='LIVE' AND result != 'OPEN' AND net_profit IS NOT NULL
+            ORDER BY exit_time DESC, id DESC
+            """
+        ).fetchall()
+        risk = conn.execute("SELECT * FROM live_risk_state WHERE id=1").fetchone()
+
+    consecutive_losses = 0
+    for row in recent:
+        if float(row["net_profit"]) < 0:
+            consecutive_losses += 1
+        else:
+            break
+    return {
+        "today_net_profit": float(today["net_profit"]),
+        "consecutive_losses": consecutive_losses,
+        "emergency_stopped": bool(risk["emergency_stopped"]) if risk else False,
+        "emergency_reason": risk["reason"] if risk else "",
+    }
+
+
+def set_live_emergency_stop(stopped: bool, reason: str = "") -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO live_risk_state (id, emergency_stopped, reason)
+            VALUES (1, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                emergency_stopped=excluded.emergency_stopped,
+                reason=excluded.reason,
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (1 if stopped else 0, reason),
+        )
+        conn.commit()
 
 
 def get_recent_trades(symbol: str, limit: Optional[int] = 50, trade_type: Optional[str] = None) -> list[dict]:

@@ -53,6 +53,7 @@ from backend.config import (
     DEFAULT_TIMEFRAME,
     INITIAL_CANDLE_LIMIT,
     LIVE_LIMIT_ORDER_TIMEOUT_SECONDS,
+    MAX_ENTRY_PRICE_DEVIATION_PCT,
     RECENT_CANDLE_LIMIT_BY_TIMEFRAME,
     REFRESH_INTERVAL_MS,
     REFRESH_CANDLE_LIMIT,
@@ -60,13 +61,18 @@ from backend.config import (
     TIMEFRAMES,
     USE_DEMO_DATA,
 )
-from backend.order.sizing import full_balance_size
+from backend.order.sizing import (
+    entry_price_deviation_pct,
+    full_balance_size,
+    normalize_limit_price,
+)
 from backend.database import (
     clear_live_execution_state,
     close_trade,
     get_all_time_high,
     get_all_time_low,
     get_live_execution_state,
+    get_live_risk_snapshot,
     get_open_trade,
     get_recent_candles,
     get_recent_trades,
@@ -75,6 +81,7 @@ from backend.database import (
     open_trade,
     purge_unaligned_candles,
     save_live_execution_state,
+    set_live_emergency_stop,
     sync_closed_live_position,
     sync_live_position,
 )
@@ -338,6 +345,13 @@ class TradingMainWindow(QMainWindow):
         self._risk_cfg  = risk_settings_store.load()
         self._auto_threshold = self._risk_cfg.confidence_threshold
         self._risk_mgr  = RiskManager(self._risk_cfg)
+        restored_risk = get_live_risk_snapshot()
+        self._risk_mgr.restore_live_risk(
+            today_net_profit=restored_risk["today_net_profit"],
+            account_equity=0,
+            consecutive_losses=restored_risk["consecutive_losses"],
+            emergency_stopped=restored_risk["emergency_stopped"],
+        )
         self._paper_trader = PaperTrader()
 
         # 앱 재시작 시 기존 오픈 거래 복구 (LIVE)
@@ -382,6 +396,10 @@ class TradingMainWindow(QMainWindow):
         self._paper_trader.restore_from_db()
 
         self._build_ui()
+        if self._risk_mgr.is_emergency_stopped:
+            self._emergency_btn.setStyleSheet(
+                f"background: {RED}; color: white; border-color: {RED}; font-weight: 900;"
+            )
 
         # 시작 시 기존 복기 데이터 로드
         self._refresh_trade_table()
@@ -1585,7 +1603,21 @@ class TradingMainWindow(QMainWindow):
 
     def _emergency_stop(self):
         """긴급정지: 자동매매 즉시 OFF + 추가 주문 차단."""
+        if self._risk_mgr.is_emergency_stopped:
+            ans = QMessageBox.question(
+                self,
+                "긴급정지 해제",
+                "긴급정지를 해제하고 신규 진입을 다시 허용하시겠습니까?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if ans == QMessageBox.StandardButton.Yes:
+                self._risk_mgr.deactivate_emergency_stop()
+                set_live_emergency_stop(False)
+                self._emergency_btn.setStyleSheet("")
+                self._log("[긴급정지 해제] 신규 진입 차단을 해제했습니다.")
+            return
         self._risk_mgr.activate_emergency_stop()
+        set_live_emergency_stop(True, "사용자 긴급정지")
         self._auto_trade_enabled = False
         self._auto_chk.setChecked(False)
         keep_awake.disable()
@@ -1616,6 +1648,7 @@ class TradingMainWindow(QMainWindow):
                         self._log("[긴급정지] 거래소 포지션 청산 완료")
                         QTimer.singleShot(2000, self._fetch_account)
                     except Exception as exc:
+                        set_live_emergency_stop(True, f"사용자 긴급청산 실패: {exc}")
                         self._log(f"[긴급정지] 청산 실패: {exc}")
                 if self._open_trade_data and self._last_price:
                     self._force_close_trade(self._last_price, "SIGNAL_CHANGE")
@@ -1678,9 +1711,49 @@ class TradingMainWindow(QMainWindow):
 
         side = "buy" if direction == "LONG" else "sell"
         try:
-            limit_price = float(r.get("entry_price") or 0)
+            planned_price = float(r.get("entry_price") or 0)
             take_profit = float(r.get("take_profit_1") or 0)
             stop_loss = float(r.get("stop_loss") or 0)
+            latest_price = float(self.clients["5m"].fetch_ticker_price() or 0)
+            deviation = entry_price_deviation_pct(planned_price, latest_price)
+            if deviation > MAX_ENTRY_PRICE_DEVIATION_PCT:
+                raise ValueError(
+                    f"계획 진입가와 최신가 차이 {deviation:.3f}%가 "
+                    f"허용값 {MAX_ENTRY_PRICE_DEVIATION_PCT:.2f}%를 초과했습니다"
+                )
+            contract = self._private_client.get_contract_config()
+            if str(contract.get("symbolStatus") or "normal") != "normal":
+                raise ValueError(
+                    f"BTCUSDT 거래 상태가 normal이 아닙니다: "
+                    f"{contract.get('symbolStatus')}"
+                )
+            if int(float(contract.get("maxLever") or AUTO_LIVE_LEVERAGE)) < AUTO_LIVE_LEVERAGE:
+                raise ValueError("거래소가 현재 BTCUSDT 20배 레버리지를 허용하지 않습니다")
+            limit_price = float(
+                normalize_limit_price(
+                    planned_price,
+                    contract.get("pricePlace") or 1,
+                    contract.get("priceEndStep") or 1,
+                    side,
+                )
+            )
+            close_side = "sell" if direction == "LONG" else "buy"
+            take_profit = float(
+                normalize_limit_price(
+                    take_profit,
+                    contract.get("pricePlace") or 1,
+                    contract.get("priceEndStep") or 1,
+                    close_side,
+                )
+            )
+            stop_loss = float(
+                normalize_limit_price(
+                    stop_loss,
+                    contract.get("pricePlace") or 1,
+                    contract.get("priceEndStep") or 1,
+                    close_side,
+                )
+            )
             prices_valid = (
                 take_profit > limit_price > stop_loss
                 if direction == "LONG"
@@ -1698,13 +1771,16 @@ class TradingMainWindow(QMainWindow):
                 or account.get("crossMaxAvailable")
                 or 0
             )
-            contract = self._private_client.get_contract_config()
             size = full_balance_size(
                 available_usdt=available,
                 leverage=AUTO_LIVE_LEVERAGE,
                 entry_price=limit_price,
                 size_step=contract.get("sizeMultiplier") or "0.001",
                 minimum_size=contract.get("minTradeNum") or "0.001",
+                minimum_notional=contract.get("minTradeUSDT") or 0,
+                fee_rate=contract.get("makerFeeRate") or 0,
+                open_cost_up_ratio=contract.get("openCostUpRatio") or 0,
+                maximum_size=contract.get("maxOrderQty") or 0,
             )
             self._private_client.set_leverage(AUTO_LIVE_LEVERAGE)
             created_ms = int(time() * 1000)
@@ -1741,6 +1817,7 @@ class TradingMainWindow(QMainWindow):
             self._log(
                 f"[자동매매 LIVE 지정가] {direction} {size} BTC @ ${limit_price:,.1f}  "
                 f"가용잔액=${available:,.2f} × {AUTO_LIVE_LEVERAGE}배  "
+                f"최신가차이={deviation:.3f}%  "
                 f"전략신호={r.get('strategy_signal', direction)}  orderId={order_id}"
             )
             self._risk_mgr.record_order_placed()
@@ -1830,6 +1907,10 @@ class TradingMainWindow(QMainWindow):
                 self._log("[긴급청산 완료] 방향 불일치 포지션을 시장가로 청산했습니다.")
                 QTimer.singleShot(2000, self._fetch_account)
             except Exception as close_exc:
+                self._risk_mgr.activate_emergency_stop()
+                set_live_emergency_stop(
+                    True, f"방향 불일치 포지션 긴급청산 실패: {close_exc}"
+                )
                 self._log(
                     f"[긴급청산 실패] {close_exc} — 거래소에서 즉시 포지션을 확인하세요."
                 )
@@ -1901,6 +1982,10 @@ class TradingMainWindow(QMainWindow):
                 self._log("[긴급청산 완료] TP/SL 등록 실패 포지션을 시장가로 청산했습니다.")
                 QTimer.singleShot(2000, self._fetch_account)
             except Exception as close_exc:
+                self._risk_mgr.activate_emergency_stop()
+                set_live_emergency_stop(
+                    True, f"TP/SL 등록 실패 포지션 긴급청산 실패: {close_exc}"
+                )
                 self._log(
                     f"[긴급청산 실패] {close_exc} — 거래소에서 즉시 포지션을 확인하세요."
                 )
@@ -1993,6 +2078,13 @@ class TradingMainWindow(QMainWindow):
             or 0
         )
         upl       = float(acct.get("unrealizedPL") or 0)
+        restored_risk = get_live_risk_snapshot()
+        self._risk_mgr.restore_live_risk(
+            today_net_profit=restored_risk["today_net_profit"],
+            account_equity=equity,
+            consecutive_losses=restored_risk["consecutive_losses"],
+            emergency_stopped=restored_risk["emergency_stopped"],
+        )
 
         self._bal_lbl.setText(f"${equity:,.2f} USDT")
         self._bal_lbl.setStyleSheet(f"color: {TEXT};")

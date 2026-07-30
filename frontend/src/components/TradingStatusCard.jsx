@@ -23,6 +23,10 @@ function strategyLabel(strategy) {
       return '롱 확정'
     case 'SHORT':
       return '숏 확정'
+    case 'LONG_RANGE_REVERSION':
+      return '횡보 하단 반등 롱'
+    case 'SHORT_RANGE_REVERSION':
+      return '횡보 상단 반락 숏'
     default:
       return '관망'
   }

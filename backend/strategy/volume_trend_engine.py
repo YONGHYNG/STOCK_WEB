@@ -104,6 +104,10 @@ class TradingAIEngine:
         warnings = list(decision.warnings)
         reasons = list(decision.reasons)
         settings = load_risk_settings()
+        is_range_signal = decision.signal in (
+            "LONG_RANGE_REVERSION",
+            "SHORT_RANGE_REVERSION",
+        )
 
         strong_15m = frame_info["directions"].get("15m", "HOLD")
         if direction == "LONG" and strong_15m == "SHORT":
@@ -168,7 +172,7 @@ class TradingAIEngine:
         )
         entry = market_entry
         entry_atr = float(last.get("atr14") or 0)
-        if direction in ("LONG", "SHORT"):
+        if direction in ("LONG", "SHORT") and not is_range_signal:
             entry, anchor_name, retest_distance = self._retest_entry(
                 direction=direction,
                 market_entry=market_entry,
@@ -189,10 +193,29 @@ class TradingAIEngine:
                     f"{anchor_name} 재테스트 지정가 ${entry:,.2f} "
                     f"(현재 진입가 대비 ${retest_distance:,.2f} 대기)"
                 )
-        stop, tp1, tp2, rr = self._risk_prices(
-            preview_direction, entry, atr, settings.atr_stop_multiplier
+        if is_range_signal:
+            stop, tp1, tp2, rr = self._range_risk_prices(
+                preview_direction,
+                entry,
+                entry_atr,
+                float(last.get("bb_lower") or 0),
+                float(last.get("bb_mid") or 0),
+                float(last.get("bb_upper") or 0),
+            )
+            if rr is None or rr < 1.0:
+                warnings.append(f"횡보장 기대 손익비 {float(rr or 0):.2f} < 1.00, 진입 보류")
+                direction = "HOLD"
+        else:
+            stop, tp1, tp2, rr = self._risk_prices(
+                preview_direction, entry, atr, settings.atr_stop_multiplier
+            )
+        risk_factor = 0.5 if is_range_signal else 1.0
+        risk_amount = (
+            float(account_equity or 100.0)
+            * settings.risk_per_trade_pct
+            / 100
+            * risk_factor
         )
-        risk_amount = float(account_equity or 100.0) * settings.risk_per_trade_pct / 100
         size = self._position_size(
             risk_amount,
             entry,
@@ -222,6 +245,11 @@ class TradingAIEngine:
             "ema20": float(last.get("ema20") or 0),
             "ema50": float(last.get("ema50") or 0),
             "ma_distance_atr": distance_atr,
+            "adx14": float(last.get("adx14") or 0),
+            "bb_upper": float(last.get("bb_upper") or 0),
+            "bb_mid": float(last.get("bb_mid") or 0),
+            "bb_lower": float(last.get("bb_lower") or 0),
+            "bb_width": float(last.get("bb_width") or 0),
         }
         return TradingResult(
             timestamp=int(last.get("timestamp") or 0),
@@ -259,7 +287,7 @@ class TradingAIEngine:
             max_loss_usdt=round(risk_amount, 4),
             leverage=int(market.get("leverage") or settings.max_leverage),
             stop_gap=round(abs(entry - stop) / entry, 6) if stop and entry else None,
-            market_mode=direction,
+            market_mode=decision.market_regime,
             timeframe_summary=summaries,
             strategy_signal=final_signal,
             planned_direction=preview_direction,
@@ -276,6 +304,29 @@ class TradingAIEngine:
         if direction == "LONG":
             return entry - risk, entry + risk, entry + risk * 1.5, 1.5
         return entry + risk, entry - risk, entry - risk * 1.5, 1.5
+
+    @staticmethod
+    def _range_risk_prices(
+        direction: str,
+        entry: float,
+        atr: float,
+        lower: float,
+        mid: float,
+        upper: float,
+    ):
+        """횡보 진입은 밴드 밖에서 손절하고 중앙선과 반대 밴드에서 익절합니다."""
+        if direction not in ("LONG", "SHORT") or atr <= 0 or not (lower < mid < upper):
+            return None, None, None, None
+        if direction == "LONG":
+            stop = min(lower - atr * 0.25, entry - atr * 0.75)
+            tp1, tp2 = mid, upper
+            reward, risk = tp1 - entry, entry - stop
+        else:
+            stop = max(upper + atr * 0.25, entry + atr * 0.75)
+            tp1, tp2 = mid, lower
+            reward, risk = entry - tp1, stop - entry
+        rr = reward / risk if reward > 0 and risk > 0 else None
+        return stop, tp1, tp2, rr
 
     @staticmethod
     def _position_size(risk_amount, entry, stop, minimum=None, step=None) -> Optional[float]:
@@ -376,6 +427,8 @@ class TradingAIEngine:
                 "rsi14": float(last.get("rsi14") or 0),
                 "atr14": float(last.get("atr14") or 0),
                 "volume_ratio": float(last.get("volume_ratio") or 0),
+                "adx14": float(last.get("adx14") or 0),
+                "bb_width": float(last.get("bb_width") or 0),
             }
         return {"directions": directions, "summaries": summaries}
 

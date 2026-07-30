@@ -47,6 +47,25 @@ def strategy_frame(direction: str) -> pd.DataFrame:
     return frame
 
 
+def range_frame(direction: str) -> pd.DataFrame:
+    frame = strategy_frame(direction)
+    frame["ema20"] = 100.0
+    frame["ema50"] = 100.1
+    frame["ema20_slope"] = 0.05
+    frame["adx14"] = 16.0
+    frame["bb_lower"] = 90.0
+    frame["bb_mid"] = 100.0
+    frame["bb_upper"] = 110.0
+    frame["bb_width"] = 0.02
+    if direction == "LONG":
+        frame.loc[218, ["low", "close", "rsi14"]] = [89.5, 90.0, 34.0]
+        frame.loc[219, ["low", "close", "rsi14"]] = [90.0, 92.0, 39.0]
+    else:
+        frame.loc[218, ["high", "close", "rsi14"]] = [110.5, 110.0, 66.0]
+        frame.loc[219, ["high", "close", "rsi14"]] = [110.0, 108.0, 61.0]
+    return frame
+
+
 class StrategyTests(unittest.TestCase):
     def test_long_cycle_is_consumed_only_after_order(self):
         strategy = VolumeTrendRsiStrategy()
@@ -68,6 +87,24 @@ class StrategyTests(unittest.TestCase):
         stop, tp1, tp2, rr = TradingAIEngine._risk_prices("LONG", 100.0, 10.0, 1.5)
         self.assertEqual((stop, tp1, tp2, rr), (85.0, 115.0, 122.5, 1.5))
         self.assertEqual(TradingAIEngine._position_size(2.0, 100.0, 90.0, 0.001, 0.001), 0.2)
+
+    def test_range_lower_band_reversal_opens_long(self):
+        decision = VolumeTrendRsiStrategy().evaluate(range_frame("LONG"))
+        self.assertEqual(decision.signal, "LONG_RANGE_REVERSION")
+        self.assertEqual(decision.direction, "LONG")
+        self.assertEqual(decision.market_regime, "RANGE")
+
+    def test_range_upper_band_reversal_opens_short(self):
+        decision = VolumeTrendRsiStrategy().evaluate(range_frame("SHORT"))
+        self.assertEqual(decision.signal, "SHORT_RANGE_REVERSION")
+        self.assertEqual(decision.direction, "SHORT")
+
+    def test_range_target_is_middle_band(self):
+        stop, tp1, tp2, rr = TradingAIEngine._range_risk_prices(
+            "LONG", 92.0, 4.0, 90.0, 100.0, 110.0
+        )
+        self.assertEqual((stop, tp1, tp2), (89.0, 100.0, 110.0))
+        self.assertGreater(rr, 1.0)
 
     def test_long_entry_waits_for_nearest_retest_support(self):
         entry, anchor, distance = TradingAIEngine._retest_entry(

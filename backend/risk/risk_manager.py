@@ -7,6 +7,8 @@ check_entry() 가 (allowed: bool, reason: str) 를 반환합니다.
   allowed=False → 진입 거부, reason에 이유 기록
 """
 
+from __future__ import annotations
+
 import time
 from datetime import date
 from dataclasses import dataclass

@@ -23,6 +23,7 @@ RANGE_EMA_SLOPE_ATR_MAX = 0.08
 RANGE_BB_WIDTH_MAX = 0.03
 RANGE_LONG_RSI_MAX = 38.0
 RANGE_SHORT_RSI_MIN = 62.0
+REGIME_CONFIRMATION_BARS = 3
 
 
 @dataclass
@@ -36,6 +37,9 @@ class StrategyDecision:
     reasons: list[str]
     warnings: list[str]
     market_regime: str = "TREND"
+    raw_market_regime: str = "TREND"
+    regime_confirmation_count: int = 0
+    regime_transition_pending: bool = False
 
 
 class VolumeTrendRsiStrategy:
@@ -47,6 +51,10 @@ class VolumeTrendRsiStrategy:
         self.last_long_candle: Optional[int] = None
         self.last_short_candle: Optional[int] = None
         self._initialized = False
+        self._market_regime = "TREND"
+        self._raw_market_regime = "TREND"
+        self._regime_confirmation_count = 0
+        self._regime_transition_pending = False
 
     def evaluate(self, df: pd.DataFrame) -> StrategyDecision:
         if len(df) < 220:
@@ -90,18 +98,42 @@ class VolumeTrendRsiStrategy:
         vwap = float(last["vwap"])
         volume_ok = float(last["volume_ratio"]) >= VOLUME_RATIO_MIN
         atr = float(last["atr14"])
-        range_ready = all(
-            key in df.columns and not pd.isna(last.get(key))
-            for key in ("adx14", "bb_upper", "bb_mid", "bb_lower", "bb_width")
+        all_range_flags = [
+            self._is_range_row(row)
+            for _, row in df.iterrows()
+        ]
+        range_flags = all_range_flags[-REGIME_CONFIRMATION_BARS:]
+        raw_is_range = bool(range_flags and range_flags[-1])
+        self._raw_market_regime = "RANGE" if raw_is_range else "TREND"
+        self._regime_confirmation_count = 0
+        for flag in reversed(range_flags):
+            if flag == raw_is_range:
+                self._regime_confirmation_count += 1
+            else:
+                break
+        # 앱 재시작 뒤에도 동일하게 복구되도록 메모리 상태가 아니라 확정봉
+        # 이력에서 마지막으로 3개 연속 확인된 장세를 재구성합니다.
+        stable_regime = "TREND"
+        previous_flag = None
+        run_length = 0
+        for flag in all_range_flags:
+            if flag == previous_flag:
+                run_length += 1
+            else:
+                previous_flag = flag
+                run_length = 1
+            if run_length >= REGIME_CONFIRMATION_BARS:
+                stable_regime = "RANGE" if flag else "TREND"
+        self._market_regime = stable_regime
+        self._regime_transition_pending = self._raw_market_regime != self._market_regime
+        transition_reason = (
+            f"장세 전환 확인 중: {self._raw_market_regime} "
+            f"{self._regime_confirmation_count}/{REGIME_CONFIRMATION_BARS} · "
+            f"기존 {self._market_regime} 전략 유지"
+            if self._regime_transition_pending
+            else None
         )
-        is_range = (
-            range_ready
-            and atr > 0
-            and float(last["adx14"]) <= RANGE_ADX_MAX
-            and abs(ema20 - ema50) / atr <= RANGE_EMA_GAP_ATR_MAX
-            and abs(ema_slope) / atr <= RANGE_EMA_SLOPE_ATR_MAX
-            and float(last["bb_width"]) <= RANGE_BB_WIDTH_MAX
-        )
+        is_range = self._market_regime == "RANGE"
 
         if is_range:
             lower = float(last["bb_lower"])
@@ -153,7 +185,10 @@ class VolumeTrendRsiStrategy:
             return self._decision(
                 "HOLD",
                 df,
-                [f"횡보장 감지(ADX {float(last['adx14']):.1f}) · 밴드 반전 타점 대기"],
+                [
+                    f"횡보장 감지(ADX {float(last['adx14']):.1f}) · 밴드 반전 타점 대기",
+                    *([transition_reason] if transition_reason else []),
+                ],
                 [],
                 "RANGE",
             )
@@ -219,7 +254,31 @@ class VolumeTrendRsiStrategy:
                 [],
             )
 
-        return self._decision("HOLD", df, ["5분봉 진입 조건 대기"], [])
+        return self._decision(
+            "HOLD",
+            df,
+            ["5분봉 진입 조건 대기", *([transition_reason] if transition_reason else [])],
+            [],
+        )
+
+    @staticmethod
+    def _is_range_row(row: pd.Series) -> bool:
+        required = (
+            "adx14", "bb_upper", "bb_mid", "bb_lower", "bb_width",
+            "atr14", "ema20", "ema50", "ema20_slope",
+        )
+        if any(key not in row.index or pd.isna(row.get(key)) for key in required):
+            return False
+        atr = float(row["atr14"])
+        return (
+            atr > 0
+            and float(row["adx14"]) <= RANGE_ADX_MAX
+            and abs(float(row["ema20"]) - float(row["ema50"])) / atr
+                <= RANGE_EMA_GAP_ATR_MAX
+            and abs(float(row["ema20_slope"])) / atr
+                <= RANGE_EMA_SLOPE_ATR_MAX
+            and float(row["bb_width"]) <= RANGE_BB_WIDTH_MAX
+        )
 
     def consume(self, direction: str, timestamp: int) -> None:
         """실제 주문이 생성된 경우에만 해당 RSI 사이클과 5분봉을 소비합니다."""
@@ -230,15 +289,26 @@ class VolumeTrendRsiStrategy:
             self.short_armed = False
             self.last_short_candle = int(timestamp)
 
-    @staticmethod
     def _decision(
+        self,
         signal: str,
         df: pd.DataFrame,
         reasons: list[str],
         warnings: list[str],
-        market_regime: str = "TREND",
+        market_regime: Optional[str] = None,
     ) -> StrategyDecision:
         close = float(df.iloc[-1]["close"]) if len(df) else 0.0
+        decision_reasons = list(reasons)
+        transition_text = (
+            f"장세 전환 확인 중: {self._raw_market_regime} "
+            f"{self._regime_confirmation_count}/{REGIME_CONFIRMATION_BARS} · "
+            f"기존 {self._market_regime} 전략 유지"
+        )
+        if (
+            self._regime_transition_pending
+            and transition_text not in decision_reasons
+        ):
+            decision_reasons.append(transition_text)
         return StrategyDecision(
             signal=signal,
             direction=SIGNAL_TO_DIRECTION.get(signal, "HOLD"),
@@ -246,9 +316,12 @@ class VolumeTrendRsiStrategy:
             entry_price=close,
             support_level=None,
             breakout_level=None,
-            reasons=reasons,
+            reasons=decision_reasons,
             warnings=warnings,
-            market_regime=market_regime,
+            market_regime=market_regime or self._market_regime,
+            raw_market_regime=self._raw_market_regime,
+            regime_confirmation_count=self._regime_confirmation_count,
+            regime_transition_pending=self._regime_transition_pending,
         )
 
 

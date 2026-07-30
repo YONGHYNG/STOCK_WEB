@@ -274,6 +274,9 @@ class TradingAIEngine:
             "bb_mid": float(last.get("bb_mid") or 0),
             "bb_lower": float(last.get("bb_lower") or 0),
             "bb_width": float(last.get("bb_width") or 0),
+            "raw_market_regime": decision.raw_market_regime,
+            "regime_transition_pending": decision.regime_transition_pending,
+            "regime_confirmation_count": decision.regime_confirmation_count,
         }
         diagnostics, block_reasons = self._build_diagnostics(
             decision=decision,
@@ -503,6 +506,10 @@ class TradingAIEngine:
 
         diagnostics = {
             "market_regime": decision.market_regime,
+            "raw_market_regime": decision.raw_market_regime,
+            "regime_transition_pending": decision.regime_transition_pending,
+            "regime_confirmation_count": decision.regime_confirmation_count,
+            "regime_confirmation_required": 3,
             "candidate_signal": decision.signal,
             "candidate_direction": decision.direction,
             "final_direction": final_direction,

@@ -77,6 +77,23 @@ def range_frame(direction: str) -> pd.DataFrame:
     return frame
 
 
+def transitioning_frame(range_bars: int) -> pd.DataFrame:
+    frame = strategy_frame("LONG")
+    frame["adx14"] = 30.0
+    frame["bb_lower"] = 90.0
+    frame["bb_mid"] = 100.0
+    frame["bb_upper"] = 110.0
+    frame["bb_width"] = 0.05
+    if range_bars:
+        start = len(frame) - range_bars
+        frame.loc[start:, "adx14"] = 16.0
+        frame.loc[start:, "ema20"] = 100.0
+        frame.loc[start:, "ema50"] = 100.1
+        frame.loc[start:, "ema20_slope"] = 0.05
+        frame.loc[start:, "bb_width"] = 0.02
+    return frame
+
+
 class StrategyTests(unittest.TestCase):
     def test_long_cycle_is_consumed_only_after_order(self):
         strategy = VolumeTrendRsiStrategy()
@@ -109,6 +126,34 @@ class StrategyTests(unittest.TestCase):
         decision = VolumeTrendRsiStrategy().evaluate(range_frame("SHORT"))
         self.assertEqual(decision.signal, "SHORT_RANGE_REVERSION")
         self.assertEqual(decision.direction, "SHORT")
+
+    def test_regime_changes_only_after_three_confirmed_five_minute_bars(self):
+        strategy = VolumeTrendRsiStrategy()
+        self.assertEqual(strategy.evaluate(transitioning_frame(0)).market_regime, "TREND")
+
+        first = strategy.evaluate(transitioning_frame(1))
+        repeated = strategy.evaluate(transitioning_frame(1))
+        second = strategy.evaluate(transitioning_frame(2))
+        third = strategy.evaluate(transitioning_frame(3))
+
+        self.assertEqual(first.market_regime, "TREND")
+        self.assertEqual(first.raw_market_regime, "RANGE")
+        self.assertEqual(first.regime_confirmation_count, 1)
+        self.assertTrue(first.regime_transition_pending)
+        self.assertEqual(repeated.regime_confirmation_count, 1)
+        self.assertEqual(second.market_regime, "TREND")
+        self.assertEqual(second.regime_confirmation_count, 2)
+        self.assertEqual(third.market_regime, "RANGE")
+        self.assertFalse(third.regime_transition_pending)
+
+        back_to_trend = range_frame("LONG")
+        back_to_trend.loc[219, "adx14"] = 30.0
+        back_to_trend.loc[219, "bb_width"] = 0.05
+        restarted_strategy = VolumeTrendRsiStrategy()
+        restored = restarted_strategy.evaluate(back_to_trend)
+        self.assertEqual(restored.raw_market_regime, "TREND")
+        self.assertEqual(restored.market_regime, "RANGE")
+        self.assertEqual(restored.regime_confirmation_count, 1)
 
     def test_range_target_is_middle_band(self):
         stop, tp1, tp2, rr = TradingAIEngine._range_risk_prices(

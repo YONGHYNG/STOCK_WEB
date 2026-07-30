@@ -66,6 +66,7 @@ risk_mgr = RiskManager(risk_cfg)
 PAPER_ACCOUNT_INITIAL_BALANCE = 100.0
 PAPER_ACCOUNT_LEVERAGE = 20
 PENDING_ORDER_TTL_SECONDS = 30 * 60
+RANGE_PENDING_ORDER_TTL_SECONDS = 10 * 60
 PENDING_CANCEL_RETRY_SECONDS = 60
 
 
@@ -79,11 +80,31 @@ def _paper_full_leverage_size(entry_price: float) -> float:
     return round(notional / entry, 8)
 
 
-def _pending_order_timestamps(now: Optional[float] = None) -> dict:
+def _is_range_result(result: Optional[dict]) -> bool:
+    result = result or {}
+    return (
+        result.get("market_mode") == "RANGE"
+        or "RANGE_REVERSION" in str(result.get("strategy_signal") or "")
+    )
+
+
+def _pending_result(pending: Optional[dict]) -> dict:
+    return dict((pending or {}).get("result") or {})
+
+
+def _pending_order_timestamps(
+    now: Optional[float] = None,
+    result: Optional[dict] = None,
+) -> dict:
     created_at = float(now if now is not None else time.time())
+    ttl = (
+        RANGE_PENDING_ORDER_TTL_SECONDS
+        if _is_range_result(result)
+        else PENDING_ORDER_TTL_SECONDS
+    )
     return {
         "created_at": created_at,
-        "expires_at": created_at + PENDING_ORDER_TTL_SECONDS,
+        "expires_at": created_at + ttl,
     }
 
 
@@ -595,14 +616,36 @@ async def _check_auto_trade(result: dict):
             )
         return
 
-    # 미체결 지정가는 같은 방향에서 더 유리한 진입가가 확정되면 갱신한다.
-    # LONG은 더 낮은 가격, SHORT은 더 높은 가격만 더 좋은 조건으로 본다.
-    if state.trading_mode == "PAPER_TRADING" and state.pending_paper_order:
-        await _refresh_pending_paper_order(direction, result)
-        return
-    if state.trading_mode == "LIVE_TRADING" and state.pending_live_order:
-        await _refresh_pending_live_order(direction, result)
-        return
+    pending = (
+        state.pending_paper_order
+        if state.trading_mode == "PAPER_TRADING"
+        else state.pending_live_order
+        if state.trading_mode == "LIVE_TRADING"
+        else None
+    )
+    if pending:
+        pending_direction = str(pending.get("direction") or "HOLD")
+        pending_is_range = _is_range_result(_pending_result(pending))
+        opposite_signal = (
+            direction in ("LONG", "SHORT")
+            and direction != pending_direction
+        )
+        range_ended = pending_is_range and result.get("market_mode") != "RANGE"
+        if opposite_signal or range_ended:
+            reason = (
+                f"반대 방향 {direction} 확정 신호"
+                if opposite_signal
+                else "ADX·밴드 조건 이탈로 횡보장 종료"
+            )
+            cancelled = await _cancel_pending_order(reason)
+            if not cancelled or direction not in ("LONG", "SHORT"):
+                return
+        elif state.trading_mode == "PAPER_TRADING":
+            await _refresh_pending_paper_order(direction, result)
+            return
+        else:
+            await _refresh_pending_live_order(direction, result)
+            return
 
     allowed, reason = risk_mgr.check_entry(
         direction=direction, confidence=confidence, mode=mode,
@@ -646,6 +689,33 @@ async def _cancel_pending_for_risk(reason: str):
     await manager.broadcast({"type": "status", "data": _status_payload()})
 
 
+async def _cancel_pending_order(reason: str) -> bool:
+    """자동매매는 유지하면서 현재 미체결 지정가만 취소합니다."""
+    mode = "PAPER" if state.pending_paper_order else "LIVE"
+    if mode == "LIVE":
+        order_id = str(state.pending_live_order_id or "")
+        if order_id and order_id != "pending":
+            if not private_client:
+                msg = state.add_log(f"[LIVE 대기 주문 취소 실패] API 연결 없음 · {reason}")
+                await manager.broadcast({"type": "log", "data": {"message": msg}})
+                return False
+            try:
+                await asyncio.to_thread(private_client.cancel_order, order_id)
+            except Exception as exc:
+                msg = state.add_log(f"[LIVE 대기 주문 취소 실패] {reason}: {exc}")
+                await manager.broadcast({"type": "log", "data": {"message": msg}})
+                return False
+        state.pending_live_order_id = None
+        state.pending_live_order = None
+    else:
+        state.pending_paper_order = None
+
+    msg = state.add_log(f"[{mode} 대기 주문 취소] {reason}")
+    await manager.broadcast({"type": "log", "data": {"message": msg}})
+    await manager.broadcast({"type": "status", "data": _status_payload()})
+    return True
+
+
 def _is_better_entry(direction: str, current_entry, new_entry) -> bool:
     try:
         current_price = float(current_entry)
@@ -666,6 +736,7 @@ def _is_strong_trend_entry(direction: str, result: dict) -> bool:
         and result.get("entry_grade") == "A"
         and float(result.get("confidence") or 0) >= risk_cfg.confidence_threshold
         and not result.get("risk_warnings")
+        and not _is_range_result(result)
     )
 
 
@@ -688,7 +759,7 @@ async def _refresh_pending_paper_order(direction: str, result: dict):
     state.pending_paper_order = {
         "direction": direction,
         "result": paper_result,
-        **_pending_order_timestamps(),
+        **_pending_order_timestamps(result=paper_result),
     }
     update_reason = "강한 추세 추격" if strong_trend and not better_entry else "진입 조건 개선"
     msg = state.add_log(
@@ -745,7 +816,7 @@ async def _auto_paper_trade(direction: str, r: dict):
     state.pending_paper_order = {
         "direction": direction,
         "result": paper_result,
-        **_pending_order_timestamps(),
+        **_pending_order_timestamps(result=paper_result),
     }
     risk_mgr.record_order_placed()
     msg = state.add_log(
@@ -815,7 +886,7 @@ async def _check_pending_paper_entry(price: float):
 
 
 async def _expire_pending_order_if_needed(now: Optional[float] = None) -> bool:
-    """30분 지난 미체결 주문을 취소하고 최신 확정 신호로 다시 평가한다."""
+    """전략별 유효시간이 지난 미체결 주문을 취소하고 다시 평가합니다."""
     checked_at = float(now if now is not None else time.time())
     pending = state.pending_paper_order or state.pending_live_order
     if not pending:
@@ -823,7 +894,10 @@ async def _expire_pending_order_if_needed(now: Optional[float] = None) -> bool:
 
     expires_at = float(pending.get("expires_at") or 0)
     if expires_at <= 0:
-        timestamps = _pending_order_timestamps(checked_at)
+        timestamps = _pending_order_timestamps(
+            checked_at,
+            _pending_result(pending),
+        )
         pending.update(timestamps)
         await manager.broadcast({"type": "status", "data": _status_payload()})
         return False
@@ -838,6 +912,16 @@ async def _expire_pending_order_if_needed(now: Optional[float] = None) -> bool:
         else pending.get("entry_price")
     )
     old_entry = float(old_entry_value or 0)
+    ttl_minutes = max(
+        1,
+        round(
+            (
+                float(pending.get("expires_at") or checked_at)
+                - float(pending.get("created_at") or checked_at)
+            )
+            / 60
+        ),
+    )
 
     if mode == "LIVE":
         order_id = str(pending.get("order_id") or "")
@@ -847,7 +931,7 @@ async def _expire_pending_order_if_needed(now: Optional[float] = None) -> bool:
             except Exception as exc:
                 pending["expires_at"] = checked_at + PENDING_CANCEL_RETRY_SECONDS
                 msg = state.add_log(
-                    f"[LIVE 대기 주문 30분 만료] 취소 실패, "
+                    f"[LIVE 대기 주문 {ttl_minutes}분 만료] 취소 실패, "
                     f"{PENDING_CANCEL_RETRY_SECONDS}초 후 재시도: {exc}"
                 )
                 await manager.broadcast({"type": "log", "data": {"message": msg}})
@@ -859,7 +943,7 @@ async def _expire_pending_order_if_needed(now: Optional[float] = None) -> bool:
         state.pending_paper_order = None
 
     msg = state.add_log(
-        f"[{mode} 대기 주문 30분 만료] {direction} ${old_entry:,.2f} 취소 · "
+        f"[{mode} 대기 주문 {ttl_minutes}분 만료] {direction} ${old_entry:,.2f} 취소 · "
         "최신 확정 신호로 재계산"
     )
     await manager.broadcast({"type": "log", "data": {"message": msg}})
@@ -890,7 +974,7 @@ async def _auto_live_trade(direction: str, r: dict):
             "entry_price": float(limit_price),
             "order_id": state.pending_live_order_id,
             "result": dict(r),
-            **_pending_order_timestamps(),
+            **_pending_order_timestamps(result=r),
         }
         risk_mgr.record_order_placed()
         msg = state.add_log(
@@ -1492,4 +1576,3 @@ async def run_backtest(payload: BacktestPayload):
 
 
 # ── Serve React frontend (production build) ────────────────────────────────────
-

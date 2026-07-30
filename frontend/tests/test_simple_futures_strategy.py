@@ -1,8 +1,12 @@
+import json
+import tempfile
 import time
 import unittest
+from pathlib import Path
 
 import pandas as pd
 
+import backend.database as database
 from backend.order.paper_trader import PaperTrader
 from backend.risk.risk_manager import RiskManager
 from backend.risk.settings import RiskSettings
@@ -228,6 +232,51 @@ class RiskManagerTests(unittest.TestCase):
             timeframe_directions={"15m": "HOLD"},
         )
         self.assertTrue(allowed, reason)
+
+
+class SignalDiagnosticsDatabaseTests(unittest.TestCase):
+    def test_signal_diagnostics_are_persisted(self):
+        original_data_dir = database.DATA_DIR
+        original_db_path = database.DB_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                database.DATA_DIR = Path(tmp)
+                database.DB_PATH = Path(tmp) / "trading.db"
+                database.init_db()
+                database.insert_signal(
+                    "BTCUSDT",
+                    "5m",
+                    {
+                        "timestamp": 1,
+                        "entry_price": 100.0,
+                        "direction": "HOLD",
+                        "confidence": 0.0,
+                        "market_mode": "RANGE",
+                        "strategy_signal": "HOLD",
+                        "entry_grade": "F",
+                        "diagnostics": {
+                            "failed_conditions": {
+                                "long": ["rsi_turn_up_near_50"],
+                            },
+                        },
+                        "block_reasons": ["횡보장 밴드 반전 조건 대기"],
+                    },
+                )
+                with database.get_connection() as conn:
+                    row = conn.execute(
+                        "SELECT market_regime, entry_grade, diagnostics_json, block_reason "
+                        "FROM signals ORDER BY id DESC LIMIT 1"
+                    ).fetchone()
+                self.assertEqual(row["market_regime"], "RANGE")
+                self.assertEqual(row["entry_grade"], "F")
+                self.assertIn(
+                    "rsi_turn_up_near_50",
+                    json.loads(row["diagnostics_json"])["failed_conditions"]["long"],
+                )
+                self.assertIn("밴드 반전", row["block_reason"])
+            finally:
+                database.DATA_DIR = original_data_dir
+                database.DB_PATH = original_db_path
 
 
 if __name__ == "__main__":

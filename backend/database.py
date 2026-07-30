@@ -58,11 +58,27 @@ def init_db() -> None:
                 risk_reward_ratio   REAL,
                 all_time_high_mode  INTEGER DEFAULT 0,
                 all_time_low_mode   INTEGER DEFAULT 0,
+                market_regime      TEXT,
+                strategy_signal    TEXT,
+                entry_grade        TEXT,
+                diagnostics_json   TEXT,
+                block_reason       TEXT,
                 reason              TEXT,
                 created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
+        for migration in (
+            "ALTER TABLE signals ADD COLUMN market_regime TEXT",
+            "ALTER TABLE signals ADD COLUMN strategy_signal TEXT",
+            "ALTER TABLE signals ADD COLUMN entry_grade TEXT",
+            "ALTER TABLE signals ADD COLUMN diagnostics_json TEXT",
+            "ALTER TABLE signals ADD COLUMN block_reason TEXT",
+        ):
+            try:
+                conn.execute(migration)
+            except sqlite3.OperationalError:
+                pass
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS trades (
@@ -386,8 +402,9 @@ def insert_signal(symbol: str, timeframe: str, result: dict) -> None:
             INSERT INTO signals
             (symbol, timeframe, timestamp, entry_price, direction, long_probability,
              short_probability, confidence, stop_loss, take_profit_1, take_profit_2,
-             risk_reward_ratio, all_time_high_mode, all_time_low_mode, reason)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             risk_reward_ratio, all_time_high_mode, all_time_low_mode, market_regime,
+             strategy_signal, entry_grade, diagnostics_json, block_reason, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 symbol,
@@ -404,6 +421,11 @@ def insert_signal(symbol: str, timeframe: str, result: dict) -> None:
                 result.get("risk_reward_ratio"),
                 1 if result.get("all_time_high_mode") else 0,
                 1 if result.get("all_time_low_mode") else 0,
+                result.get("market_mode"),
+                result.get("strategy_signal"),
+                result.get("entry_grade"),
+                json.dumps(result.get("diagnostics") or {}, ensure_ascii=False),
+                "\n".join(result.get("block_reasons") or []),
                 "\n".join(result.get("reasons", [])),
             ),
         )

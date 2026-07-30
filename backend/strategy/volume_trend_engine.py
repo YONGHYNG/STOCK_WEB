@@ -58,6 +58,8 @@ class TradingResult:
     entry_offset_usdt: Optional[float] = None
     open_interest: Optional[float] = None
     open_interest_change_rate: Optional[float] = None
+    diagnostics: Optional[dict] = None
+    block_reasons: Optional[list[str]] = None
 
     def to_dict(self) -> dict:
         data = self.__dict__.copy()
@@ -65,6 +67,8 @@ class TradingResult:
         data["warnings"] = data["risk_warnings"]
         data["symbol"] = SYMBOL
         data["timeframe_summary"] = data.get("timeframe_summary") or {}
+        data["diagnostics"] = data.get("diagnostics") or {}
+        data["block_reasons"] = data.get("block_reasons") or []
         return data
 
 
@@ -271,6 +275,24 @@ class TradingAIEngine:
             "bb_lower": float(last.get("bb_lower") or 0),
             "bb_width": float(last.get("bb_width") or 0),
         }
+        diagnostics, block_reasons = self._build_diagnostics(
+            decision=decision,
+            last=last,
+            previous=entry_frame.iloc[-2],
+            final_direction=direction,
+            entry_grade=entry_grade,
+            confidence=confidence,
+            strong_15m=strong_15m,
+            ma_distance_atr=distance_atr,
+            max_ma_distance_atr=settings.max_ma_distance_atr,
+            oi_change=oi_change,
+            oi_drop_limit=settings.oi_sharp_drop_pct,
+            retest_distance=retest_distance,
+            entry_atr=entry_atr,
+            risk_reward=rr,
+            size=size,
+            warnings=warnings,
+        )
         return TradingResult(
             timestamp=int(last.get("timestamp") or 0),
             entry_price=round(entry, 2),
@@ -314,6 +336,8 @@ class TradingAIEngine:
             entry_offset_usdt=round(abs(analysis_price - entry), 2),
             open_interest=self._optional_float(market.get("open_interest")),
             open_interest_change_rate=oi_change,
+            diagnostics=diagnostics,
+            block_reasons=block_reasons,
         )
 
     @staticmethod
@@ -403,6 +427,111 @@ class TradingAIEngine:
                 score += 10.0 if normalized_retest <= 0.20 else 5.0 if normalized_retest <= 0.50 else 0.0
 
         return round(min(100.0, max(0.0, score)), 1)
+
+    def _build_diagnostics(
+        self,
+        decision,
+        last,
+        previous,
+        final_direction: str,
+        entry_grade: str,
+        confidence: float,
+        strong_15m: str,
+        ma_distance_atr: float,
+        max_ma_distance_atr: float,
+        oi_change: Optional[float],
+        oi_drop_limit: float,
+        retest_distance: float,
+        entry_atr: float,
+        risk_reward: Optional[float],
+        size: Optional[float],
+        warnings: list[str],
+    ) -> tuple[dict, list[str]]:
+        rsi = float(last.get("rsi14") or 0)
+        previous_rsi = float(previous.get("rsi14") or 0)
+        ema20 = float(last.get("ema20") or 0)
+        ema50 = float(last.get("ema50") or 0)
+        ema_slope = float(last.get("ema20_slope") or 0)
+        close = float(last.get("close") or 0)
+        vwap = float(last.get("vwap") or 0)
+        volume_ratio = float(last.get("volume_ratio") or 0)
+        rr = float(risk_reward or 0)
+
+        conditions = {
+            "long": {
+                "rsi_armed": bool(self.strategy.long_armed),
+                "ema20_above_ema50": ema20 > ema50,
+                "ema20_slope_up": ema_slope > 0,
+                "close_above_vwap": close > vwap,
+                "rsi_turn_up_near_50": rsi >= 48 and rsi > previous_rsi and previous_rsi <= 52,
+            },
+            "short": {
+                "rsi_armed": bool(self.strategy.short_armed),
+                "ema20_below_ema50": ema20 < ema50,
+                "ema20_slope_down": ema_slope < 0,
+                "close_below_vwap": close < vwap,
+                "rsi_turn_down_near_50": rsi <= 52 and rsi < previous_rsi and previous_rsi >= 48,
+            },
+            "filters": {
+                "15m_not_opposite": not (
+                    (decision.direction == "LONG" and strong_15m == "SHORT")
+                    or (decision.direction == "SHORT" and strong_15m == "LONG")
+                ),
+                "ma90_distance_ok": ma_distance_atr <= max_ma_distance_atr,
+                "oi_not_sharp_drop": oi_change is None or oi_change > -abs(oi_drop_limit),
+                "retest_distance_ok": (
+                    decision.market_regime == "RANGE"
+                    or entry_atr <= 0
+                    or retest_distance <= entry_atr * 0.5
+                ),
+                "risk_reward_ok": rr >= 1.0,
+                "minimum_order_size_ok": size is not None,
+                "auto_order_grade_ok": entry_grade in ("A", "B"),
+            },
+        }
+        failed_conditions = {
+            group: [name for name, passed in values.items() if not passed]
+            for group, values in conditions.items()
+        }
+        block_reasons = list(warnings)
+        if final_direction not in ("LONG", "SHORT") and not block_reasons:
+            block_reasons.extend(decision.reasons or ["확정 진입 조건 대기"])
+        elif entry_grade not in ("A", "B"):
+            block_reasons.append(
+                f"진입 품질 {confidence:.1f}점 · {entry_grade}등급으로 자동 주문 제외"
+            )
+
+        diagnostics = {
+            "market_regime": decision.market_regime,
+            "candidate_signal": decision.signal,
+            "candidate_direction": decision.direction,
+            "final_direction": final_direction,
+            "confidence": confidence,
+            "entry_grade": entry_grade,
+            "metrics": {
+                "close": close,
+                "ema20": ema20,
+                "ema50": ema50,
+                "ema20_slope": ema_slope,
+                "vwap": vwap,
+                "rsi14": rsi,
+                "previous_rsi14": previous_rsi,
+                "volume_ratio": volume_ratio,
+                "adx14": float(last.get("adx14") or 0),
+                "bb_width": float(last.get("bb_width") or 0),
+                "ma_distance_atr": (
+                    ma_distance_atr if math.isfinite(ma_distance_atr) else None
+                ),
+                "retest_distance_atr": (
+                    retest_distance / entry_atr if entry_atr > 0 else None
+                ),
+                "open_interest_change_rate": oi_change,
+                "risk_reward": rr,
+            },
+            "conditions": conditions,
+            "failed_conditions": failed_conditions,
+        }
+        return diagnostics, block_reasons
 
     @staticmethod
     def _position_size(risk_amount, entry, stop, minimum=None, step=None) -> Optional[float]:

@@ -130,7 +130,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <main className="dashboard">
-        <div className="server-toolbar">
+        {/* <div className="server-toolbar">
           <button type="button" onClick={() => setShowServerSettings((shown) => !shown)}>
             서버 설정 · {connectionState}
           </button>
@@ -173,7 +173,7 @@ export default function App() {
               </div>
             </form>
           )}
-        </div>
+        </div> */}
         <Dashboard
           state={state}
           setStatusPatch={(patch) => dispatch({ type: 'STATUS', data: patch })}

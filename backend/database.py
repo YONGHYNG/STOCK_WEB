@@ -442,6 +442,33 @@ def insert_signal(symbol: str, timeframe: str, result: dict) -> None:
                 block_reason=excluded.block_reason,
                 reason=excluded.reason,
                 created_at=CURRENT_TIMESTAMP
+            WHERE signals.direction NOT IN ('LONG', 'SHORT')
+               OR (
+                    excluded.direction IN ('LONG', 'SHORT')
+                    AND (
+                        CASE UPPER(COALESCE(excluded.entry_grade, ''))
+                            WHEN 'A' THEN 4
+                            WHEN 'B' THEN 3
+                            WHEN 'C' THEN 2
+                            WHEN 'F' THEN 1
+                            ELSE 0
+                        END
+                        >
+                        CASE UPPER(COALESCE(signals.entry_grade, ''))
+                            WHEN 'A' THEN 4
+                            WHEN 'B' THEN 3
+                            WHEN 'C' THEN 2
+                            WHEN 'F' THEN 1
+                            ELSE 0
+                        END
+                        OR (
+                            UPPER(COALESCE(excluded.entry_grade, ''))
+                                = UPPER(COALESCE(signals.entry_grade, ''))
+                            AND COALESCE(excluded.confidence, 0)
+                                >= COALESCE(signals.confidence, 0)
+                        )
+                    )
+               )
             """,
             (
                 symbol,

@@ -293,6 +293,73 @@ class SignalDiagnosticsDatabaseTests(unittest.TestCase):
                     [],
                 )
                 self.assertEqual(row["block_reason"], "")
+
+                # 같은 확정 봉을 다시 분석해 HOLD가 나오더라도 이미 기록된
+                # 실행 가능 신호를 지우면 안 된다.
+                database.insert_signal(
+                    "BTCUSDT",
+                    "5m",
+                    {
+                        "timestamp": 1,
+                        "entry_price": 102.0,
+                        "direction": "HOLD",
+                        "confidence": 0.0,
+                        "market_mode": "RANGE",
+                        "strategy_signal": "HOLD",
+                        "entry_grade": "F",
+                        "diagnostics": {"failed_conditions": {"long": ["rsi_consumed"]}},
+                        "block_reasons": ["이미 소비된 RSI 신호"],
+                    },
+                )
+                with database.get_connection() as conn:
+                    row = conn.execute(
+                        "SELECT direction, entry_price, confidence, entry_grade, "
+                        "strategy_signal, block_reason FROM signals WHERE timestamp=1"
+                    ).fetchone()
+                self.assertEqual(row["direction"], "LONG")
+                self.assertEqual(row["entry_price"], 101.0)
+                self.assertEqual(row["confidence"], 72.0)
+                self.assertEqual(row["entry_grade"], "B")
+                self.assertEqual(row["strategy_signal"], "LONG_RANGE_REVERSION")
+                self.assertEqual(row["block_reason"], "")
+
+                # 더 강한 등급은 갱신하고, 이후 들어온 약한 등급은 보존한다.
+                database.insert_signal(
+                    "BTCUSDT",
+                    "5m",
+                    {
+                        "timestamp": 1,
+                        "entry_price": 103.0,
+                        "direction": "LONG",
+                        "confidence": 85.0,
+                        "market_mode": "TREND",
+                        "strategy_signal": "LONG_TREND",
+                        "entry_grade": "A",
+                    },
+                )
+                database.insert_signal(
+                    "BTCUSDT",
+                    "5m",
+                    {
+                        "timestamp": 1,
+                        "entry_price": 104.0,
+                        "direction": "SHORT",
+                        "confidence": 90.0,
+                        "market_mode": "RANGE",
+                        "strategy_signal": "SHORT_RANGE_REVERSION",
+                        "entry_grade": "B",
+                    },
+                )
+                with database.get_connection() as conn:
+                    row = conn.execute(
+                        "SELECT direction, entry_price, confidence, entry_grade, "
+                        "strategy_signal FROM signals WHERE timestamp=1"
+                    ).fetchone()
+                self.assertEqual(row["direction"], "LONG")
+                self.assertEqual(row["entry_price"], 103.0)
+                self.assertEqual(row["confidence"], 85.0)
+                self.assertEqual(row["entry_grade"], "A")
+                self.assertEqual(row["strategy_signal"], "LONG_TREND")
             finally:
                 database.DATA_DIR = original_data_dir
                 database.DB_PATH = original_db_path

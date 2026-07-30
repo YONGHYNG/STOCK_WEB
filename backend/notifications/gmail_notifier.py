@@ -98,7 +98,7 @@ def send_trade_event_email(event: str, result: dict) -> tuple[bool, str]:
         f"진입 지정가: {entry:,.2f} USDT\n"
         f"손절가: {stop:,.2f} USDT\n"
         f"1차 익절가: {tp1:,.2f} USDT\n"
-        f"2차 익절가: {tp2:,.2f} USDT\n"
+        f"참고 목표가(주문 아님): {tp2:,.2f} USDT\n"
     )
     if event == "PENDING":
         title = f"[BTCUSDT] {mode_label}{direction} 예상 진입가 확정"

@@ -3,6 +3,7 @@ import unittest
 
 import pandas as pd
 
+from backend.order.paper_trader import PaperTrader
 from backend.risk.risk_manager import RiskManager
 from backend.risk.settings import RiskSettings
 from backend.strategy.strategy import VolumeTrendRsiStrategy
@@ -105,6 +106,18 @@ class StrategyTests(unittest.TestCase):
         )
         self.assertEqual((stop, tp1, tp2), (89.0, 100.0, 110.0))
         self.assertGreater(rr, 1.0)
+
+    def test_reference_target_never_replaces_full_exit_target(self):
+        trader = PaperTrader()
+        trader._open_id = 1
+        trader._open_data = {
+            "direction": "LONG",
+            "entry": 100.0,
+            "sl": 90.0,
+            "tp1": 110.0,
+            "tp2": 120.0,
+        }
+        self.assertEqual(trader.check_tp_sl(125.0), "TP1")
 
     def test_long_entry_waits_for_nearest_retest_support(self):
         entry, anchor, distance = TradingAIEngine._retest_entry(

@@ -117,7 +117,7 @@ function PlannedEntryRisk({ signal }) {
   const pricePlan = [
     ['손절가', money(signal?.stop_loss), 'tone-short'],
     ['1차 익절가', money(signal?.take_profit_1), 'tone-long'],
-    ['2차 익절가', money(signal?.take_profit_2), 'tone-long'],
+    ['참고 목표가 · 주문 아님', money(signal?.take_profit_2), 'tone-long'],
     ['3차 익절가', money(signal?.take_profit_3), 'tone-long'],
   ]
 

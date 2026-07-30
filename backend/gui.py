@@ -532,7 +532,7 @@ class TradingMainWindow(QMainWindow):
             ("entry", "진입가"),
             ("stop",  "손절가"),
             ("tp1",   "1차 익절가"),
-            ("tp2",   "2차 익절가"),
+            ("tp2",   "참고 목표가"),
             ("rr",    "손익비"),
         ]
         for key, title in specs:
@@ -918,7 +918,7 @@ class TradingMainWindow(QMainWindow):
     def _make_trade_table(self) -> QTableWidget:
         cols = [
             "구분", "진입시각", "방향", "진입가", "손절가",
-            "익절1", "익절2", "청산가", "결과",
+            "전량 익절", "참고 목표", "청산가", "결과",
             "수익률(%)", "진입이유", "수익이유", "손실이유",
         ]
         tbl = QTableWidget(0, len(cols))
@@ -1328,21 +1328,16 @@ class TradingMainWindow(QMainWindow):
         direction = t["direction"]
         sl  = t.get("sl")
         tp1 = t.get("tp1")
-        tp2 = t.get("tp2")
         entry = t["entry"]
 
         result_code: str | None = None
         if direction == "LONG":
-            if tp2 and price >= tp2:
-                result_code = "TP2"
-            elif tp1 and price >= tp1:
+            if tp1 and price >= tp1:
                 result_code = "TP1"
             elif sl and price <= sl:
                 result_code = "SL"
         elif direction == "SHORT":
-            if tp2 and price <= tp2:
-                result_code = "TP2"
-            elif tp1 and price <= tp1:
+            if tp1 and price <= tp1:
                 result_code = "TP1"
             elif sl and price >= sl:
                 result_code = "SL"

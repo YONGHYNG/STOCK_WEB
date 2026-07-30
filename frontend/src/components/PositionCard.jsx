@@ -178,7 +178,7 @@ export function PositionCard({ account, positions, status, price, signal, trades
               <strong className="tone-long">{money(paper?.take_profit_1)}</strong>
             </div>
             <div>
-              <span className="eyebrow">2차 익절</span>
+              <span className="eyebrow">참고 목표가</span>
               <strong className="tone-long">{money(paper?.take_profit_2)}</strong>
             </div>
           </div>

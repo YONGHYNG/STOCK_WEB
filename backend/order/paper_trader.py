@@ -6,6 +6,8 @@
 기존 database.open_trade / close_trade 를 재사용합니다.
 """
 
+from __future__ import annotations
+
 from typing import Optional
 import backend.database as db
 from backend.config import MAKER_FEE_RATE, SYMBOL, TAKER_FEE_RATE
@@ -120,14 +122,11 @@ class PaperTrader:
         direction = t["direction"]
         sl  = t.get("sl")
         tp1 = t.get("tp1")
-        tp2 = t.get("tp2")
 
         if direction == "LONG":
-            if tp2 and price >= tp2:   return "TP2"
             if tp1 and price >= tp1:   return "TP1"
             if sl  and price <= sl:    return "SL"
         elif direction == "SHORT":
-            if tp2 and price <= tp2:   return "TP2"
             if tp1 and price <= tp1:   return "TP1"
             if sl  and price >= sl:    return "SL"
         return None

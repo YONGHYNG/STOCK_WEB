@@ -111,7 +111,7 @@ export function SignalCard({ signal, price, status, positions = [], trades = [] 
     { label: '수수료 차감 실제수익', value: signedUsdt(activeNetUsdt), tone: activeNetUsdt > 0 ? 'tone-long' : activeNetUsdt < 0 ? 'tone-short' : 'tone-muted' },
     { label: '현재 손절가', value: money(paper?.stop_loss), tone: 'tone-short' },
     { label: '현재 1차 익절가', value: money(paper?.take_profit_1), tone: 'tone-long' },
-    { label: '현재 2차 익절가', value: money(paper?.take_profit_2), tone: 'tone-long' },
+    { label: '참고 목표가 · 주문 아님', value: money(paper?.take_profit_2), tone: 'tone-long' },
   ] : []
 
   const livePositionMetrics = hasLive ? [
@@ -124,7 +124,7 @@ export function SignalCard({ signal, price, status, positions = [], trades = [] 
     { label: '수수료 차감 실제수익', value: signedUsdt(liveNetUsdt), tone: liveNetUsdt >= 0 ? 'tone-long' : 'tone-short' },
     { label: '현재 손절가', value: money(livePosition?.stopLoss || openLiveTrade?.stop_loss), tone: 'tone-short' },
     { label: '현재 1차 익절가', value: money(livePosition?.takeProfit || openLiveTrade?.take_profit_1), tone: 'tone-long' },
-    { label: '현재 2차 익절가', value: money(openLiveTrade?.take_profit_2), tone: 'tone-long' },
+    { label: '참고 목표가 · 주문 아님', value: money(openLiveTrade?.take_profit_2), tone: 'tone-long' },
   ] : []
 
   const orderMetrics = pendingEntry ? [

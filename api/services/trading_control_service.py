@@ -403,18 +403,14 @@ def _plan_signature(result: dict) -> tuple:
 
 def _tp_sl_result(t: dict, price: float) -> Optional[str]:
     direction = t["direction"]
-    sl, tp1, tp2 = t.get("sl"), t.get("tp1"), t.get("tp2")
+    sl, tp1 = t.get("sl"), t.get("tp1")
 
     if direction == "LONG":
-        if tp2 and price >= tp2:
-            return "TP2"
         if tp1 and price >= tp1:
             return "TP1"
         if sl and price <= sl:
             return "SL"
     elif direction == "SHORT":
-        if tp2 and price <= tp2:
-            return "TP2"
         if tp1 and price <= tp1:
             return "TP1"
         if sl and price >= sl:
@@ -557,8 +553,7 @@ async def _check_paper_tp_sl(price: float):
     t = paper_trader.open_data
     entry, direction = t["entry"], t["direction"]
     limit_exit_price = (
-        float(t.get("tp2")) if result_code == "TP2"
-        else float(t.get("tp1")) if result_code == "TP1"
+        float(t.get("tp1")) if result_code == "TP1"
         else float(t.get("sl"))
     )
     pnl_pct = _pnl_pct(direction, entry, limit_exit_price)

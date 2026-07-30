@@ -226,13 +226,10 @@ class Backtester:
         d   = pos["direction"]
         sl  = pos["sl"]
         tp1 = pos["tp1"]
-        tp2 = pos["tp2"]
         if d == "LONG":
-            if h >= tp2: return "TP2", tp2
             if h >= tp1: return "TP1", tp1
             if l <= sl:  return "SL",  sl
         else:
-            if l <= tp2: return "TP2", tp2
             if l <= tp1: return "TP1", tp1
             if h >= sl:  return "SL",  sl
         return None, 0.0

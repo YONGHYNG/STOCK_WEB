@@ -39,7 +39,7 @@ class RiskSettings:
     oi_sharp_drop_pct: float = 2.0
 
     # 레버리지
-    max_leverage: int = 3               # 최대 레버리지
+    max_leverage: int = 20              # 최대 레버리지
 
     # 실거래 허용
     live_trading_allowed: bool = False  # 실거래 주문 허용 여부 (명시적 동의)
@@ -69,7 +69,7 @@ def load() -> RiskSettings:
                 atr_stop_multiplier   = float(d.get("atr_stop_multiplier",   1.5)),
                 max_ma_distance_atr   = float(d.get("max_ma_distance_atr",   2.5)),
                 oi_sharp_drop_pct     = float(d.get("oi_sharp_drop_pct",     2.0)),
-                max_leverage          = int(  d.get("max_leverage",          3)),
+                max_leverage          = int(  d.get("max_leverage",          20)),
                 live_trading_allowed  = bool( d.get("live_trading_allowed",  False)),
             )
         except Exception:

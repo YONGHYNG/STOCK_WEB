@@ -48,6 +48,7 @@ from backend.power_keepawake import keep_awake
 import backend.risk.settings as risk_settings_store
 from backend.trading_modes import TradingMode
 from backend.config import (
+    AUTO_LIVE_LEVERAGE,
     DEFAULT_TIMEFRAME,
     INITIAL_CANDLE_LIMIT,
     RECENT_CANDLE_LIMIT_BY_TIMEFRAME,
@@ -57,6 +58,7 @@ from backend.config import (
     TIMEFRAMES,
     USE_DEMO_DATA,
 )
+from backend.order.sizing import full_balance_size
 from backend.database import (
     close_trade,
     get_all_time_high,
@@ -1626,15 +1628,31 @@ class TradingMainWindow(QMainWindow):
         if btc_positions or getattr(self, "_pending_live_order_id", None):
             return
 
-        size = f"{self._risk_cfg.order_size_btc:.3f}"
         side = "buy" if direction == "LONG" else "sell"
         try:
             limit_price = float(r.get("entry_price") or 0)
+            account = self._private_client.get_account()
+            available = float(
+                account.get("available")
+                or account.get("crossedMaxAvailable")
+                or account.get("crossMaxAvailable")
+                or 0
+            )
+            contract = self._private_client.get_contract_config()
+            size = full_balance_size(
+                available_usdt=available,
+                leverage=AUTO_LIVE_LEVERAGE,
+                entry_price=limit_price,
+                size_step=contract.get("sizeMultiplier") or "0.001",
+                minimum_size=contract.get("minTradeNum") or "0.001",
+            )
+            self._private_client.set_leverage(AUTO_LIVE_LEVERAGE)
             result = self._private_client.place_limit_order(side, size, f"{limit_price:.1f}", "open")
             order_id = result.get("orderId", "?")
             self._pending_live_order_id = str(order_id)
             self._log(
                 f"[자동매매 LIVE 지정가] {direction} {size} BTC @ ${limit_price:,.1f}  "
+                f"가용잔액=${available:,.2f} × {AUTO_LIVE_LEVERAGE}배  "
                 f"전략신호={r.get('strategy_signal', direction)}  orderId={order_id}"
             )
             self._risk_mgr.record_order_placed()

@@ -10,6 +10,7 @@ import backend.database as database
 from backend.order.paper_trader import PaperTrader
 from backend.risk.risk_manager import RiskManager
 from backend.risk.settings import RiskSettings
+from backend.order.sizing import full_balance_size
 from backend.strategy.strategy import VolumeTrendRsiStrategy
 from backend.strategy.volume_trend_engine import TradingAIEngine
 from backend.trading_modes import TradingMode
@@ -363,6 +364,30 @@ class SignalDiagnosticsDatabaseTests(unittest.TestCase):
             finally:
                 database.DATA_DIR = original_data_dir
                 database.DB_PATH = original_db_path
+
+
+class LiveOrderSizingTests(unittest.TestCase):
+    def test_full_balance_20x_size_is_rounded_down_to_contract_step(self):
+        self.assertEqual(
+            full_balance_size(
+                available_usdt=100,
+                leverage=20,
+                entry_price=65000,
+                size_step="0.001",
+                minimum_size="0.001",
+            ),
+            "0.030",
+        )
+
+    def test_full_balance_size_rejects_below_minimum(self):
+        with self.assertRaisesRegex(ValueError, "최소 주문 수량"):
+            full_balance_size(
+                available_usdt=1,
+                leverage=20,
+                entry_price=65000,
+                size_step="0.001",
+                minimum_size="0.001",
+            )
 
 
 if __name__ == "__main__":

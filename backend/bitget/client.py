@@ -101,6 +101,25 @@ class BitgetPrivateClient:
         # 실제 보유 수량이 0보다 큰 포지션만
         return [p for p in raw if float(p.get("total", 0) or 0) > 0]
 
+    def get_contract_config(self) -> dict:
+        """BTCUSDT 계약의 최소 주문 수량과 수량 단위를 조회합니다."""
+        data = self._get("/api/v2/mix/market/contracts", {
+            "productType": PRODUCT_TYPE,
+            "symbol": SYMBOL,
+        })
+        contracts = data.get("data") or []
+        return contracts[0] if contracts else {}
+
+    def set_leverage(self, leverage: int) -> dict:
+        """BTCUSDT 교차 마진 레버리지를 설정합니다."""
+        body = {
+            "symbol": SYMBOL,
+            "productType": PRODUCT_TYPE,
+            "marginCoin": "USDT",
+            "leverage": str(int(leverage)),
+        }
+        return (self._post("/api/v2/mix/account/set-leverage", body)).get("data") or {}
+
     def place_market_order(
         self,
         side: str,        # "buy" = LONG 진입/SHORT 청산,  "sell" = SHORT 진입/LONG 청산

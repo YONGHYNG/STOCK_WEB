@@ -155,6 +155,46 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(restored.market_regime, "RANGE")
         self.assertEqual(restored.regime_confirmation_count, 1)
 
+    def test_two_point_five_x_volume_breakout_blocks_opposite_range_entry(self):
+        frame = range_frame("SHORT")
+        # 직전 확정봉에서 상단을 2.5배 거래량으로 강하게 돌파한 뒤,
+        # 현재 봉이 밴드 안으로 돌아와도 횡보 SHORT 반대매매를 막는다.
+        frame.loc[217, "adx14"] = 18.0
+        frame.loc[218, "close"] = 111.0
+        frame.loc[218, "high"] = 112.0
+        frame.loc[218, "volume_ratio"] = 2.5
+        frame.loc[218, "adx14"] = 23.0
+        frame.loc[218, "ema20_slope"] = 0.5
+        frame.loc[218, "rsi14"] = 66.0
+        frame.loc[219, "close"] = 108.0
+        frame.loc[219, "high"] = 110.0
+        frame.loc[219, "rsi14"] = 61.0
+
+        decision = VolumeTrendRsiStrategy().evaluate(frame)
+
+        self.assertEqual(decision.market_regime, "RANGE")
+        self.assertEqual(decision.breakout_direction, "UP")
+        self.assertEqual(decision.direction, "HOLD")
+        self.assertIn("상단 강한 돌파 후 횡보 SHORT 진입 차단", decision.reasons)
+
+    def test_less_than_two_point_five_x_volume_does_not_trigger_breakout_filter(self):
+        frame = range_frame("SHORT")
+        frame.loc[217, "adx14"] = 18.0
+        frame.loc[218, "close"] = 111.0
+        frame.loc[218, "high"] = 112.0
+        frame.loc[218, "volume_ratio"] = 2.49
+        frame.loc[218, "adx14"] = 23.0
+        frame.loc[218, "ema20_slope"] = 0.5
+        frame.loc[218, "rsi14"] = 66.0
+        frame.loc[219, "close"] = 108.0
+        frame.loc[219, "high"] = 110.0
+        frame.loc[219, "rsi14"] = 61.0
+
+        decision = VolumeTrendRsiStrategy().evaluate(frame)
+
+        self.assertEqual(decision.breakout_direction, "HOLD")
+        self.assertEqual(decision.direction, "SHORT")
+
     def test_range_target_is_middle_band(self):
         stop, tp1, tp2, rr = TradingAIEngine._range_risk_prices(
             "LONG", 92.0, 4.0, 90.0, 100.0, 110.0

@@ -24,6 +24,8 @@ RANGE_BB_WIDTH_MAX = 0.03
 RANGE_LONG_RSI_MAX = 38.0
 RANGE_SHORT_RSI_MIN = 62.0
 REGIME_CONFIRMATION_BARS = 3
+BREAKOUT_VOLUME_RATIO_MIN = 2.5
+BREAKOUT_ADX_MIN = 23.0
 
 
 @dataclass
@@ -40,6 +42,7 @@ class StrategyDecision:
     raw_market_regime: str = "TREND"
     regime_confirmation_count: int = 0
     regime_transition_pending: bool = False
+    breakout_direction: str = "HOLD"
 
 
 class VolumeTrendRsiStrategy:
@@ -55,6 +58,7 @@ class VolumeTrendRsiStrategy:
         self._raw_market_regime = "TREND"
         self._regime_confirmation_count = 0
         self._regime_transition_pending = False
+        self._breakout_direction = "HOLD"
 
     def evaluate(self, df: pd.DataFrame) -> StrategyDecision:
         if len(df) < 220:
@@ -126,6 +130,7 @@ class VolumeTrendRsiStrategy:
                 stable_regime = "RANGE" if flag else "TREND"
         self._market_regime = stable_regime
         self._regime_transition_pending = self._raw_market_regime != self._market_regime
+        self._breakout_direction = self._recent_breakout_direction(df)
         transition_reason = (
             f"장세 전환 확인 중: {self._raw_market_regime} "
             f"{self._regime_confirmation_count}/{REGIME_CONFIRMATION_BARS} · "
@@ -144,6 +149,7 @@ class VolumeTrendRsiStrategy:
 
             if (
                 self.last_long_candle != timestamp
+                and self._breakout_direction != "DOWN"
                 and touched_lower
                 and previous_rsi <= RANGE_LONG_RSI_MAX
                 and rsi > previous_rsi
@@ -164,6 +170,7 @@ class VolumeTrendRsiStrategy:
 
             if (
                 self.last_short_candle != timestamp
+                and self._breakout_direction != "UP"
                 and touched_upper
                 and previous_rsi >= RANGE_SHORT_RSI_MIN
                 and rsi < previous_rsi
@@ -182,11 +189,19 @@ class VolumeTrendRsiStrategy:
                     "RANGE",
                 )
 
+            breakout_wait = (
+                "상단 강한 돌파 후 횡보 SHORT 진입 차단"
+                if self._breakout_direction == "UP"
+                else "하단 강한 돌파 후 횡보 LONG 진입 차단"
+                if self._breakout_direction == "DOWN"
+                else None
+            )
             return self._decision(
                 "HOLD",
                 df,
                 [
                     f"횡보장 감지(ADX {float(last['adx14']):.1f}) · 밴드 반전 타점 대기",
+                    *([breakout_wait] if breakout_wait else []),
                     *([transition_reason] if transition_reason else []),
                 ],
                 [],
@@ -280,6 +295,44 @@ class VolumeTrendRsiStrategy:
             and float(row["bb_width"]) <= RANGE_BB_WIDTH_MAX
         )
 
+    @staticmethod
+    def _recent_breakout_direction(df: pd.DataFrame) -> str:
+        """최근 장세 확인 구간의 2.5배 거래량 강한 돌파 방향을 반환합니다."""
+        start = max(1, len(df) - REGIME_CONFIRMATION_BARS)
+        for index in range(len(df) - 1, start - 1, -1):
+            row = df.iloc[index]
+            previous = df.iloc[index - 1]
+            required = (
+                "close", "bb_upper", "bb_lower", "volume_ratio",
+                "adx14", "ema20_slope",
+            )
+            if any(
+                key not in row.index
+                or pd.isna(row.get(key))
+                or key not in previous.index
+                or (key == "adx14" and pd.isna(previous.get(key)))
+                for key in required
+            ):
+                continue
+            volume_breakout = float(row["volume_ratio"]) >= BREAKOUT_VOLUME_RATIO_MIN
+            adx_breakout = (
+                float(row["adx14"]) >= BREAKOUT_ADX_MIN
+                and float(row["adx14"]) > float(previous["adx14"])
+            )
+            if not (volume_breakout and adx_breakout):
+                continue
+            if (
+                float(row["close"]) > float(row["bb_upper"])
+                and float(row["ema20_slope"]) > 0
+            ):
+                return "UP"
+            if (
+                float(row["close"]) < float(row["bb_lower"])
+                and float(row["ema20_slope"]) < 0
+            ):
+                return "DOWN"
+        return "HOLD"
+
     def consume(self, direction: str, timestamp: int) -> None:
         """실제 주문이 생성된 경우에만 해당 RSI 사이클과 5분봉을 소비합니다."""
         if direction == "LONG":
@@ -322,6 +375,7 @@ class VolumeTrendRsiStrategy:
             raw_market_regime=self._raw_market_regime,
             regime_confirmation_count=self._regime_confirmation_count,
             regime_transition_pending=self._regime_transition_pending,
+            breakout_direction=self._breakout_direction,
         )
 
 

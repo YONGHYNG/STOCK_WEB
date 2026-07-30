@@ -1,7 +1,7 @@
 # 역할: 데스크톱 매매 화면과 사용자 조작을 담당하는 파일.
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from time import monotonic
+from time import time
 
 from PySide6.QtCore import QObject, QTimer, Signal, Qt
 from PySide6.QtGui import QColor, QFont
@@ -62,9 +62,11 @@ from backend.config import (
 )
 from backend.order.sizing import full_balance_size
 from backend.database import (
+    clear_live_execution_state,
     close_trade,
     get_all_time_high,
     get_all_time_low,
+    get_live_execution_state,
     get_open_trade,
     get_recent_candles,
     get_recent_trades,
@@ -72,6 +74,9 @@ from backend.database import (
     insert_signal,
     open_trade,
     purge_unaligned_candles,
+    save_live_execution_state,
+    sync_closed_live_position,
+    sync_live_position,
 )
 
 # ── Design tokens ──────────────────────────────────────────────────────────────
@@ -317,6 +322,18 @@ class TradingMainWindow(QMainWindow):
         self._pending_live_order_started_at: float | None = None
         self._pending_live_cancel_requested = False
         self._pending_live_protection: dict | None = None
+        self._live_execution_state: dict | None = get_live_execution_state(SYMBOL)
+        if self._live_execution_state:
+            state = self._live_execution_state
+            self._pending_live_order_id = state.get("order_id")
+            self._pending_live_order_started_at = (
+                float(state.get("order_created_ms") or 0) / 1000
+            )
+            self._pending_live_protection = {
+                "direction": state["direction"],
+                "take_profit": state["take_profit"],
+                "stop_loss": state["stop_loss"],
+            }
         self._trading_mode = TradingMode.SIGNAL_ONLY
         self._risk_cfg  = risk_settings_store.load()
         self._auto_threshold = self._risk_cfg.confidence_threshold
@@ -334,6 +351,33 @@ class TradingMainWindow(QMainWindow):
                 "tp1":       existing["take_profit_1"],
                 "tp2":       existing["take_profit_2"],
             }
+            if (
+                not self._live_execution_state
+                and existing.get("stop_loss")
+                and existing.get("take_profit_1")
+            ):
+                save_live_execution_state(
+                    symbol=SYMBOL,
+                    order_id=existing.get("entry_order_id"),
+                    client_oid=None,
+                    direction=existing["direction"],
+                    planned_entry=existing["entry_price"],
+                    stop_loss=existing["stop_loss"],
+                    take_profit=existing["take_profit_1"],
+                    order_created_ms=int(time() * 1000),
+                    position_ctime=existing.get("exchange_position_id"),
+                    status="POSITION",
+                )
+                self._live_execution_state = get_live_execution_state(SYMBOL)
+                self._pending_live_order_id = self._live_execution_state.get("order_id")
+                self._pending_live_order_started_at = (
+                    float(self._live_execution_state["order_created_ms"]) / 1000
+                )
+                self._pending_live_protection = {
+                    "direction": self._live_execution_state["direction"],
+                    "take_profit": self._live_execution_state["take_profit"],
+                    "stop_loss": self._live_execution_state["stop_loss"],
+                }
         # 모의매매 복구
         self._paper_trader.restore_from_db()
 
@@ -1243,8 +1287,7 @@ class TradingMainWindow(QMainWindow):
         self._last_price = price
         self._price_lbl.setText(f"${price:,.2f}")
         self._updated_lbl.setText(f"Updated: {datetime.now().strftime('%Y-%m-%d  %H:%M:%S')}")
-        if self._open_trade_id and self._open_trade_data:
-            self._check_tp_sl(price)
+        # LIVE 거래 결과는 시세 터치 추정이 아니라 거래소 포지션 이력으로 확정합니다.
         # 모의매매 TP/SL 감시
         if self._paper_trader.is_open:
             self._check_paper_tp_sl(price)
@@ -1664,18 +1707,37 @@ class TradingMainWindow(QMainWindow):
                 minimum_size=contract.get("minTradeNum") or "0.001",
             )
             self._private_client.set_leverage(AUTO_LIVE_LEVERAGE)
-            result = self._private_client.place_limit_order(side, size, f"{limit_price:.1f}", "open")
+            created_ms = int(time() * 1000)
+            client_oid = f"btc-auto-{created_ms}"
+            result = self._private_client.place_limit_order(
+                side,
+                size,
+                f"{limit_price:.1f}",
+                "open",
+                client_oid=client_oid,
+            )
             order_id = result.get("orderId")
             if not order_id:
                 raise RuntimeError(f"거래소 주문 ID가 없습니다: {result}")
             self._pending_live_order_id = str(order_id)
-            self._pending_live_order_started_at = monotonic()
+            self._pending_live_order_started_at = created_ms / 1000
             self._pending_live_cancel_requested = False
             self._pending_live_protection = {
                 "direction": direction,
                 "take_profit": take_profit,
                 "stop_loss": stop_loss,
             }
+            save_live_execution_state(
+                symbol=SYMBOL,
+                order_id=str(order_id),
+                client_oid=str(result.get("clientOid") or client_oid),
+                direction=direction,
+                planned_entry=limit_price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                order_created_ms=created_ms,
+            )
+            self._live_execution_state = get_live_execution_state(SYMBOL)
             self._log(
                 f"[자동매매 LIVE 지정가] {direction} {size} BTC @ ${limit_price:,.1f}  "
                 f"가용잔액=${available:,.2f} × {AUTO_LIVE_LEVERAGE}배  "
@@ -1692,6 +1754,8 @@ class TradingMainWindow(QMainWindow):
         self._pending_live_cancel_requested = False
         if clear_protection:
             self._pending_live_protection = None
+            self._live_execution_state = None
+            clear_live_execution_state(SYMBOL)
 
     def _manage_pending_live_order(self, positions: list[dict]) -> None:
         """미체결 주문을 추적하고 60초 경과 또는 부분 체결 시 잔여분을 취소합니다."""
@@ -1723,7 +1787,7 @@ class TradingMainWindow(QMainWindow):
             return
 
         age = (
-            monotonic() - self._pending_live_order_started_at
+            time() - self._pending_live_order_started_at
             if self._pending_live_order_started_at is not None
             else 0
         )
@@ -1760,7 +1824,7 @@ class TradingMainWindow(QMainWindow):
                 "— 긴급 시장가 청산 시도"
             )
             self._pending_live_protection = None
-            self._clear_pending_live_order()
+            self._clear_pending_live_order(clear_protection=True)
             try:
                 self._private_client.close_position(hold_side)
                 self._log("[긴급청산 완료] 방향 불일치 포지션을 시장가로 청산했습니다.")
@@ -1774,6 +1838,21 @@ class TradingMainWindow(QMainWindow):
         # 거래소 응답에 양쪽 보호 주문 ID가 이미 있으면 중복 등록하지 않습니다.
         if position.get("takeProfitId") and position.get("stopLossId"):
             self._pending_live_protection = None
+            if self._live_execution_state:
+                state = self._live_execution_state
+                save_live_execution_state(
+                    symbol=SYMBOL,
+                    order_id=self._pending_live_order_id,
+                    client_oid=state.get("client_oid"),
+                    direction=state["direction"],
+                    planned_entry=state["planned_entry"],
+                    stop_loss=state["stop_loss"],
+                    take_profit=state["take_profit"],
+                    order_created_ms=state["order_created_ms"],
+                    position_ctime=str(position.get("cTime") or ""),
+                    status="PROTECTED",
+                )
+                self._live_execution_state = get_live_execution_state(SYMBOL)
             self._log("[보호주문] 거래소 TP1·SL이 이미 등록되어 있습니다.")
             return
 
@@ -1793,6 +1872,21 @@ class TradingMainWindow(QMainWindow):
             if len(order_ids) < 2:
                 raise RuntimeError(f"TP/SL 주문 ID 확인 실패: {orders}")
             self._pending_live_protection = None
+            if self._live_execution_state:
+                state = self._live_execution_state
+                save_live_execution_state(
+                    symbol=SYMBOL,
+                    order_id=self._pending_live_order_id,
+                    client_oid=state.get("client_oid"),
+                    direction=state["direction"],
+                    planned_entry=state["planned_entry"],
+                    stop_loss=state["stop_loss"],
+                    take_profit=state["take_profit"],
+                    order_created_ms=state["order_created_ms"],
+                    position_ctime=str(position.get("cTime") or ""),
+                    status="PROTECTED",
+                )
+                self._live_execution_state = get_live_execution_state(SYMBOL)
             self._log(
                 f"[보호주문 완료] {hold_side.upper()} 전체 포지션 "
                 f"TP1=${tp:,.1f} · SL=${sl:,.1f}  "
@@ -1800,7 +1894,7 @@ class TradingMainWindow(QMainWindow):
             )
         except Exception as exc:
             self._pending_live_protection = None
-            self._clear_pending_live_order()
+            self._clear_pending_live_order(clear_protection=True)
             self._log(f"[보호주문 실패] {exc} — 무방비 포지션 긴급 시장가 청산 시도")
             try:
                 self._private_client.close_position(hold_side)
@@ -1851,9 +1945,21 @@ class TradingMainWindow(QMainWindow):
         try:
             acct = self._private_client.get_account()
             pos  = self._private_client.get_positions()
-            return acct, pos
         except Exception as exc:
             return None, str(exc)
+        try:
+            pending = self._private_client.get_pending_orders()
+        except Exception:
+            pending = []
+        try:
+            history = self._private_client.get_position_history(limit=20)
+        except Exception:
+            history = []
+        return acct, {
+            "positions": pos,
+            "pending_orders": pending,
+            "position_history": history,
+        }
 
     def _emit_account(self, future: Future):
         try:
@@ -1869,8 +1975,15 @@ class TradingMainWindow(QMainWindow):
             if isinstance(positions, str):
                 self._log(f"[계정] {positions}")
             return
+        snapshot = positions if isinstance(positions, dict) else {}
+        position_rows = (
+            snapshot.get("positions", [])
+            if snapshot
+            else positions if isinstance(positions, list) else []
+        )
+        position_history = snapshot.get("position_history", [])
         self._cached_account = acct
-        self._cached_positions = positions if isinstance(positions, list) else []
+        self._cached_positions = position_rows
 
         equity    = float(acct.get("accountEquity") or acct.get("equity") or 0)
         available = float(
@@ -1890,10 +2003,68 @@ class TradingMainWindow(QMainWindow):
         )
         self._avail_lbl.setTextFormat(Qt.TextFormat.RichText)
 
-        btc_pos = [p for p in (positions or []) if p.get("symbol") == SYMBOL]
+        btc_pos = [p for p in position_rows if p.get("symbol") == SYMBOL]
         self._manage_pending_live_order(btc_pos)
         if btc_pos:
+            position = btc_pos[0]
+            state = self._live_execution_state or get_live_execution_state(SYMBOL)
+            if state:
+                synced = sync_live_position(
+                    SYMBOL,
+                    position,
+                    state,
+                    entry_order_id=state.get("order_id"),
+                )
+                self._open_trade_id = synced["id"]
+                self._open_trade_data = {
+                    "direction": synced["direction"],
+                    "entry": synced["entry_price"],
+                    "sl": synced["stop_loss"],
+                    "tp1": synced["take_profit_1"],
+                    "tp2": synced["take_profit_2"],
+                }
+                save_live_execution_state(
+                    symbol=SYMBOL,
+                    order_id=self._pending_live_order_id,
+                    client_oid=state.get("client_oid"),
+                    direction=state["direction"],
+                    planned_entry=state["planned_entry"],
+                    stop_loss=state["stop_loss"],
+                    take_profit=state["take_profit"],
+                    order_created_ms=state["order_created_ms"],
+                    position_ctime=str(position.get("cTime") or ""),
+                    status="POSITION",
+                )
+                self._live_execution_state = get_live_execution_state(SYMBOL)
             self._install_live_position_protection(btc_pos[0])
+        elif self._open_trade_id:
+            state = self._live_execution_state or get_live_execution_state(SYMBOL)
+            expected_ctime = str((state or {}).get("position_ctime") or "")
+            closed = next(
+                (
+                    row for row in position_history
+                    if row.get("symbol") == SYMBOL
+                    and (
+                        not expected_ctime
+                        or str(row.get("ctime") or row.get("positionId") or "")
+                        == expected_ctime
+                    )
+                ),
+                None,
+            )
+            if closed:
+                synced = sync_closed_live_position(SYMBOL, closed)
+                if synced:
+                    self._log(
+                        f"[실거래 동기화] #{synced['id']} {synced['result']} "
+                        f"청산가=${synced['exit_price']:,.2f} "
+                        f"순손익={synced['net_profit']:+.4f} USDT"
+                    )
+                    self._risk_mgr.record_trade_result(float(synced["pnl_pct"] or 0))
+                    self._open_trade_id = None
+                    self._open_trade_data = None
+                    self._clear_pending_live_order(clear_protection=True)
+                    self._refresh_trade_table()
         if btc_pos:
             p       = btc_pos[0]
             side    = p.get("holdSide", "").upper()

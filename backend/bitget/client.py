@@ -101,6 +101,23 @@ class BitgetPrivateClient:
         # 실제 보유 수량이 0보다 큰 포지션만
         return [p for p in raw if float(p.get("total", 0) or 0) > 0]
 
+    def get_pending_orders(self) -> list[dict]:
+        """현재 BTCUSDT 일반 미체결 주문을 조회합니다."""
+        data = self._get("/api/v2/mix/order/orders-pending", {
+            "productType": PRODUCT_TYPE,
+            "symbol": SYMBOL,
+        })
+        return (data.get("data") or {}).get("entrustedList") or []
+
+    def get_position_history(self, limit: int = 20) -> list[dict]:
+        """최근 BTCUSDT 청산 포지션 이력을 조회합니다."""
+        data = self._get("/api/v2/mix/position/history-position", {
+            "productType": PRODUCT_TYPE,
+            "symbol": SYMBOL,
+            "limit": str(limit),
+        })
+        return (data.get("data") or {}).get("list") or []
+
     def get_contract_config(self) -> dict:
         """BTCUSDT 계약의 최소 주문 수량과 수량 단위를 조회합니다."""
         data = self._get("/api/v2/mix/market/contracts", {
@@ -145,6 +162,7 @@ class BitgetPrivateClient:
         size: str,
         price: str,
         trade_side: str = "open",
+        client_oid: Optional[str] = None,
     ) -> dict:
         """지정가 주문. 체결되지 않으면 거래소 미체결 주문으로 유지됩니다."""
         body = {
@@ -159,6 +177,8 @@ class BitgetPrivateClient:
             "orderType": "limit",
             "force": "gtc",
         }
+        if client_oid:
+            body["clientOid"] = client_oid
         return (self._post("/api/v2/mix/order/place-order", body)).get("data") or {}
 
     def cancel_order(self, order_id: str) -> dict:

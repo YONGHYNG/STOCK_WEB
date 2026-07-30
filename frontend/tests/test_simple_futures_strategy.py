@@ -437,6 +437,106 @@ class LiveOrderSizingTests(unittest.TestCase):
         self.assertEqual(detail["state"], "partially_filled")
         self.assertEqual(detail["baseVolume"], "0.012")
 
+    def test_recovery_apis_and_client_order_id_payloads(self):
+        client = BitgetPrivateClient("key", "secret", "passphrase")
+        get_calls = []
+        post_calls = []
+
+        def fake_get(path, params):
+            get_calls.append((path, params))
+            if path.endswith("orders-pending"):
+                return {"data": {"entrustedList": [{"orderId": "pending-1"}]}}
+            return {"data": {"list": [{"positionId": "position-1"}]}}
+
+        def fake_post(path, body):
+            post_calls.append((path, body))
+            return {"data": {"orderId": "entry-1", "clientOid": body["clientOid"]}}
+
+        client._get = fake_get
+        client._post = fake_post
+
+        self.assertEqual(client.get_pending_orders()[0]["orderId"], "pending-1")
+        self.assertEqual(
+            client.get_position_history(limit=20)[0]["positionId"],
+            "position-1",
+        )
+        client.place_limit_order(
+            "buy", "0.030", "65000.0", "open", client_oid="btc-auto-1"
+        )
+
+        self.assertEqual(get_calls[0][0], "/api/v2/mix/order/orders-pending")
+        self.assertEqual(get_calls[1][0], "/api/v2/mix/position/history-position")
+        self.assertEqual(post_calls[0][1]["clientOid"], "btc-auto-1")
+
+
+class LiveExecutionDatabaseTests(unittest.TestCase):
+    def test_execution_state_and_exchange_fills_are_persisted(self):
+        original_data_dir = database.DATA_DIR
+        original_db_path = database.DB_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                database.DATA_DIR = Path(tmp)
+                database.DB_PATH = Path(tmp) / "trading.db"
+                database.init_db()
+                database.save_live_execution_state(
+                    symbol="BTCUSDT",
+                    order_id="entry-1",
+                    client_oid="btc-auto-1",
+                    direction="LONG",
+                    planned_entry=65000,
+                    stop_loss=64500,
+                    take_profit=65600,
+                    order_created_ms=1000,
+                )
+                state = database.get_live_execution_state("BTCUSDT")
+                self.assertEqual(state["order_id"], "entry-1")
+
+                opened = database.sync_live_position(
+                    "BTCUSDT",
+                    {
+                        "holdSide": "long",
+                        "openPriceAvg": "65010",
+                        "total": "0.030",
+                        "deductedFee": "0.58",
+                        "cTime": "position-ctime-1",
+                    },
+                    state,
+                    entry_order_id="entry-1",
+                )
+                self.assertEqual(opened["entry_price"], 65010)
+                self.assertEqual(opened["size_btc"], 0.03)
+                self.assertEqual(opened["entry_fee"], 0.58)
+                self.assertEqual(opened["exchange_position_id"], "position-ctime-1")
+
+                closed = database.sync_closed_live_position(
+                    "BTCUSDT",
+                    {
+                        "positionId": "history-id",
+                        "ctime": "position-ctime-1",
+                        "holdSide": "long",
+                        "openAvgPrice": "65010",
+                        "closeAvgPrice": "65600",
+                        "openTotalPos": "0.030",
+                        "pnl": "17.7",
+                        "netProfit": "16.4",
+                        "totalFunding": "-0.1",
+                        "openFee": "-0.58",
+                        "closeFee": "-0.62",
+                    },
+                )
+                self.assertEqual(closed["result"], "TP1")
+                self.assertEqual(closed["exit_price"], 65600)
+                self.assertEqual(closed["entry_fee"], 0.58)
+                self.assertEqual(closed["exit_fee"], 0.62)
+                self.assertEqual(closed["funding_fee"], -0.1)
+                self.assertEqual(closed["net_profit"], 16.4)
+
+                database.clear_live_execution_state("BTCUSDT")
+                self.assertIsNone(database.get_live_execution_state("BTCUSDT"))
+            finally:
+                database.DATA_DIR = original_data_dir
+                database.DB_PATH = original_db_path
+
 
 if __name__ == "__main__":
     unittest.main()

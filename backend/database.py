@@ -139,6 +139,36 @@ def init_db() -> None:
             conn.execute("ALTER TABLE trades ADD COLUMN size_btc REAL")
         except Exception:
             pass
+        for migration in (
+            "ALTER TABLE trades ADD COLUMN entry_order_id TEXT",
+            "ALTER TABLE trades ADD COLUMN exchange_position_id TEXT",
+            "ALTER TABLE trades ADD COLUMN entry_fee REAL",
+            "ALTER TABLE trades ADD COLUMN exit_fee REAL",
+            "ALTER TABLE trades ADD COLUMN funding_fee REAL",
+            "ALTER TABLE trades ADD COLUMN net_profit REAL",
+            "ALTER TABLE trades ADD COLUMN synced_at DATETIME",
+        ):
+            try:
+                conn.execute(migration)
+            except sqlite3.OperationalError:
+                pass
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS live_execution_state (
+                symbol            TEXT PRIMARY KEY,
+                order_id          TEXT,
+                client_oid        TEXT,
+                direction         TEXT NOT NULL,
+                planned_entry     REAL NOT NULL,
+                stop_loss         REAL NOT NULL,
+                take_profit       REAL NOT NULL,
+                order_created_ms  INTEGER NOT NULL,
+                position_ctime    TEXT,
+                status            TEXT NOT NULL DEFAULT 'PENDING',
+                updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS paper_account (
@@ -385,6 +415,170 @@ def get_open_trade(symbol: str, trade_type: str = "LIVE") -> Optional[dict]:
             (symbol, trade_type),
         ).fetchone()
     return dict(row) if row else None
+
+
+def save_live_execution_state(
+    symbol: str,
+    order_id: Optional[str],
+    client_oid: Optional[str],
+    direction: str,
+    planned_entry: float,
+    stop_loss: float,
+    take_profit: float,
+    order_created_ms: int,
+    status: str = "PENDING",
+    position_ctime: Optional[str] = None,
+) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO live_execution_state
+            (symbol, order_id, client_oid, direction, planned_entry, stop_loss,
+             take_profit, order_created_ms, position_ctime, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(symbol) DO UPDATE SET
+                order_id=excluded.order_id,
+                client_oid=excluded.client_oid,
+                direction=excluded.direction,
+                planned_entry=excluded.planned_entry,
+                stop_loss=excluded.stop_loss,
+                take_profit=excluded.take_profit,
+                order_created_ms=excluded.order_created_ms,
+                position_ctime=COALESCE(excluded.position_ctime, live_execution_state.position_ctime),
+                status=excluded.status,
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (
+                symbol, order_id, client_oid, direction, float(planned_entry),
+                float(stop_loss), float(take_profit), int(order_created_ms),
+                position_ctime, status,
+            ),
+        )
+        conn.commit()
+
+
+def get_live_execution_state(symbol: str) -> Optional[dict]:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM live_execution_state WHERE symbol=?",
+            (symbol,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def clear_live_execution_state(symbol: str) -> None:
+    with get_connection() as conn:
+        conn.execute("DELETE FROM live_execution_state WHERE symbol=?", (symbol,))
+        conn.commit()
+
+
+def sync_live_position(
+    symbol: str,
+    position: dict,
+    plan: dict,
+    entry_order_id: Optional[str] = None,
+) -> dict:
+    """거래소의 실제 평균 진입가·수량·수수료를 LIVE 거래 기록에 동기화합니다."""
+    direction = str(position.get("holdSide") or plan.get("direction") or "").upper()
+    entry_price = float(position.get("openPriceAvg") or plan.get("planned_entry") or 0)
+    size_btc = float(position.get("total") or 0)
+    entry_fee = abs(float(position.get("deductedFee") or 0))
+    position_ctime = str(position.get("cTime") or plan.get("position_ctime") or "")
+
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM trades
+            WHERE symbol=? AND trade_type='LIVE' AND result='OPEN'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (symbol,),
+        ).fetchone()
+        if row:
+            trade_id = int(row["id"])
+            conn.execute(
+                """
+                UPDATE trades SET direction=?, entry_price=?, size_btc=?,
+                    stop_loss=?, take_profit_1=?, entry_order_id=?,
+                    exchange_position_id=?, entry_fee=?, synced_at=CURRENT_TIMESTAMP
+                WHERE id=?
+                """,
+                (
+                    direction, entry_price, size_btc, plan.get("stop_loss"),
+                    plan.get("take_profit"),
+                    entry_order_id or row["entry_order_id"], position_ctime,
+                    entry_fee, trade_id,
+                ),
+            )
+        else:
+            cur = conn.execute(
+                """
+                INSERT INTO trades
+                (symbol, trade_type, direction, entry_price, stop_loss, take_profit_1,
+                 entry_reason, size_btc, result, entry_order_id, exchange_position_id,
+                 entry_fee, synced_at)
+                VALUES (?, 'LIVE', ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    symbol, direction, entry_price, plan.get("stop_loss"),
+                    plan.get("take_profit"), "거래소 실체결 동기화", size_btc,
+                    entry_order_id, position_ctime, entry_fee,
+                ),
+            )
+            trade_id = int(cur.lastrowid)
+        conn.commit()
+        synced = conn.execute("SELECT * FROM trades WHERE id=?", (trade_id,)).fetchone()
+    return dict(synced)
+
+
+def sync_closed_live_position(symbol: str, history: dict) -> Optional[dict]:
+    """거래소 포지션 이력으로 열린 LIVE 거래의 청산 결과를 확정합니다."""
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM trades
+            WHERE symbol=? AND trade_type='LIVE' AND result='OPEN'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (symbol,),
+        ).fetchone()
+        if not row:
+            return None
+        trade = dict(row)
+        expected_position = str(trade.get("exchange_position_id") or "")
+        history_position = str(history.get("ctime") or history.get("positionId") or "")
+        if expected_position and history_position and expected_position != history_position:
+            return None
+
+        entry = float(history.get("openAvgPrice") or trade["entry_price"])
+        exit_price = float(history.get("closeAvgPrice") or 0)
+        direction = str(history.get("holdSide") or trade["direction"]).upper()
+        pnl_pct = (
+            (exit_price - entry) / entry * 100
+            if direction == "LONG"
+            else (entry - exit_price) / entry * 100
+        ) if entry > 0 and exit_price > 0 else 0.0
+        net_profit = float(history.get("netProfit") or 0)
+        result = "TP1" if net_profit >= 0 else "SL"
+        conn.execute(
+            """
+            UPDATE trades SET entry_price=?, exit_price=?, exit_time=CURRENT_TIMESTAMP,
+                result=?, pnl_pct=?, size_btc=?, entry_fee=?, exit_fee=?,
+                funding_fee=?, net_profit=?, synced_at=CURRENT_TIMESTAMP
+            WHERE id=?
+            """,
+            (
+                entry, exit_price, result, round(pnl_pct, 4),
+                float(history.get("openTotalPos") or trade.get("size_btc") or 0),
+                abs(float(history.get("openFee") or trade.get("entry_fee") or 0)),
+                abs(float(history.get("closeFee") or 0)),
+                float(history.get("totalFunding") or 0),
+                net_profit, trade["id"],
+            ),
+        )
+        conn.commit()
+        synced = conn.execute("SELECT * FROM trades WHERE id=?", (trade["id"],)).fetchone()
+    return dict(synced)
 
 
 def get_recent_trades(symbol: str, limit: Optional[int] = 50, trade_type: Optional[str] = None) -> list[dict]:

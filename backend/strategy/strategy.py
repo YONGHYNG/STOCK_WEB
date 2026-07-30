@@ -26,6 +26,8 @@ RANGE_SHORT_RSI_MIN = 62.0
 REGIME_CONFIRMATION_BARS = 3
 BREAKOUT_VOLUME_RATIO_MIN = 2.5
 BREAKOUT_ADX_MIN = 23.0
+TREND_ADX_MIN = 23.0
+TREND_EMA_SLOPE_ATR_MIN = 0.10
 
 
 @dataclass
@@ -59,6 +61,7 @@ class VolumeTrendRsiStrategy:
         self._regime_confirmation_count = 0
         self._regime_transition_pending = False
         self._breakout_direction = "HOLD"
+        self._trend_direction = "HOLD"
 
     def evaluate(self, df: pd.DataFrame) -> StrategyDecision:
         if len(df) < 220:
@@ -102,34 +105,61 @@ class VolumeTrendRsiStrategy:
         vwap = float(last["vwap"])
         volume_ok = float(last["volume_ratio"]) >= VOLUME_RATIO_MIN
         atr = float(last["atr14"])
-        all_range_flags = [
-            self._is_range_row(row)
+        regime_candidates = [
+            self._classify_regime_row(row)
             for _, row in df.iterrows()
         ]
-        range_flags = all_range_flags[-REGIME_CONFIRMATION_BARS:]
-        raw_is_range = bool(range_flags and range_flags[-1])
-        self._raw_market_regime = "RANGE" if raw_is_range else "TREND"
+        self._raw_market_regime = (
+            regime_candidates[-1] if regime_candidates else "NEUTRAL"
+        )
         self._regime_confirmation_count = 0
-        for flag in reversed(range_flags):
-            if flag == raw_is_range:
+        for candidate in reversed(regime_candidates[-REGIME_CONFIRMATION_BARS:]):
+            if candidate == self._raw_market_regime:
                 self._regime_confirmation_count += 1
             else:
                 break
         # 앱 재시작 뒤에도 동일하게 복구되도록 메모리 상태가 아니라 확정봉
         # 이력에서 마지막으로 3개 연속 확인된 장세를 재구성합니다.
         stable_regime = "TREND"
-        previous_flag = None
+        stable_trend_direction = "HOLD"
+        previous_candidate = None
         run_length = 0
-        for flag in all_range_flags:
-            if flag == previous_flag:
+        for candidate in regime_candidates:
+            if candidate == previous_candidate:
                 run_length += 1
             else:
-                previous_flag = flag
+                previous_candidate = candidate
                 run_length = 1
             if run_length >= REGIME_CONFIRMATION_BARS:
-                stable_regime = "RANGE" if flag else "TREND"
+                if candidate == "RANGE":
+                    stable_regime = "RANGE"
+                    stable_trend_direction = "HOLD"
+                elif candidate in ("TREND_UP", "TREND_DOWN"):
+                    stable_regime = "TREND"
+                    stable_trend_direction = (
+                        "LONG" if candidate == "TREND_UP" else "SHORT"
+                    )
         self._market_regime = stable_regime
-        self._regime_transition_pending = self._raw_market_regime != self._market_regime
+        self._trend_direction = stable_trend_direction
+        raw_stable_regime = (
+            "RANGE"
+            if self._raw_market_regime == "RANGE"
+            else "TREND"
+            if self._raw_market_regime in ("TREND_UP", "TREND_DOWN")
+            else "NEUTRAL"
+        )
+        self._regime_transition_pending = (
+            raw_stable_regime == "NEUTRAL"
+            or raw_stable_regime != self._market_regime
+            or (
+                self._raw_market_regime == "TREND_UP"
+                and self._trend_direction != "LONG"
+            )
+            or (
+                self._raw_market_regime == "TREND_DOWN"
+                and self._trend_direction != "SHORT"
+            )
+        )
         self._breakout_direction = self._recent_breakout_direction(df)
         transition_reason = (
             f"장세 전환 확인 중: {self._raw_market_regime} "
@@ -138,6 +168,19 @@ class VolumeTrendRsiStrategy:
             if self._regime_transition_pending
             else None
         )
+        if self._regime_transition_pending:
+            wait_reason = (
+                "횡보·추세 조건이 모두 불명확하여 신규 진입 대기"
+                if self._raw_market_regime == "NEUTRAL"
+                else transition_reason
+            )
+            return self._decision(
+                "HOLD",
+                df,
+                [wait_reason],
+                [],
+                self._market_regime,
+            )
         is_range = self._market_regime == "RANGE"
 
         if is_range:
@@ -277,23 +320,47 @@ class VolumeTrendRsiStrategy:
         )
 
     @staticmethod
-    def _is_range_row(row: pd.Series) -> bool:
+    def _classify_regime_row(row: pd.Series) -> str:
         required = (
             "adx14", "bb_upper", "bb_mid", "bb_lower", "bb_width",
             "atr14", "ema20", "ema50", "ema20_slope",
         )
         if any(key not in row.index or pd.isna(row.get(key)) for key in required):
-            return False
+            return "NEUTRAL"
         atr = float(row["atr14"])
-        return (
+        if atr <= 0:
+            return "NEUTRAL"
+        ema20 = float(row["ema20"])
+        ema50 = float(row["ema50"])
+        ema_slope = float(row["ema20_slope"])
+        close = float(row["close"])
+        vwap = float(row.get("vwap") or 0)
+        adx = float(row["adx14"])
+        is_range = (
             atr > 0
-            and float(row["adx14"]) <= RANGE_ADX_MAX
-            and abs(float(row["ema20"]) - float(row["ema50"])) / atr
-                <= RANGE_EMA_GAP_ATR_MAX
-            and abs(float(row["ema20_slope"])) / atr
-                <= RANGE_EMA_SLOPE_ATR_MAX
+            and adx <= RANGE_ADX_MAX
+            and abs(ema20 - ema50) / atr <= RANGE_EMA_GAP_ATR_MAX
+            and abs(ema_slope) / atr <= RANGE_EMA_SLOPE_ATR_MAX
             and float(row["bb_width"]) <= RANGE_BB_WIDTH_MAX
         )
+        if is_range:
+            return "RANGE"
+        normalized_slope = ema_slope / atr
+        if (
+            adx >= TREND_ADX_MIN
+            and ema20 > ema50
+            and normalized_slope >= TREND_EMA_SLOPE_ATR_MIN
+            and close > vwap
+        ):
+            return "TREND_UP"
+        if (
+            adx >= TREND_ADX_MIN
+            and ema20 < ema50
+            and normalized_slope <= -TREND_EMA_SLOPE_ATR_MIN
+            and close < vwap
+        ):
+            return "TREND_DOWN"
+        return "NEUTRAL"
 
     @staticmethod
     def _recent_breakout_direction(df: pd.DataFrame) -> str:

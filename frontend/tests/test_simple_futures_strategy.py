@@ -40,6 +40,11 @@ def strategy_frame(direction: str) -> pd.DataFrame:
                 "rsi14": 60.0 if direction == "LONG" else 40.0,
                 "atr14": 10.0,
                 "volume_ratio": 1.0,
+                "adx14": 30.0,
+                "bb_lower": 90.0,
+                "bb_mid": 100.0,
+                "bb_upper": 110.0,
+                "bb_width": 0.05,
             }
         )
     frame = pd.DataFrame(rows)
@@ -149,9 +154,14 @@ class StrategyTests(unittest.TestCase):
         back_to_trend = range_frame("LONG")
         back_to_trend.loc[219, "adx14"] = 30.0
         back_to_trend.loc[219, "bb_width"] = 0.05
+        back_to_trend.loc[219, "ema20"] = 102.0
+        back_to_trend.loc[219, "ema50"] = 100.0
+        back_to_trend.loc[219, "ema20_slope"] = 1.0
+        back_to_trend.loc[219, "vwap"] = 99.0
+        back_to_trend.loc[219, "close"] = 105.0
         restarted_strategy = VolumeTrendRsiStrategy()
         restored = restarted_strategy.evaluate(back_to_trend)
-        self.assertEqual(restored.raw_market_regime, "TREND")
+        self.assertEqual(restored.raw_market_regime, "TREND_UP")
         self.assertEqual(restored.market_regime, "RANGE")
         self.assertEqual(restored.regime_confirmation_count, 1)
 
@@ -194,6 +204,19 @@ class StrategyTests(unittest.TestCase):
 
         self.assertEqual(decision.breakout_direction, "HOLD")
         self.assertEqual(decision.direction, "SHORT")
+
+    def test_neutral_market_does_not_fall_through_to_trend_strategy(self):
+        frame = strategy_frame("LONG")
+        frame.loc[219, "adx14"] = 22.5
+        frame.loc[219, "ema20_slope"] = 0.2
+        frame.loc[219, "bb_width"] = 0.04
+
+        decision = VolumeTrendRsiStrategy().evaluate(frame)
+
+        self.assertEqual(decision.raw_market_regime, "NEUTRAL")
+        self.assertEqual(decision.direction, "HOLD")
+        self.assertTrue(decision.regime_transition_pending)
+        self.assertIn("신규 진입 대기", decision.reasons[0])
 
     def test_range_target_is_middle_band(self):
         stop, tp1, tp2, rr = TradingAIEngine._range_risk_prices(

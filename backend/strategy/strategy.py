@@ -16,6 +16,8 @@ SIGNAL_TO_DIRECTION = {
     "SHORT_BREAKOUT_RETEST": "SHORT",
     "LONG_VOLUME_BREAKOUT": "LONG",
     "SHORT_VOLUME_BREAKOUT": "SHORT",
+    "LONG_NEUTRAL_MOMENTUM": "LONG",
+    "SHORT_NEUTRAL_MOMENTUM": "SHORT",
 }
 
 VOLUME_RATIO_MIN = 0.65
@@ -35,6 +37,7 @@ REGIME_CONFIRMATION_BARS = 3
 BREAKOUT_VOLUME_RATIO_MIN = 2.5
 BREAKOUT_ADX_MIN = 23.0
 BREAKOUT_MAX_DISTANCE_ATR = 1.0
+NEUTRAL_MOMENTUM_VOLUME_RATIO_MIN = 1.5
 TREND_ADX_MIN = 23.0
 TREND_EMA_SLOPE_ATR_MIN = 0.10
 
@@ -229,6 +232,49 @@ class VolumeTrendRsiStrategy:
             if self._regime_transition_pending
             else None
         )
+        # 장세가 NEUTRAL로 전환되는 동안에도 방향성 지표와 거래량이
+        # 함께 확장되면 초기 움직임을 놓치지 않도록 절반 위험 후보를 만든다.
+        previous_close = float(prev["close"])
+        neutral_momentum_volume_ok = (
+            float(last["volume_ratio"]) >= NEUTRAL_MOMENTUM_VOLUME_RATIO_MIN
+        )
+        if self._regime_transition_pending and self._raw_market_regime == "NEUTRAL":
+            if (
+                self.last_long_candle != timestamp
+                and ema20 > ema50
+                and ema_slope > 0
+                and close > vwap
+                and close > previous_close
+                and neutral_momentum_volume_ok
+            ):
+                return self._decision(
+                    "LONG_NEUTRAL_MOMENTUM",
+                    df,
+                    [
+                        "NEUTRAL 전환 중 상승 모멘텀 조기 진입",
+                        "EMA20 > EMA50, 상승 기울기 및 VWAP 상단 확인",
+                        f"종가 상승 · 거래량 비율 {float(last['volume_ratio']):.2f}",
+                    ],
+                    [],
+                )
+            if (
+                self.last_short_candle != timestamp
+                and ema20 < ema50
+                and ema_slope < 0
+                and close < vwap
+                and close < previous_close
+                and neutral_momentum_volume_ok
+            ):
+                return self._decision(
+                    "SHORT_NEUTRAL_MOMENTUM",
+                    df,
+                    [
+                        "NEUTRAL 전환 중 하락 모멘텀 조기 진입",
+                        "EMA20 < EMA50, 하락 기울기 및 VWAP 하단 확인",
+                        f"종가 하락 · 거래량 비율 {float(last['volume_ratio']):.2f}",
+                    ],
+                    [],
+                )
         if self._regime_transition_pending:
             wait_reason = (
                 "횡보·추세 조건이 모두 불명확하여 신규 진입 대기"
@@ -391,7 +437,6 @@ class VolumeTrendRsiStrategy:
 
         # RSI 50선 재돌파가 없더라도 확정 추세에서 EMA20/VWAP 눌림 후
         # 추세 방향으로 다시 마감하면 추가 타점을 제공합니다.
-        previous_close = float(prev["close"])
         breakout_retest_volume_ok = (
             float(last["volume_ratio"]) >= TREND_PULLBACK_VOLUME_RATIO_MIN
         )

@@ -116,6 +116,10 @@ class TradingAIEngine:
             "LONG_VOLUME_BREAKOUT",
             "SHORT_VOLUME_BREAKOUT",
         )
+        is_neutral_momentum = decision.signal in (
+            "LONG_NEUTRAL_MOMENTUM",
+            "SHORT_NEUTRAL_MOMENTUM",
+        )
 
         strong_15m = frame_info["directions"].get("15m", "HOLD")
         if direction == "LONG" and strong_15m == "SHORT":
@@ -181,7 +185,12 @@ class TradingAIEngine:
         entry = market_entry
         entry_atr = float(last.get("atr14") or 0)
         retest_distance = 0.0
-        if direction in ("LONG", "SHORT") and not is_range_signal and not is_volume_breakout:
+        if (
+            direction in ("LONG", "SHORT")
+            and not is_range_signal
+            and not is_volume_breakout
+            and not is_neutral_momentum
+        ):
             entry, anchor_name, retest_distance = self._retest_entry(
                 direction=direction,
                 market_entry=market_entry,
@@ -218,7 +227,11 @@ class TradingAIEngine:
             stop, tp1, tp2, rr = self._risk_prices(
                 preview_direction, entry, atr, settings.atr_stop_multiplier
             )
-        risk_factor = 0.5 if is_range_signal or is_volume_breakout else 1.0
+        risk_factor = (
+            0.5
+            if is_range_signal or is_volume_breakout or is_neutral_momentum
+            else 1.0
+        )
         risk_amount = (
             float(account_equity or 100.0)
             * settings.risk_per_trade_pct

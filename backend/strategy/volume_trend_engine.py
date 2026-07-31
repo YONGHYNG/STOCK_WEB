@@ -112,6 +112,10 @@ class TradingAIEngine:
             "LONG_RANGE_REVERSION",
             "SHORT_RANGE_REVERSION",
         )
+        is_volume_breakout = decision.signal in (
+            "LONG_VOLUME_BREAKOUT",
+            "SHORT_VOLUME_BREAKOUT",
+        )
 
         strong_15m = frame_info["directions"].get("15m", "HOLD")
         if direction == "LONG" and strong_15m == "SHORT":
@@ -177,7 +181,7 @@ class TradingAIEngine:
         entry = market_entry
         entry_atr = float(last.get("atr14") or 0)
         retest_distance = 0.0
-        if direction in ("LONG", "SHORT") and not is_range_signal:
+        if direction in ("LONG", "SHORT") and not is_range_signal and not is_volume_breakout:
             entry, anchor_name, retest_distance = self._retest_entry(
                 direction=direction,
                 market_entry=market_entry,
@@ -214,7 +218,7 @@ class TradingAIEngine:
             stop, tp1, tp2, rr = self._risk_prices(
                 preview_direction, entry, atr, settings.atr_stop_multiplier
             )
-        risk_factor = 0.5 if is_range_signal else 1.0
+        risk_factor = 0.5 if is_range_signal or is_volume_breakout else 1.0
         risk_amount = (
             float(account_equity or 100.0)
             * settings.risk_per_trade_pct
@@ -335,6 +339,7 @@ class TradingAIEngine:
             leverage=int(market.get("leverage") or settings.max_leverage),
             stop_gap=round(abs(entry - stop) / entry, 6) if stop and entry else None,
             market_mode=decision.market_regime,
+            position_size_ratio=risk_factor,
             timeframe_summary=summaries,
             strategy_signal=final_signal,
             planned_direction=preview_direction,

@@ -14,6 +14,8 @@ SIGNAL_TO_DIRECTION = {
     "SHORT_TREND_CONTINUATION": "SHORT",
     "LONG_BREAKOUT_RETEST": "LONG",
     "SHORT_BREAKOUT_RETEST": "SHORT",
+    "LONG_VOLUME_BREAKOUT": "LONG",
+    "SHORT_VOLUME_BREAKOUT": "SHORT",
 }
 
 VOLUME_RATIO_MIN = 0.65
@@ -32,6 +34,7 @@ TREND_PULLBACK_VOLUME_RATIO_MIN = 0.70
 REGIME_CONFIRMATION_BARS = 3
 BREAKOUT_VOLUME_RATIO_MIN = 2.5
 BREAKOUT_ADX_MIN = 23.0
+BREAKOUT_MAX_DISTANCE_ATR = 1.0
 TREND_ADX_MIN = 23.0
 TREND_EMA_SLOPE_ATR_MIN = 0.10
 
@@ -172,6 +175,53 @@ class VolumeTrendRsiStrategy:
         self._breakout_direction = breakout["direction"]
         self._breakout_level = breakout["level"]
         self._breakout_age_bars = breakout["age_bars"]
+        breakout_distance_atr = (
+            abs(close - self._breakout_level) / atr
+            if self._breakout_level is not None and atr > 0
+            else float("inf")
+        )
+        # RSI 50선 재전환을 기다리는 기존 경로와 별개로, 거래량과 ADX가
+        # 동시에 확장되는 첫 돌파봉은 초입에서만 양방향 진입을 허용한다.
+        if self._breakout_age_bars == 0:
+            long_breakout = (
+                self._breakout_direction == "UP"
+                and self.last_long_candle != timestamp
+                and ema20 > ema50
+                and ema_slope > 0
+                and close > vwap
+            )
+            short_breakout = (
+                self._breakout_direction == "DOWN"
+                and self.last_short_candle != timestamp
+                and ema20 < ema50
+                and ema_slope < 0
+                and close < vwap
+            )
+            if breakout_distance_atr <= BREAKOUT_MAX_DISTANCE_ATR:
+                if long_breakout:
+                    return self._decision(
+                        "LONG_VOLUME_BREAKOUT",
+                        df,
+                        [
+                            f"상단 거래량 돌파 ${self._breakout_level:,.2f}",
+                            f"거래량 비율 {float(last['volume_ratio']):.2f} · ADX {float(last['adx14']):.1f}",
+                            "EMA20 > EMA50, 상승 기울기 및 VWAP 상단 확인",
+                            f"돌파선 거리 {breakout_distance_atr:.2f} ATR",
+                        ],
+                        [],
+                    )
+                if short_breakout:
+                    return self._decision(
+                        "SHORT_VOLUME_BREAKOUT",
+                        df,
+                        [
+                            f"하단 거래량 돌파 ${self._breakout_level:,.2f}",
+                            f"거래량 비율 {float(last['volume_ratio']):.2f} · ADX {float(last['adx14']):.1f}",
+                            "EMA20 < EMA50, 하락 기울기 및 VWAP 하단 확인",
+                            f"돌파선 거리 {breakout_distance_atr:.2f} ATR",
+                        ],
+                        [],
+                    )
         transition_reason = (
             f"장세 전환 확인 중: {self._raw_market_regime} "
             f"{self._regime_confirmation_count}/{REGIME_CONFIRMATION_BARS} · "
@@ -268,7 +318,12 @@ class VolumeTrendRsiStrategy:
                 df,
                 [
                     f"{self._breakout_direction} 강한 돌파 직후 추격 진입 금지",
-                    "돌파선 재테스트 대기",
+                    (
+                        f"돌파선 거리 {breakout_distance_atr:.2f} ATR > "
+                        f"{BREAKOUT_MAX_DISTANCE_ATR:.1f} ATR"
+                        if breakout_distance_atr > BREAKOUT_MAX_DISTANCE_ATR
+                        else "돌파 방향 EMA·VWAP 조건 미충족 · 재테스트 대기"
+                    ),
                 ],
                 [],
             )

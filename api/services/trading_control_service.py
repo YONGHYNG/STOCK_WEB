@@ -65,7 +65,7 @@ risk_cfg = risk_settings_store.load()
 risk_mgr = RiskManager(risk_cfg)
 PAPER_ACCOUNT_INITIAL_BALANCE = 100.0
 PAPER_ACCOUNT_LEVERAGE = 20
-PENDING_ORDER_TTL_SECONDS = 30 * 60
+PENDING_ORDER_TTL_SECONDS = 10 * 60
 RANGE_PENDING_ORDER_TTL_SECONDS = 10 * 60
 PENDING_CANCEL_RETRY_SECONDS = 60
 
@@ -725,17 +725,6 @@ def _is_better_entry(direction: str, current_entry, new_entry) -> bool:
     return False
 
 
-def _is_strong_trend_entry(direction: str, result: dict) -> bool:
-    """A등급 확정 신호만 불리한 가격을 감수한 추격 진입으로 허용한다."""
-    return (
-        direction in ("LONG", "SHORT")
-        and result.get("entry_grade") == "A"
-        and float(result.get("confidence") or 0) >= risk_cfg.confidence_threshold
-        and not result.get("risk_warnings")
-        and not _is_range_result(result)
-    )
-
-
 def _is_order_eligible(result: dict) -> bool:
     return (
         result.get("direction") in ("LONG", "SHORT")
@@ -751,8 +740,7 @@ async def _refresh_pending_paper_order(direction: str, result: dict):
         return
     previous = pending.get("result") or {}
     better_entry = _is_better_entry(direction, previous.get("entry_price"), result.get("entry_price"))
-    strong_trend = _is_strong_trend_entry(direction, result)
-    if not better_entry and not strong_trend:
+    if not better_entry:
         return
 
     old_entry = float(previous.get("entry_price") or 0)
@@ -764,12 +752,12 @@ async def _refresh_pending_paper_order(direction: str, result: dict):
     state.pending_paper_order = {
         "direction": direction,
         "result": paper_result,
-        **_pending_order_timestamps(result=paper_result),
+        "created_at": pending.get("created_at"),
+        "expires_at": pending.get("expires_at"),
     }
-    update_reason = "강한 추세 추격" if strong_trend and not better_entry else "진입 조건 개선"
     msg = state.add_log(
         f"[모의 대기 주문 개선] {direction} ${old_entry:,.2f} → ${new_entry:,.2f}  "
-        f"{update_reason}, 손절·익절 조건도 최신 신호로 갱신"
+        "진입 조건 개선, 손절·익절 조건도 최신 신호로 갱신"
     )
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "status", "data": _status_payload()})
@@ -786,13 +774,14 @@ async def _refresh_pending_live_order(direction: str, result: dict):
     ):
         return
     better_entry = _is_better_entry(direction, pending.get("entry_price"), result.get("entry_price"))
-    strong_trend = _is_strong_trend_entry(direction, result)
-    if not better_entry and not strong_trend:
+    if not better_entry:
         return
 
     old_order_id = str(pending.get("order_id") or "")
     old_entry = float(pending.get("entry_price") or 0)
     new_entry = float(result.get("entry_price") or 0)
+    original_created_at = pending.get("created_at")
+    original_expires_at = pending.get("expires_at")
     if old_entry == new_entry:
         return
     if not old_order_id or old_order_id == "pending":
@@ -803,9 +792,10 @@ async def _refresh_pending_live_order(direction: str, result: dict):
         state.pending_live_order = None
         await _auto_live_trade(direction, result)
         if state.pending_live_order:
-            update_reason = "강한 추세 추격" if strong_trend and not better_entry else "진입 조건 개선"
+            state.pending_live_order["created_at"] = original_created_at
+            state.pending_live_order["expires_at"] = original_expires_at
             msg = state.add_log(
-                f"[LIVE 대기 주문 개선] {direction} ${old_entry:,.2f} → ${new_entry:,.2f}  {update_reason}"
+                f"[LIVE 대기 주문 개선] {direction} ${old_entry:,.2f} → ${new_entry:,.2f}  진입 조건 개선"
             )
         else:
             msg = state.add_log("[LIVE 대기 주문 갱신 실패] 기존 주문 취소 후 새 주문 생성 실패")
@@ -880,6 +870,20 @@ async def _check_pending_paper_entry(price: float):
         return
     direction = pending["direction"]
     result = pending["result"]
+    latest = state.last_result or {}
+    latest_directions = latest.get("timeframe_directions") or {}
+    opposite = "SHORT" if direction == "LONG" else "LONG"
+    still_valid = (
+        latest.get("direction") == direction
+        and _is_order_eligible(latest)
+        and latest_directions.get("1H", "HOLD") != opposite
+    )
+    if not still_valid:
+        state.pending_paper_order = None
+        msg = state.add_log(f"[모의 대기 주문 취소] {direction} 체결 직전 최신 신호 재검증 실패")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        await manager.broadcast({"type": "status", "data": _status_payload()})
+        return
     limit_price = float(result.get("entry_price") or 0)
     filled = (direction == "LONG" and price <= limit_price) or (direction == "SHORT" and price >= limit_price)
     if not filled:

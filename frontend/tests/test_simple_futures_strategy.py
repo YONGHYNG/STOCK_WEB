@@ -229,7 +229,7 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(short_decision.signal, "SHORT_VOLUME_BREAKOUT")
         self.assertEqual(short_decision.direction, "SHORT")
 
-    def test_volume_breakout_blocks_entry_beyond_one_atr(self):
+    def test_volume_breakout_blocks_entry_beyond_point_four_atr(self):
         frame = strategy_frame("LONG")
         frame.loc[218, "adx14"] = 24.0
         frame.loc[219, ["low", "high", "close", "rsi14"]] = [
@@ -242,7 +242,7 @@ class StrategyTests(unittest.TestCase):
 
         self.assertEqual(decision.direction, "HOLD")
         self.assertIn("추격 진입 금지", decision.reasons[0])
-        self.assertIn("1.0 ATR", decision.reasons[1])
+        self.assertIn("0.4 ATR", decision.reasons[1])
 
     def test_regime_changes_only_after_three_confirmed_five_minute_bars(self):
         strategy = VolumeTrendRsiStrategy()
@@ -401,6 +401,8 @@ class StrategyTests(unittest.TestCase):
             previous=frame.iloc[-2],
             direction="LONG",
             strong_15m="HOLD",
+            strong_30m="HOLD",
+            strong_1h="HOLD",
             volume_ratio=0.9,
             oi_confirmed=False,
             risk_reward=1.5,
@@ -465,7 +467,7 @@ class RiskManagerTests(unittest.TestCase):
         self.manager.record_trade_result(1.0, "TP1")
         self.assertGreaterEqual(self.manager._entry_block_until, before + 299)
 
-    def test_two_losses_pause_but_three_losses_do_not_stop_paper_trading(self):
+    def test_three_losses_stop_paper_trading(self):
         self.manager.record_trade_result(-1.0, "SL")
         self.manager.record_trade_result(-1.0, "SL")
         self.assertGreater(self.manager._entry_block_until, time.time() + 3590)
@@ -481,7 +483,8 @@ class RiskManagerTests(unittest.TestCase):
             strategy_signal="LONG_RSI_RECLAIM",
             timeframe_directions={"15m": "HOLD"},
         )
-        self.assertTrue(allowed, reason)
+        self.assertFalse(allowed)
+        self.assertIn("연속 3회", reason)
 
     def test_15m_hold_is_allowed(self):
         allowed, reason = self.manager.check_entry(
@@ -495,6 +498,20 @@ class RiskManagerTests(unittest.TestCase):
             timeframe_directions={"15m": "HOLD"},
         )
         self.assertTrue(allowed, reason)
+
+    def test_1h_opposite_direction_is_blocked(self):
+        allowed, reason = self.manager.check_entry(
+            direction="LONG",
+            confidence=100,
+            mode=TradingMode.PAPER_TRADING,
+            cached_positions=[],
+            private_client=None,
+            entry_grade="A",
+            strategy_signal="LONG_VOLUME_BREAKOUT",
+            timeframe_directions={"15m": "LONG", "1H": "SHORT"},
+        )
+        self.assertFalse(allowed)
+        self.assertIn("1시간봉", reason)
 
 
 class SignalDiagnosticsDatabaseTests(unittest.TestCase):

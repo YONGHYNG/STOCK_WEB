@@ -78,12 +78,17 @@ class RiskManager:
         ):
             return False, f"{strategy_signal} 신호가 {entry_grade}등급이므로 추격 진입 차단"
 
-        # 15분봉은 같은 방향일 필요가 없고 강한 반대 추세일 때만 차단한다.
+        # 진입 직전에도 상위 시간봉 역방향 여부를 다시 검증한다.
         directions = timeframe_directions or {}
         opposite = "SHORT" if direction == "LONG" else "LONG"
         if directions.get("15m", "HOLD") == opposite:
             return False, (
                 f"15분봉 강한 반대 추세: 15m={opposite} · "
+                f"{direction} 진입 차단"
+            )
+        if directions.get("1H", "HOLD") == opposite:
+            return False, (
+                f"1시간봉 강한 반대 추세: 1H={opposite} · "
                 f"{direction} 진입 차단"
             )
 
@@ -106,7 +111,7 @@ class RiskManager:
                 return False, "리스크 설정에서 실거래 허용이 비활성화되어 있음"
 
         # 6. 거래 결과별 재진입/연속 손실 대기
-        if self._daily_entry_blocked and mode != TradingMode.PAPER_TRADING:
+        if self._daily_entry_blocked:
             return False, "연속 3회 손절로 당일 신규 진입 중단"
         if time.time() < self._entry_block_until:
             remaining = int(self._entry_block_until - time.time())
@@ -123,10 +128,7 @@ class RiskManager:
             )
 
         # 9. 연속 손실 제한
-        if (
-            mode != TradingMode.PAPER_TRADING
-            and self._consecutive_losses >= s.consecutive_loss_limit
-        ):
+        if self._consecutive_losses >= s.consecutive_loss_limit:
             return False, (
                 f"연속 손실 {self._consecutive_losses}회 → "
                 f"한도({s.consecutive_loss_limit}회) 도달, 자동매매 중단"

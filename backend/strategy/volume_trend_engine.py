@@ -122,11 +122,20 @@ class TradingAIEngine:
         )
 
         strong_15m = frame_info["directions"].get("15m", "HOLD")
+        strong_30m = frame_info["directions"].get("30m", "HOLD")
+        strong_1h = frame_info["directions"].get("1H", "HOLD")
         if direction == "LONG" and strong_15m == "SHORT":
             warnings.append("15분봉 강한 하락 추세로 LONG 진입 차단")
             direction = "HOLD"
         elif direction == "SHORT" and strong_15m == "LONG":
             warnings.append("15분봉 강한 상승 추세로 SHORT 진입 차단")
+            direction = "HOLD"
+
+        if direction == "LONG" and strong_1h == "SHORT":
+            warnings.append("1시간봉 강한 하락 추세로 LONG 진입 차단")
+            direction = "HOLD"
+        elif direction == "SHORT" and strong_1h == "LONG":
+            warnings.append("1시간봉 강한 상승 추세로 SHORT 진입 차단")
             direction = "HOLD"
 
         risk_candles = candles_by_timeframe.get("1H") or []
@@ -259,11 +268,14 @@ class TradingAIEngine:
                 previous=entry_frame.iloc[-2],
                 direction=direction,
                 strong_15m=strong_15m,
+                strong_30m=strong_30m,
+                strong_1h=strong_1h,
                 volume_ratio=float(last.get("volume_ratio") or 0),
                 oi_confirmed=oi_confirmed,
                 risk_reward=rr,
                 retest_distance=retest_distance,
                 entry_atr=entry_atr,
+                is_volume_breakout=is_volume_breakout,
             )
             if direction in ("LONG", "SHORT")
             else 0.0
@@ -412,21 +424,30 @@ class TradingAIEngine:
         previous,
         direction: str,
         strong_15m: str,
+        strong_30m: str,
+        strong_1h: str,
         volume_ratio: float,
         oi_confirmed: bool,
         risk_reward: Optional[float],
         retest_distance: float,
         entry_atr: float,
+        is_volume_breakout: bool = False,
     ) -> float:
         """확정 조건의 품질을 0~100점으로 환산합니다."""
         if direction not in ("LONG", "SHORT"):
             return 0.0
 
-        score = 40.0
+        score = 30.0
         if strong_15m == direction:
             score += 15.0
-        elif strong_15m == "HOLD":
-            score += 8.0
+        if strong_30m == direction:
+            score += 10.0
+        elif strong_30m not in (direction, "HOLD"):
+            score -= 15.0
+        if strong_1h == direction:
+            score += 15.0
+        elif strong_1h not in (direction, "HOLD"):
+            score -= 25.0
 
         rsi_move = abs(float(last.get("rsi14") or 0) - float(previous.get("rsi14") or 0))
         score += 10.0 if rsi_move >= 3.0 else 5.0 if rsi_move >= 1.0 else 0.0
@@ -445,7 +466,7 @@ class TradingAIEngine:
             score += 8.0 if 0.5 <= volume_ratio <= 1.2 else 3.0 if volume_ratio < 1.5 else 0.0
         else:
             score += 10.0 if volume_ratio >= 1.0 else 5.0 if volume_ratio >= 0.65 else 0.0
-            if entry_atr > 0:
+            if entry_atr > 0 and not is_volume_breakout:
                 normalized_retest = retest_distance / entry_atr
                 score += 10.0 if normalized_retest <= 0.20 else 5.0 if normalized_retest <= 0.50 else 0.0
 

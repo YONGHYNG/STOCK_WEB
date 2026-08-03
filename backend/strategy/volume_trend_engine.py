@@ -108,6 +108,19 @@ class TradingAIEngine:
         warnings = list(decision.warnings)
         reasons = list(decision.reasons)
         settings = load_risk_settings()
+        strategy_id = self._strategy_id(decision.signal)
+        registered_strategies = {
+            str(item.get("id")): bool(item.get("enabled", True))
+            for item in settings.strategies
+            if isinstance(item, dict) and item.get("id")
+        }
+        if (
+            direction in ("LONG", "SHORT")
+            and strategy_id
+            and not registered_strategies.get(strategy_id, False)
+        ):
+            warnings.append(f"{decision.signal} 전략이 미적용 또는 삭제되어 진입 차단")
+            direction = "HOLD"
         is_range_signal = decision.signal in (
             "LONG_RANGE_REVERSION",
             "SHORT_RANGE_REVERSION",
@@ -416,6 +429,21 @@ class TradingAIEngine:
         if score >= 50:
             return "C"
         return "F"
+
+    @staticmethod
+    def _strategy_id(signal: str) -> Optional[str]:
+        value = str(signal or "")
+        if "TREND_CONTINUATION" in value:
+            return "trend_continuation"
+        if "RSI_RECLAIM" in value or "RSI_REJECT" in value:
+            return "rsi_reversal"
+        if "VOLUME_BREAKOUT" in value or "BREAKOUT_RETEST" in value:
+            return "volume_breakout"
+        if "RANGE_REVERSION" in value:
+            return "range_reversion"
+        if "NEUTRAL_MOMENTUM" in value:
+            return "neutral_momentum"
+        return None
 
     @staticmethod
     def _signal_score(

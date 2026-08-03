@@ -1,10 +1,18 @@
 # 역할: API 요청과 응답 데이터 구조를 정의하는 스키마.
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class StrategySettingPayload(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    enabled: bool = True
 
 
 class RiskSettingsPayload(BaseModel):
+    strategies: list[StrategySettingPayload] = Field(default_factory=list)
     order_size_btc: float
     risk_per_trade_pct: float = 0.2
     max_loss_pct: float

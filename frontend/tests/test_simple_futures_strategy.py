@@ -392,6 +392,14 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(TradingAIEngine._entry_grade(50.0), "C")
         self.assertEqual(TradingAIEngine._entry_grade(49.9), "F")
 
+    def test_strategy_signal_maps_to_registered_strategy(self):
+        self.assertEqual(TradingAIEngine._strategy_id("SHORT_TREND_CONTINUATION"), "trend_continuation")
+        self.assertEqual(TradingAIEngine._strategy_id("LONG_RSI_RECLAIM"), "rsi_reversal")
+        self.assertEqual(TradingAIEngine._strategy_id("SHORT_VOLUME_BREAKOUT"), "volume_breakout")
+        self.assertEqual(TradingAIEngine._strategy_id("LONG_BREAKOUT_RETEST"), "volume_breakout")
+        self.assertEqual(TradingAIEngine._strategy_id("LONG_RANGE_REVERSION"), "range_reversion")
+        self.assertEqual(TradingAIEngine._strategy_id("SHORT_NEUTRAL_MOMENTUM"), "neutral_momentum")
+
     def test_range_quality_score_rewards_stable_range(self):
         frame = range_frame("LONG")
         decision = VolumeTrendRsiStrategy().evaluate(frame)

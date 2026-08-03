@@ -4,14 +4,23 @@
 """
 
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from backend.config import DATA_DIR
 
 _RISK_FILE = DATA_DIR / "risk_settings.json"
 
+DEFAULT_STRATEGIES = [
+    {"id": "trend_continuation", "name": "추세 지속", "description": "EMA20·VWAP 눌림목에서 기존 추세 방향으로 진입", "enabled": True},
+    {"id": "rsi_reversal", "name": "RSI 재돌파·재이탈", "description": "RSI 50선 전환과 EMA·VWAP 정렬을 확인해 진입", "enabled": True},
+    {"id": "volume_breakout", "name": "거래량 돌파", "description": "거래량과 ADX가 동반된 돌파 및 재테스트에 진입", "enabled": True},
+    {"id": "range_reversion", "name": "횡보장 밴드 반전", "description": "낮은 ADX 구간에서 볼린저밴드 반전을 거래", "enabled": True},
+    {"id": "neutral_momentum", "name": "중립장 모멘텀", "description": "장세 전환 과정의 강한 단기 모멘텀에 진입", "enabled": True},
+]
+
 
 @dataclass
 class RiskSettings:
+    strategies: list[dict] = field(default_factory=lambda: [dict(item) for item in DEFAULT_STRATEGIES])
     # 주문 규모
     order_size_btc: float = 0.001       # 1회 주문 수량 (BTC)
     risk_per_trade_pct: float = 0.2     # 계좌 잔액 기준 1회 위험률 (%)
@@ -51,6 +60,7 @@ def load() -> RiskSettings:
             with open(_RISK_FILE, "r", encoding="utf-8") as f:
                 d = json.load(f)
             return RiskSettings(
+                strategies            = [dict(item) for item in d.get("strategies", DEFAULT_STRATEGIES)],
                 order_size_btc        = float(d.get("order_size_btc",        0.001)),
                 risk_per_trade_pct    = float(d.get("risk_per_trade_pct",    0.2)),
                 max_loss_pct          = float(d.get("max_loss_pct",          1.0)),

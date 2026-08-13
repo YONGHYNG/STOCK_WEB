@@ -76,7 +76,11 @@ class BitgetClient:
                 candles_by_ts[candle["timestamp"]] = candle
 
             oldest_ts = min(candle["timestamp"] for candle in batch)
-            next_end_time = oldest_ts - 1
+            # Bitget aligns endTime to a candle boundary. Subtracting 1 ms can
+            # make the API round down once more and skip the candle immediately
+            # before the current page. Reuse the oldest boundary; de-duplication
+            # above safely removes an inclusive boundary candle.
+            next_end_time = oldest_ts
             if end_time is not None and next_end_time >= end_time:
                 break
             end_time = next_end_time

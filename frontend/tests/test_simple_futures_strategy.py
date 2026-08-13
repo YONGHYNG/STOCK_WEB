@@ -9,6 +9,7 @@ import pandas as pd
 import backend.database as database
 from backend.order.paper_trader import PaperTrader
 from backend.bitget.client import BitgetPrivateClient
+from backend.bitget.market_api import BitgetClient
 from backend.risk.risk_manager import RiskManager
 from backend.risk.settings import RiskSettings
 from backend.order.sizing import (
@@ -654,6 +655,33 @@ class SignalDiagnosticsDatabaseTests(unittest.TestCase):
 
 
 class LiveOrderSizingTests(unittest.TestCase):
+    def test_market_history_pagination_reuses_oldest_candle_boundary(self):
+        client = BitgetClient(timeframe="1m")
+        requested_end_times = []
+
+        def candle(timestamp):
+            return {
+                "timestamp": timestamp,
+                "open": 1.0,
+                "high": 1.0,
+                "low": 1.0,
+                "close": 1.0,
+                "volume": 1.0,
+            }
+
+        def fake_batch(_limit, end_time=None):
+            requested_end_times.append(end_time)
+            if end_time is None:
+                return [candle(300), candle(400)]
+            return [candle(0), candle(100), candle(200)]
+
+        client._fetch_history_batch = fake_batch
+
+        candles = client.fetch_recent_candles_rest(5)
+
+        self.assertEqual(requested_end_times, [None, 300])
+        self.assertEqual([row["timestamp"] for row in candles], [0, 100, 200, 300, 400])
+
     def test_full_balance_20x_size_is_rounded_down_to_contract_step(self):
         self.assertEqual(
             full_balance_size(

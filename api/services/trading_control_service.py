@@ -1,9 +1,11 @@
 # 역할: 자동매매 시작, 중지, 새로고침을 제어하는 서비스.
 import asyncio
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -36,6 +38,8 @@ from backend.database import (
     get_all_time_high,
     get_all_time_low,
     get_open_trade,
+    get_first_trade_trigger_candle,
+    get_trade,
     get_paper_account,
     get_recent_candles,
     get_recent_trades,
@@ -68,6 +72,48 @@ PAPER_ACCOUNT_LEVERAGE = 20
 PENDING_ORDER_TTL_SECONDS = 10 * 60
 RANGE_PENDING_ORDER_TTL_SECONDS = 10 * 60
 PENDING_CANCEL_RETRY_SECONDS = 60
+KST = ZoneInfo("Asia/Seoul")
+
+
+def _automatic_loss_analysis(trade_id: Optional[int], elapsed_seconds: Optional[int] = None) -> str:
+    """거래 당시 기록만으로 재현 가능한 짧은 손실 원인 요약을 만듭니다."""
+    if not risk_cfg.auto_stop_loss_analysis or not trade_id:
+        return ""
+    row = get_trade(trade_id) or {}
+    try:
+        directions = json.loads(row.get("tf_directions") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        directions = {}
+    direction = str(row.get("direction") or "").upper()
+    weak_frames = [tf for tf in ("5m", "1H", "4H", "6H") if directions.get(tf) in (None, "HOLD")]
+    opposite_frames = [tf for tf, value in directions.items() if value not in (direction, "HOLD", None)]
+    reasons = str(row.get("entry_reason") or "")
+    signal = next((line.split(":", 1)[1].strip() for line in reasons.splitlines() if line.startswith("전략 신호:")), "미분류")
+    parts = [f"자동 손실 분석: {signal}"]
+    if weak_frames:
+        parts.append(f"상위/핵심 시간대 미확정({', '.join(weak_frames)} HOLD)")
+    if opposite_frames:
+        parts.append(f"반대 방향 시간대 존재({', '.join(opposite_frames)})")
+    if "조기 진입" in reasons:
+        parts.append("장세 전환 확정 전 조기 진입")
+    if elapsed_seconds is not None and elapsed_seconds <= 300:
+        parts.append(f"진입 후 {max(1, elapsed_seconds)}초 내 손절로 반대 모멘텀 즉시 발생")
+    return " · ".join(parts)
+
+
+def _append_loss_analysis(base: str, trade_id: Optional[int], elapsed_seconds: Optional[int] = None) -> str:
+    analysis = _automatic_loss_analysis(trade_id, elapsed_seconds)
+    return f"{base}\n{analysis}" if analysis else base
+
+
+def _entry_timestamp_ms(row: dict) -> int:
+    entered = datetime.strptime(str(row["entry_time"]), "%Y-%m-%d %H:%M:%S").replace(tzinfo=KST)
+    return int(entered.timestamp() * 1000)
+
+
+def _elapsed_since_entry(row: dict, timestamp_ms: Optional[int] = None) -> int:
+    end_ms = int(timestamp_ms if timestamp_ms is not None else time.time() * 1000)
+    return max(0, int((end_ms - _entry_timestamp_ms(row)) / 1000))
 
 
 def _paper_full_leverage_size(entry_price: float) -> float:
@@ -491,6 +537,10 @@ async def _check_plan_tp_sl(price: float):
         if result_code == "SL" else ""
     )
 
+    if result_code == "SL":
+        row = get_trade(state.plan_trade_id) or {}
+        loss_reason = _append_loss_analysis(loss_reason, state.plan_trade_id, _elapsed_since_entry(row) if row else None)
+
     tid = state.plan_trade_id
     close_trade(
         trade_id=tid,
@@ -521,6 +571,10 @@ async def _check_tp_sl(price: float):
     sign = "+" if pnl_pct >= 0 else ""
     profit_reason = f"{result_code} 적중: 진입 ${entry:,.2f} → 청산 ${price:,.2f}  ({sign}{pnl_pct:.2f}%)" if result_code.startswith("TP") else ""
     loss_reason = f"손절 발동: 진입 ${entry:,.2f} → 청산 ${price:,.2f}  ({sign}{pnl_pct:.2f}%)" if result_code == "SL" else ""
+
+    if result_code == "SL":
+        row = get_trade(state.open_trade_id) or {}
+        loss_reason = _append_loss_analysis(loss_reason, state.open_trade_id, _elapsed_since_entry(row) if row else None)
 
     tid = state.open_trade_id
     close_trade(trade_id=tid, exit_price=price, result=result_code, pnl_pct=pnl_pct,
@@ -560,6 +614,9 @@ async def _check_paper_tp_sl(price: float):
     sign = "+" if pnl_pct >= 0 else ""
     profit_reason = f"[모의 지정가] {result_code} 체결: ${entry:,.2f} → ${limit_exit_price:,.2f}  ({sign}{pnl_pct:.2f}%)" if result_code.startswith("TP") else ""
     loss_reason = f"[모의 지정가] 손절 체결: ${entry:,.2f} → ${limit_exit_price:,.2f}  ({sign}{pnl_pct:.2f}%)" if result_code == "SL" else ""
+    if result_code == "SL":
+        row = get_trade(paper_trader.open_id) or {}
+        loss_reason = _append_loss_analysis(loss_reason, paper_trader.open_id, _elapsed_since_entry(row) if row else None)
     tid, pnl = paper_trader.close_trade(exit_price=limit_exit_price, result=result_code,
                                         profit_reason=profit_reason, loss_reason=loss_reason)
     risk_mgr.record_trade_result(pnl, result_code)
@@ -1133,6 +1190,74 @@ async def _place_live_limit_protection(positions: list, result: dict):
 # ── Startup ────────────────────────────────────────────────────────────────────
 
 
+def _historical_trigger(row: dict) -> tuple[str, float, dict] | None:
+    candle = get_first_trade_trigger_candle(
+        SYMBOL,
+        _entry_timestamp_ms(row),
+        row["direction"],
+        row["stop_loss"],
+        row.get("take_profit_1"),
+    )
+    if not candle:
+        return None
+    direction = str(row["direction"]).upper()
+    sl_hit = candle["low"] <= row["stop_loss"] if direction == "LONG" else candle["high"] >= row["stop_loss"]
+    tp_hit = bool(row.get("take_profit_1")) and (
+        candle["high"] >= row["take_profit_1"] if direction == "LONG" else candle["low"] <= row["take_profit_1"]
+    )
+    if sl_hit and tp_hit:
+        # 1분봉 내부 순서는 알 수 없으므로 시가에서 더 가까운 주문이 먼저 체결된 것으로 봅니다.
+        sl_hit = abs(candle["open"] - row["stop_loss"]) <= abs(candle["open"] - row["take_profit_1"])
+        tp_hit = not sl_hit
+    return ("SL", float(row["stop_loss"]), candle) if sl_hit else ("TP1", float(row["take_profit_1"]), candle)
+
+
+async def _reconcile_missed_exits() -> None:
+    """서버 중단 중 저장된 1분봉이 TP/SL을 통과했으면 열린 기록을 자동 마감합니다."""
+    if not risk_cfg.auto_stop_loss_analysis:
+        return
+    paper_row = get_open_trade(SYMBOL, trade_type="PAPER")
+    if paper_row and paper_trader.is_open:
+        trigger = _historical_trigger(paper_row)
+        if trigger:
+            result_code, exit_price, candle = trigger
+            elapsed = _elapsed_since_entry(paper_row, candle["timestamp"])
+            pnl_pct = _pnl_pct(paper_row["direction"], paper_row["entry_price"], exit_price)
+            sign = "+" if pnl_pct >= 0 else ""
+            profit_reason = (
+                f"[모의 지정가] {result_code} 체결(서버 중단 중 자동 복구): "
+                f"${paper_row['entry_price']:,.2f} → ${exit_price:,.2f}  ({sign}{pnl_pct:.2f}%)"
+                if result_code.startswith("TP") else ""
+            )
+            loss_reason = (
+                f"[모의 지정가] 손절 체결(서버 중단 중 자동 복구): "
+                f"${paper_row['entry_price']:,.2f} → ${exit_price:,.2f}  ({sign}{pnl_pct:.2f}%)"
+                if result_code == "SL" else ""
+            )
+            if result_code == "SL":
+                loss_reason = _append_loss_analysis(loss_reason, paper_row["id"], elapsed)
+            tid, pnl = paper_trader.close_trade(exit_price, result_code, profit_reason, loss_reason)
+            risk_mgr.record_trade_result(pnl, result_code)
+            state.add_log(f"[자동 복구] 모의매매 #{tid} {result_code} {pnl:+.2f}%")
+
+    plan_row = get_open_trade(SYMBOL, trade_type="PLAN")
+    if plan_row:
+        trigger = _historical_trigger(plan_row)
+        if trigger:
+            result_code, exit_price, candle = trigger
+            elapsed = _elapsed_since_entry(plan_row, candle["timestamp"])
+            pnl_pct = _pnl_pct(plan_row["direction"], plan_row["entry_price"], exit_price)
+            sign = "+" if pnl_pct >= 0 else ""
+            profit_reason = f"[리스크 플랜] {result_code} 적중(자동 복구): ${plan_row['entry_price']:,.2f} → ${exit_price:,.2f} ({sign}{pnl_pct:.2f}%)" if result_code.startswith("TP") else ""
+            loss_reason = f"[리스크 플랜] 손절 확인(자동 복구): ${plan_row['entry_price']:,.2f} → ${exit_price:,.2f} ({sign}{pnl_pct:.2f}%)" if result_code == "SL" else ""
+            if result_code == "SL":
+                loss_reason = _append_loss_analysis(loss_reason, plan_row["id"], elapsed)
+            close_trade(plan_row["id"], exit_price, result_code, pnl_pct, profit_reason, loss_reason)
+            state.plan_trade_id = None
+            state.plan_trade_data = None
+            state.add_log(f"[자동 복구] 리스크 플랜 #{plan_row['id']} {result_code} {pnl_pct:+.2f}%")
+
+
 async def startup_event():
     existing = get_open_trade(SYMBOL, trade_type="LIVE")
     if existing:
@@ -1143,6 +1268,7 @@ async def startup_event():
         state.plan_trade_id = existing_plan["id"]
         state.plan_trade_data = _trade_data_from_row(existing_plan)
     paper_trader.restore_from_db()
+    await _reconcile_missed_exits()
     if paper_trader.is_open and paper_trader.open_data:
         paper_trader.update_open_size(
             _paper_full_leverage_size(float(paper_trader.open_data.get("entry") or 0))

@@ -411,6 +411,40 @@ def close_trade(
         conn.commit()
 
 
+def get_trade(trade_id: int) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM trades WHERE id=?", (int(trade_id),)).fetchone()
+        return dict(row) if row else None
+
+
+def get_first_trade_trigger_candle(
+    symbol: str,
+    entry_timestamp_ms: int,
+    direction: str,
+    stop_loss: float,
+    take_profit_1: float | None = None,
+) -> dict | None:
+    """진입 후 1분봉에서 TP1 또는 SL을 최초로 건드린 캔들을 반환합니다."""
+    direction = str(direction).upper()
+    if direction == "LONG":
+        trigger_sql = "low <= ? OR (? IS NOT NULL AND high >= ?)"
+    else:
+        trigger_sql = "high >= ? OR (? IS NOT NULL AND low <= ?)"
+    with get_connection() as conn:
+        row = conn.execute(
+            f"""
+            SELECT timestamp, open, high, low, close
+            FROM candles
+            WHERE symbol=? AND timeframe='1m' AND timestamp >= ?
+              AND ({trigger_sql})
+            ORDER BY timestamp ASC
+            LIMIT 1
+            """,
+            (symbol, int(entry_timestamp_ms), float(stop_loss), take_profit_1, take_profit_1),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def update_trade_size(trade_id: int, size_btc: float) -> None:
     with get_connection() as conn:
         conn.execute(

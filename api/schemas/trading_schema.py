@@ -18,6 +18,7 @@ class RiskSettingsPayload(BaseModel):
     max_loss_pct: float
     daily_max_loss_pct: float
     consecutive_loss_limit: int
+    auto_stop_loss_analysis: bool = True
     confidence_threshold: float
     reentry_wait_seconds: int
     stop_reentry_wait_seconds: int = 900

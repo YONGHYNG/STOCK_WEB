@@ -29,6 +29,7 @@ class RiskSettings:
     max_loss_pct: float = 1.0           # 1회 최대 손실률 (%)
     daily_max_loss_pct: float = 3.0     # 일일 최대 손실률 (%)
     consecutive_loss_limit: int = 3     # 연속 손실 정지 횟수
+    auto_stop_loss_analysis: bool = True  # 손절 누락 복구 및 원인 자동 기록
 
     # 진입 조건
     confidence_threshold: float = 30.0  # 자동매매 확정 신호 기준 (%)
@@ -66,6 +67,7 @@ def load() -> RiskSettings:
                 max_loss_pct          = float(d.get("max_loss_pct",          1.0)),
                 daily_max_loss_pct    = float(d.get("daily_max_loss_pct",    3.0)),
                 consecutive_loss_limit= 3,
+                auto_stop_loss_analysis = bool(d.get("auto_stop_loss_analysis", True)),
                 confidence_threshold  = float(d.get("confidence_threshold",  30.0)),
                 reentry_wait_seconds  = int(d.get("reentry_wait_seconds", 900)),
                 stop_reentry_wait_seconds = int(d.get("stop_reentry_wait_seconds", 600)),

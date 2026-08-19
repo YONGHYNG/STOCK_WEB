@@ -203,10 +203,18 @@ def init_db() -> None:
                 initial_balance REAL NOT NULL,
                 balance         REAL NOT NULL,
                 leverage        REAL NOT NULL,
+                reset_after_trade_id INTEGER NOT NULL DEFAULT 0,
                 updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
+        paper_account_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(paper_account)").fetchall()
+        }
+        if "reset_after_trade_id" not in paper_account_columns:
+            conn.execute(
+                "ALTER TABLE paper_account ADD COLUMN reset_after_trade_id INTEGER NOT NULL DEFAULT 0"
+            )
         conn.commit()
 
 
@@ -221,12 +229,15 @@ def reconcile_paper_account(initial_balance: float = 100.0, leverage: float = 20
         account = conn.execute("SELECT * FROM paper_account WHERE id=1").fetchone()
         balance = float(account["initial_balance"])
         account_leverage = float(account["leverage"])
+        reset_after_trade_id = int(account["reset_after_trade_id"] or 0)
         rows = conn.execute(
             """
             SELECT id, entry_price, pnl_pct, size_btc FROM trades
             WHERE trade_type='PAPER' AND result != 'OPEN' AND pnl_pct IS NOT NULL
+              AND id > ?
             ORDER BY id ASC
-            """
+            """,
+            (reset_after_trade_id,),
         ).fetchall()
         for row in rows:
             if row["size_btc"] is not None:

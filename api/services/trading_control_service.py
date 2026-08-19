@@ -45,8 +45,15 @@ from backend.database import (
     get_recent_trades,
     insert_candles,
     insert_signal,
+    get_scheduled_entry_session,
+    record_scheduled_entry_session,
     open_trade,
     purge_unaligned_candles,
+)
+from backend.scheduled_entries import (
+    active_scheduled_session,
+    build_forced_entry_result,
+    choose_forced_direction,
 )
 from backend.server_state import state
 from api.schemas.trading_schema import (
@@ -1155,6 +1162,88 @@ async def account_loop():
         await asyncio.sleep(10)
 
 
+async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
+    """포지션이 없을 때 고정 세션 진입을 한 번만 실행한다."""
+    if get_scheduled_entry_session(session_date, session_key):
+        return True
+    mode = state.trading_mode
+    if not state.auto_trade_enabled or state.emergency_stopped or mode == "SIGNAL_ONLY":
+        return False
+
+    has_position = (
+        paper_trader.is_open
+        if mode == "PAPER_TRADING"
+        else bool(state.open_trade_id) or bool(
+            [p for p in state.cached_positions if p.get("symbol") == SYMBOL]
+        )
+    )
+    if has_position:
+        detail = "기존 포지션 보유로 세션 생략"
+        record_scheduled_entry_session(session_date, session_key, "SKIPPED_POSITION", mode, detail=detail)
+        msg = state.add_log(f"[고정 진입 {session_key}] {detail}")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        return True
+
+    if mode == "LIVE_TRADING" and (not private_client or not risk_cfg.live_trading_allowed):
+        return False
+    if not state.last_result or not state.last_price:
+        return False
+    if state.pending_paper_order or state.pending_live_order:
+        if not await _cancel_pending_order(f"고정 진입 {session_key} 현재가 주문 우선"):
+            return False
+
+    direction = choose_forced_direction(state.last_result)
+    forced = build_forced_entry_result(
+        state.last_result, float(state.last_price), direction, session_key, risk_cfg
+    )
+    if mode == "PAPER_TRADING":
+        forced["position_size_btc"] = _paper_full_leverage_size(forced["entry_price"])
+        trade_id = paper_trader.open_trade(direction, forced)
+        if state.paper_account_start_trade_id is None:
+            state.paper_account_start_trade_id = trade_id
+        detail = f"PAPER 현재가 체결 #{trade_id} @ ${forced['entry_price']:,.2f}"
+        await _send_filled_position_email(forced, "PAPER")
+    elif mode == "LIVE_TRADING":
+        size_value = float(forced.get("position_size_btc") or risk_cfg.order_size_btc)
+        size = f"{size_value:.8f}".rstrip("0").rstrip(".")
+        side = "buy" if direction == "LONG" else "sell"
+        try:
+            response = await asyncio.to_thread(private_client.place_market_order, side, size, "open")
+        except Exception as exc:
+            msg = state.add_log(f"[고정 진입 {session_key}] LIVE 시장가 주문 실패: {exc}")
+            await manager.broadcast({"type": "log", "data": {"message": msg}})
+            return False
+        order_id = str(response.get("orderId") or "market-pending")
+        state.pending_live_order_id = order_id
+        state.pending_live_order = {
+            "direction": direction, "entry_price": forced["entry_price"],
+            "order_id": order_id, "result": forced, **_pending_order_timestamps(result=forced),
+        }
+        detail = f"LIVE 시장가 주문 {order_id}"
+    else:
+        return False
+
+    risk_mgr.record_order_placed()
+    record_scheduled_entry_session(session_date, session_key, "ENTERED", mode, direction, detail)
+    msg = state.add_log(f"[고정 진입 {session_key}] {direction} {detail}")
+    await manager.broadcast({"type": "log", "data": {"message": msg}})
+    await manager.broadcast({"type": "trade_update"})
+    await manager.broadcast({"type": "status", "data": _status_payload()})
+    return True
+
+
+async def scheduled_entry_loop():
+    while True:
+        try:
+            active = active_scheduled_session()
+            if active:
+                await _execute_scheduled_entry(*active)
+        except Exception as exc:
+            msg = state.add_log(f"[고정 진입 오류] {exc}")
+            await manager.broadcast({"type": "log", "data": {"message": msg}})
+        await asyncio.sleep(5)
+
+
 async def _place_live_limit_protection(positions: list, result: dict):
     """LIVE 체결 직후 Bitget에 손절/익절 지정가 TPSL 주문을 등록한다."""
     if not private_client or not positions:
@@ -1282,6 +1371,7 @@ async def startup_event():
     asyncio.create_task(signal_loop())
     asyncio.create_task(price_loop())
     asyncio.create_task(account_loop())
+    asyncio.create_task(scheduled_entry_loop())
 
 
 # ── WebSocket ──────────────────────────────────────────────────────────────────

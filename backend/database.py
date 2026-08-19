@@ -184,6 +184,20 @@ def init_db() -> None:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS scheduled_entry_sessions (
+                session_date TEXT NOT NULL,
+                session_key  TEXT NOT NULL,
+                status       TEXT NOT NULL,
+                mode         TEXT,
+                direction    TEXT,
+                detail       TEXT,
+                processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (session_date, session_key)
+            )
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS paper_account (
                 id              INTEGER PRIMARY KEY CHECK (id = 1),
                 initial_balance REAL NOT NULL,
@@ -407,6 +421,39 @@ def close_trade(
             WHERE id=?
             """,
             (exit_price, result, round(pnl_pct, 4), profit_reason, loss_reason, trade_id),
+        )
+        conn.commit()
+
+
+def get_scheduled_entry_session(session_date: str, session_key: str) -> Optional[dict]:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM scheduled_entry_sessions WHERE session_date=? AND session_key=?",
+            (session_date, session_key),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def record_scheduled_entry_session(
+    session_date: str,
+    session_key: str,
+    status: str,
+    mode: str,
+    direction: Optional[str] = None,
+    detail: Optional[str] = None,
+) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO scheduled_entry_sessions
+                (session_date, session_key, status, mode, direction, detail)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_date, session_key) DO UPDATE SET
+                status=excluded.status, mode=excluded.mode,
+                direction=excluded.direction, detail=excluded.detail,
+                processed_at=CURRENT_TIMESTAMP
+            """,
+            (session_date, session_key, status, mode, direction, detail),
         )
         conn.commit()
 

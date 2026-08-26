@@ -53,7 +53,8 @@ from backend.database import (
 from backend.scheduled_entries import (
     active_scheduled_session,
     build_forced_entry_result,
-    choose_forced_direction,
+    choose_consensus_direction,
+    seconds_until_session_end,
 )
 from backend.server_state import state
 from api.schemas.trading_schema import (
@@ -79,7 +80,11 @@ PAPER_ACCOUNT_LEVERAGE = 20
 PENDING_ORDER_TTL_SECONDS = 10 * 60
 RANGE_PENDING_ORDER_TTL_SECONDS = 10 * 60
 PENDING_CANCEL_RETRY_SECONDS = 60
+SCHEDULED_ANALYSIS_INTERVAL_SECONDS = 60
+SCHEDULED_STABLE_SIGNAL_SAMPLES = 3
+SCHEDULED_FORCE_ENTRY_BEFORE_END_SECONDS = 60
 KST = ZoneInfo("Asia/Seoul")
+_scheduled_analysis_runs: dict[str, dict] = {}
 
 
 def _automatic_loss_analysis(trade_id: Optional[int], elapsed_seconds: Optional[int] = None) -> str:
@@ -660,6 +665,10 @@ async def _check_auto_trade(result: dict):
         return
     if state.trading_mode == "SIGNAL_ONLY":
         return
+    # 고정 세션 중에는 15초 일반 루프가 먼저 진입하지 않도록 하고,
+    # 1분 단위 다회 분석을 수행하는 scheduled_entry_loop에 진입 결정을 맡긴다.
+    if active_scheduled_session():
+        return
 
     direction = result.get("direction", "HOLD")
     confidence = result.get("confidence", 0.0)
@@ -1163,8 +1172,10 @@ async def account_loop():
 
 
 async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
-    """포지션이 없을 때 고정 세션 진입을 한 번만 실행한다."""
+    """최신 분석을 여러 번 확인한 뒤 고정 세션 의무 진입을 한 번 실행한다."""
+    run_key = f"{session_date}:{session_key}"
     if get_scheduled_entry_session(session_date, session_key):
+        _scheduled_analysis_runs.pop(run_key, None)
         return True
     mode = state.trading_mode
     if not state.auto_trade_enabled or state.emergency_stopped or mode == "SIGNAL_ONLY":
@@ -1178,6 +1189,7 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         )
     )
     if has_position:
+        _scheduled_analysis_runs.pop(run_key, None)
         detail = "기존 포지션 보유로 세션 생략"
         record_scheduled_entry_session(session_date, session_key, "SKIPPED_POSITION", mode, detail=detail)
         msg = state.add_log(f"[고정 진입 {session_key}] {detail}")
@@ -1186,16 +1198,99 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
 
     if mode == "LIVE_TRADING" and (not private_client or not risk_cfg.live_trading_allowed):
         return False
-    if not state.last_result or not state.last_price:
+    if not state.last_price:
         return False
+
+    analysis_run = _scheduled_analysis_runs.setdefault(
+        run_key,
+        {"samples": [], "attempts": 0, "last_analysis_at": 0.0},
+    )
+    now = time.monotonic()
+    remaining_seconds = seconds_until_session_end(session_date, session_key)
+    force_entry_due = remaining_seconds <= SCHEDULED_FORCE_ENTRY_BEFORE_END_SECONDS
+    if (
+        not force_entry_due
+        and
+        analysis_run["last_analysis_at"]
+        and now - analysis_run["last_analysis_at"] < SCHEDULED_ANALYSIS_INTERVAL_SECONDS
+    ):
+        return False
+
+    analysis_run["last_analysis_at"] = now
+    analysis_run["attempts"] += 1
+    fresh_result, errors = await asyncio.to_thread(_worker_analyze)
+    if fresh_result:
+        state.last_result = fresh_result
+        analysis_run["samples"].append(fresh_result)
+        direction_label = str(fresh_result.get("direction") or "HOLD").upper()
+        msg = state.add_log(
+            f"[고정 진입 {session_key}] 최신 분석 "
+            f"#{len(analysis_run['samples'])}: {direction_label} · "
+            f"신뢰도 {float(fresh_result.get('confidence') or 0):.1f} · "
+            f"종료까지 {max(0, int(remaining_seconds // 60))}분"
+        )
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        await manager.broadcast({"type": "signal", "data": fresh_result})
+    else:
+        msg = state.add_log(
+            f"[고정 진입 {session_key}] 최신 분석 실패 "
+            f"#{analysis_run['attempts']} · 종료까지 {max(0, int(remaining_seconds // 60))}분"
+        )
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+    for error in errors:
+        msg = state.add_log(f"[고정 진입 {session_key} 분석 경고] {error}")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+
+    # 분석 중 일반 루프에서 먼저 포지션을 열었으면 세션은 정상 완료로 기록한다.
+    position_opened_during_analysis = (
+        paper_trader.is_open
+        if mode == "PAPER_TRADING"
+        else bool(state.open_trade_id) or bool(
+            [p for p in state.cached_positions if p.get("symbol") == SYMBOL]
+        )
+    )
+    if position_opened_during_analysis:
+        _scheduled_analysis_runs.pop(run_key, None)
+        detail = "분석 중 일반 전략 진입으로 세션 완료"
+        record_scheduled_entry_session(session_date, session_key, "SKIPPED_POSITION", mode, detail=detail)
+        return True
+
+    samples = analysis_run["samples"]
+    latest = samples[-1] if samples else state.last_result
+    recent_samples = samples[-SCHEDULED_STABLE_SIGNAL_SAMPLES:]
+    recent_directions = [
+        str(sample.get("direction") or "HOLD").upper()
+        for sample in recent_samples
+    ]
+    stable_direction = recent_directions[-1] if recent_directions else "HOLD"
+    confirmed = bool(
+        len(recent_samples) == SCHEDULED_STABLE_SIGNAL_SAMPLES
+        and stable_direction in ("LONG", "SHORT")
+        and all(direction == stable_direction for direction in recent_directions)
+        and all(_is_order_eligible(sample) for sample in recent_samples)
+    )
+    analysis_complete = confirmed or force_entry_due
+    if not analysis_complete or not latest:
+        return False
+
     if state.pending_paper_order or state.pending_live_order:
         if not await _cancel_pending_order(f"고정 진입 {session_key} 현재가 주문 우선"):
             return False
 
-    direction = choose_forced_direction(state.last_result)
+    consensus_inputs = samples or [latest]
+    direction, consensus_score = choose_consensus_direction(consensus_inputs)
     forced = build_forced_entry_result(
-        state.last_result, float(state.last_price), direction, session_key, risk_cfg
+        latest, float(state.last_price), direction, session_key, risk_cfg
     )
+    forced["reasons"] = [
+        f"고정 진입 세션 {session_key}: 최신 분석 {len(consensus_inputs)}회 후 의무 진입",
+        f"다중 시간봉·확률·추세 합산 점수 {consensus_score:+.2f} → {direction}",
+        (
+            f"최근 {SCHEDULED_STABLE_SIGNAL_SAMPLES}회 적격 신호가 {stable_direction}으로 일치해 최적 타이밍 진입"
+            if confirmed
+            else "세션 종료 임박: HOLD 포함 전체 누적 분석의 우세 방향으로 의무 진입"
+        ),
+    ]
     if mode == "PAPER_TRADING":
         forced["position_size_btc"] = _paper_full_leverage_size(forced["entry_price"])
         trade_id = paper_trader.open_trade(direction, forced)
@@ -1225,6 +1320,7 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
 
     risk_mgr.record_order_placed()
     record_scheduled_entry_session(session_date, session_key, "ENTERED", mode, direction, detail)
+    _scheduled_analysis_runs.pop(run_key, None)
     msg = state.add_log(f"[고정 진입 {session_key}] {direction} {detail}")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "trade_update"})

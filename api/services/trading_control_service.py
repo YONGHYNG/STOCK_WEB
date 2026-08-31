@@ -1241,6 +1241,11 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         msg = state.add_log(f"[고정 진입 {session_key} 분석 경고] {error}")
         await manager.broadcast({"type": "log", "data": {"message": msg}})
 
+    # 캔들 수집과 다중 시간봉 분석 자체가 수분 걸릴 수 있으므로,
+    # 분석 완료 시점 기준으로 마감 의무 진입 여부를 다시 판단한다.
+    remaining_seconds = seconds_until_session_end(session_date, session_key)
+    force_entry_due = remaining_seconds <= SCHEDULED_FORCE_ENTRY_BEFORE_END_SECONDS
+
     # 분석 중 일반 루프에서 먼저 포지션을 열었으면 세션은 정상 완료로 기록한다.
     position_opened_during_analysis = (
         paper_trader.is_open
@@ -1282,9 +1287,12 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     forced = build_forced_entry_result(
         latest, float(state.last_price), direction, session_key, risk_cfg
     )
+    size_multiplier = float(forced.get("scheduled_size_multiplier") or 0.3)
     forced["reasons"] = [
         f"고정 진입 세션 {session_key}: 최신 분석 {len(consensus_inputs)}회 후 의무 진입",
         f"다중 시간봉·확률·추세 합산 점수 {consensus_score:+.2f} → {direction}",
+        f"시간봉 정렬도에 따른 진입 수량 {size_multiplier * 100:.0f}%",
+        f"ATR 기반 손절, 목표 손익비 1:{float(forced.get('risk_reward_ratio') or 0):.1f}",
         (
             f"최근 {SCHEDULED_STABLE_SIGNAL_SAMPLES}회 적격 신호가 {stable_direction}으로 일치해 최적 타이밍 진입"
             if confirmed
@@ -1292,14 +1300,17 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         ),
     ]
     if mode == "PAPER_TRADING":
-        forced["position_size_btc"] = _paper_full_leverage_size(forced["entry_price"])
+        forced["position_size_btc"] = round(
+            _paper_full_leverage_size(forced["entry_price"]) * size_multiplier,
+            8,
+        )
         trade_id = paper_trader.open_trade(direction, forced)
         if state.paper_account_start_trade_id is None:
             state.paper_account_start_trade_id = trade_id
         detail = f"PAPER 현재가 체결 #{trade_id} @ ${forced['entry_price']:,.2f}"
         await _send_filled_position_email(forced, "PAPER")
     elif mode == "LIVE_TRADING":
-        size_value = float(forced.get("position_size_btc") or risk_cfg.order_size_btc)
+        size_value = float(risk_cfg.order_size_btc) * size_multiplier
         size = f"{size_value:.8f}".rstrip("0").rstrip(".")
         side = "buy" if direction == "LONG" else "sell"
         try:

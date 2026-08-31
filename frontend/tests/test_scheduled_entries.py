@@ -9,6 +9,7 @@ from backend.scheduled_entries import (
     choose_consensus_direction,
     choose_forced_direction,
     direction_bias_score,
+    scheduled_size_multiplier,
     scheduled_session_bounds,
     seconds_until_session_end,
 )
@@ -54,11 +55,42 @@ class ScheduledEntryTests(unittest.TestCase):
             stop_gap_min_usdt=400, stop_gap_max_usdt=700,
             take_profit_1_min_usdt=500, take_profit_1_max_usdt=600,
             take_profit_2_usdt=800,
+            atr_stop_multiplier=1.5,
         )
         long = build_forced_entry_result({}, 64000, "LONG", "MORNING", settings)
         short = build_forced_entry_result({}, 64000, "SHORT", "US", settings)
-        self.assertEqual((long["stop_loss"], long["take_profit_1"]), (63450, 64550))
-        self.assertEqual((short["stop_loss"], short["take_profit_1"]), (64550, 63450))
+        self.assertEqual((long["stop_loss"], long["take_profit_1"]), (63450, 64715))
+        self.assertEqual((short["stop_loss"], short["take_profit_1"]), (64550, 63285))
+        self.assertEqual(long["risk_reward_ratio"], 1.3)
+
+    def test_atr_controls_stop_distance_with_configured_bounds(self):
+        settings = SimpleNamespace(
+            stop_gap_min_usdt=400, stop_gap_max_usdt=700,
+            take_profit_1_min_usdt=500, take_profit_1_max_usdt=600,
+            take_profit_2_usdt=800, atr_stop_multiplier=1.5,
+        )
+        result = {"diagnostics": {"metrics": {"atr14": 400}}}
+        plan = build_forced_entry_result(result, 64000, "LONG", "US", settings)
+        self.assertEqual(plan["stop_loss"], 63400)
+        self.assertEqual(plan["take_profit_1"], 64780)
+
+    def test_higher_timeframes_override_short_term_countertrend(self):
+        results = [{
+            "direction": "SHORT", "long_probability": 30, "short_probability": 70,
+            "timeframe_directions": {
+                "5m": "SHORT", "15m": "HOLD", "1H": "LONG", "4H": "LONG", "6H": "LONG",
+            },
+        }]
+        direction, _ = choose_consensus_direction(results)
+        self.assertEqual(direction, "LONG")
+
+    def test_mandatory_entry_scales_size_instead_of_skipping(self):
+        strong = {"timeframe_directions": {"5m": "LONG", "15m": "LONG", "1H": "LONG", "4H": "LONG", "6H": "LONG"}}
+        mixed = {"timeframe_directions": {"5m": "SHORT", "15m": "HOLD", "1H": "LONG", "4H": "LONG", "6H": "LONG"}}
+        opposed = {"timeframe_directions": {"5m": "LONG", "15m": "HOLD", "1H": "SHORT", "4H": "SHORT", "6H": "HOLD"}}
+        self.assertEqual(scheduled_size_multiplier(strong, "LONG"), 1.0)
+        self.assertEqual(scheduled_size_multiplier(mixed, "LONG"), 0.6)
+        self.assertEqual(scheduled_size_multiplier(opposed, "LONG"), 0.3)
 
     def test_consensus_uses_multiple_analyses_and_recent_weight(self):
         results = [

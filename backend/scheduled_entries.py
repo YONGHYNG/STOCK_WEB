@@ -121,7 +121,7 @@ def direction_bias_score(result: dict) -> float:
 
 
 def choose_consensus_direction(results: list[dict]) -> tuple[str, float]:
-    """여러 최신 분석을 시간순으로 가중 합산해 의무 진입 방향을 결정한다."""
+    """여러 분석을 합산하되 최종 방향은 최신 상위 시간봉을 우선한다."""
     usable = [result for result in results if result]
     if not usable:
         return "LONG", 0.0
@@ -130,17 +130,69 @@ def choose_consensus_direction(results: list[dict]) -> tuple[str, float]:
         # 최근 분석일수록 조금 더 크게 반영한다.
         recency_weight = 1.0 + (index - 1) * 0.25
         total += direction_bias_score(result) * recency_weight
+    latest = usable[-1]
+    directions = latest.get("timeframe_directions") or {}
+    one_hour = str(directions.get("1H") or "HOLD").upper()
+    four_hour = str(directions.get("4H") or "HOLD").upper()
+    fifteen_min = str(directions.get("15m") or "HOLD").upper()
+
+    # 1H와 4H가 합의하면 단기 잡음이나 오래된 표본이 방향을 뒤집지 못하게 한다.
+    if one_hour == four_hour and one_hour in ("LONG", "SHORT"):
+        return one_hour, total
+    # 1H가 아직 중립이면 4H 추세를 따른다. 이는 단기 반등/하락 추격을 막는다.
+    if one_hour == "HOLD" and four_hour in ("LONG", "SHORT"):
+        return four_hour, total
+    if four_hour == "HOLD" and one_hour in ("LONG", "SHORT"):
+        return one_hour, total
+    # 상위 시간봉이 정면 충돌할 때에만 15m를 타이브레이커로 쓴다.
+    if one_hour != four_hour and fifteen_min in ("LONG", "SHORT"):
+        return fifteen_min, total
     if total == 0:
-        return choose_forced_direction(usable[-1]), total
+        return choose_forced_direction(latest), total
     return ("LONG" if total > 0 else "SHORT"), total
 
 
+def scheduled_size_multiplier(result: dict, direction: str) -> float:
+    """의무 진입은 유지하면서 시간봉 정렬도에 따라 노출을 30/60/100%로 조절한다."""
+    directions = result.get("timeframe_directions") or {}
+    opposite = "SHORT" if direction == "LONG" else "LONG"
+    higher = [str(directions.get(tf) or "HOLD").upper() for tf in ("1H", "4H", "6H")]
+    lower = [str(directions.get(tf) or "HOLD").upper() for tf in ("5m", "15m")]
+    higher_agree = higher.count(direction)
+    higher_oppose = higher.count(opposite)
+
+    if higher_oppose >= 2 or (higher_agree == 0 and higher_oppose > 0):
+        return 0.3
+    if higher_agree >= 2 and higher_oppose == 0:
+        if direction in lower and opposite not in lower:
+            return 1.0
+        return 0.6
+    return 0.6
+
+
+def _scheduled_atr(result: dict) -> float:
+    metrics = (result.get("diagnostics") or {}).get("metrics") or {}
+    for value in (metrics.get("atr14"), result.get("atr14")):
+        try:
+            atr = float(value or 0)
+        except (TypeError, ValueError):
+            continue
+        if atr > 0:
+            return atr
+    return 0.0
+
+
 def build_forced_entry_result(result: dict, price: float, direction: str, session_key: str, settings) -> dict:
-    """현재가 진입용 SL/TP가 방향과 일치하도록 새 결과를 만든다."""
+    """의무 현재가 진입용 ATR 손절·양의 기대 손익비 계획을 만든다."""
     entry = float(price)
-    stop_gap = (float(settings.stop_gap_min_usdt) + float(settings.stop_gap_max_usdt)) / 2
-    tp1_gap = (float(settings.take_profit_1_min_usdt) + float(settings.take_profit_1_max_usdt)) / 2
-    tp2_gap = float(settings.take_profit_2_usdt)
+    min_stop = float(settings.stop_gap_min_usdt)
+    max_stop = float(settings.stop_gap_max_usdt)
+    atr = _scheduled_atr(result)
+    fallback_gap = (min_stop + max_stop) / 2
+    stop_gap = min(max(atr * float(getattr(settings, "atr_stop_multiplier", 1.5)), min_stop), max_stop) if atr else fallback_gap
+    tp1_gap = stop_gap * 1.3
+    tp2_gap = stop_gap * 1.8
+    size_multiplier = scheduled_size_multiplier(result, direction)
     forced = dict(result)
     forced.update({
         "direction": direction,
@@ -149,12 +201,15 @@ def build_forced_entry_result(result: dict, price: float, direction: str, sessio
         "take_profit_1": entry + tp1_gap if direction == "LONG" else entry - tp1_gap,
         "take_profit_2": entry + tp2_gap if direction == "LONG" else entry - tp2_gap,
         "risk_reward_ratio": round(tp1_gap / stop_gap, 3),
+        "scheduled_size_multiplier": size_multiplier,
         "confidence": float(result.get("confidence") or 0),
         "entry_grade": "SCHEDULED_MANDATORY",
         "strategy_signal": f"SCHEDULED_{session_key}_{direction}",
         "reasons": [
             f"고정 진입 세션 {session_key}: 포지션 없음 → 현재가 강제 진입",
             f"최신 지표·시간봉 방향 선택: {direction}",
+            f"시간봉 정렬도에 따른 진입 수량: {size_multiplier * 100:.0f}%",
+            f"ATR 기반 손절 ${stop_gap:,.2f}, 목표 손익비 1:{tp1_gap / stop_gap:.1f}",
         ],
     })
     return forced

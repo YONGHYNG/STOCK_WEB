@@ -512,6 +512,30 @@ def update_trade_size(trade_id: int, size_btc: float) -> None:
         conn.commit()
 
 
+def update_paper_trade_position(
+    trade_id: int,
+    entry_price: float,
+    size_btc: float,
+    stop_loss: float,
+    take_profit_1: float,
+    take_profit_2: float,
+) -> None:
+    """분할 체결 후 PAPER 거래의 평균단가·수량·보호가격을 한 번에 갱신한다."""
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE trades SET entry_price=?, size_btc=?, stop_loss=?,
+                take_profit_1=?, take_profit_2=?
+            WHERE id=? AND trade_type='PAPER' AND result='OPEN'
+            """,
+            (
+                float(entry_price), float(size_btc), float(stop_loss),
+                float(take_profit_1), float(take_profit_2), int(trade_id),
+            ),
+        )
+        conn.commit()
+
+
 def get_open_trade(symbol: str, trade_type: str = "LIVE") -> Optional[dict]:
     """현재 오픈 중인 거래를 반환합니다. trade_type: 'LIVE' | 'PAPER' | 'PLAN'"""
     with get_connection() as conn:

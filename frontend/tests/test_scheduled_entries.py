@@ -9,7 +9,7 @@ from backend.scheduled_entries import (
     choose_consensus_direction,
     choose_forced_direction,
     direction_bias_score,
-    scheduled_size_multiplier,
+    reprice_scheduled_result,
     scheduled_session_bounds,
     seconds_until_session_end,
 )
@@ -84,13 +84,18 @@ class ScheduledEntryTests(unittest.TestCase):
         direction, _ = choose_consensus_direction(results)
         self.assertEqual(direction, "LONG")
 
-    def test_mandatory_entry_scales_size_instead_of_skipping(self):
-        strong = {"timeframe_directions": {"5m": "LONG", "15m": "LONG", "1H": "LONG", "4H": "LONG", "6H": "LONG"}}
-        mixed = {"timeframe_directions": {"5m": "SHORT", "15m": "HOLD", "1H": "LONG", "4H": "LONG", "6H": "LONG"}}
-        opposed = {"timeframe_directions": {"5m": "LONG", "15m": "HOLD", "1H": "SHORT", "4H": "SHORT", "6H": "HOLD"}}
-        self.assertEqual(scheduled_size_multiplier(strong, "LONG"), 1.0)
-        self.assertEqual(scheduled_size_multiplier(mixed, "LONG"), 0.6)
-        self.assertEqual(scheduled_size_multiplier(opposed, "LONG"), 0.3)
+    def test_split_fill_reprices_protection_from_average_entry(self):
+        settings = SimpleNamespace(
+            stop_gap_min_usdt=400, stop_gap_max_usdt=700,
+            take_profit_1_min_usdt=500, take_profit_1_max_usdt=600,
+            take_profit_2_usdt=800, atr_stop_multiplier=1.5,
+        )
+        initial = build_forced_entry_result({}, 68000, "LONG", "US", settings)
+        self.assertEqual(initial["stop_loss"], 67450)
+        repriced = reprice_scheduled_result(initial, 67725)
+        self.assertEqual(repriced["stop_loss"], 67175)
+        self.assertEqual(repriced["take_profit_1"], 68440)
+        self.assertEqual(repriced["take_profit_2"], 68715)
 
     def test_consensus_uses_multiple_analyses_and_recent_weight(self):
         results = [

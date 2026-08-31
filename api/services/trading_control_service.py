@@ -51,9 +51,11 @@ from backend.database import (
     purge_unaligned_candles,
 )
 from backend.scheduled_entries import (
+    SCHEDULED_SPLIT_ENTRY_BEFORE_END_SECONDS,
     active_scheduled_session,
     build_forced_entry_result,
     choose_consensus_direction,
+    reprice_scheduled_result,
     seconds_until_session_end,
 )
 from backend.server_state import state
@@ -631,6 +633,7 @@ async def _check_paper_tp_sl(price: float):
         loss_reason = _append_loss_analysis(loss_reason, paper_trader.open_id, _elapsed_since_entry(row) if row else None)
     tid, pnl = paper_trader.close_trade(exit_price=limit_exit_price, result=result_code,
                                         profit_reason=profit_reason, loss_reason=loss_reason)
+    await _cancel_scheduled_scale_in_after_exit(tid, result_code)
     risk_mgr.record_trade_result(pnl, result_code)
     if (
         state.trading_mode != "PAPER_TRADING"
@@ -1133,6 +1136,8 @@ async def price_loop():
                 if state.open_trade_id and state.open_trade_data:
                     await _check_tp_sl(price)
                 if paper_trader.is_open:
+                    await _check_active_scheduled_scale_in()
+                if paper_trader.is_open:
                     await _check_paper_tp_sl(price)
                     if paper_trader.is_open:
                         await manager.broadcast({"type": "status", "data": _status_payload()})
@@ -1171,6 +1176,86 @@ async def account_loop():
         await asyncio.sleep(10)
 
 
+async def _complete_scheduled_paper_scale_in(
+    session_date: str,
+    session_key: str,
+    run_key: str,
+    analysis_run: dict,
+) -> bool:
+    """미리 정한 2차 가격에 도달했을 때만 PAPER 잔여 50%를 체결한다."""
+    split = analysis_run.get("scale_in") or {}
+    if not split or not paper_trader.is_open or not paper_trader.open_data:
+        return False
+    price = float(state.last_price or 0)
+    target = float(split.get("second_entry_price") or 0)
+    direction = str(split.get("direction") or "HOLD")
+    target_hit = (
+        direction == "LONG" and price <= target
+    ) or (
+        direction == "SHORT" and price >= target
+    )
+    if not target_hit:
+        return False
+
+    fill_price = target
+    added_size = float(split.get("second_size_btc") or 0)
+    current = paper_trader.open_data
+    current_size = float(current.get("size") or 0)
+    total_size = current_size + added_size
+    average = (
+        float(current.get("entry") or 0) * current_size + fill_price * added_size
+    ) / total_size
+    repriced = reprice_scheduled_result(split["result"], average)
+    trade_id, average = paper_trader.scale_in(fill_price, added_size, repriced)
+    detail = (
+        f"PAPER 50%+50% 완료 #{trade_id} · 2차 지정가 ${fill_price:,.2f} · "
+        f"평균단가 ${average:,.2f} · SL ${repriced['stop_loss']:,.2f} · "
+        f"TP1 ${repriced['take_profit_1']:,.2f}"
+    )
+    record_scheduled_entry_session(session_date, session_key, "ENTERED", "PAPER_TRADING", direction, detail)
+    _scheduled_analysis_runs.pop(run_key, None)
+    msg = state.add_log(f"[고정 진입 {session_key}] {detail}")
+    await manager.broadcast({"type": "log", "data": {"message": msg}})
+    await manager.broadcast({"type": "trade_update"})
+    await manager.broadcast({"type": "status", "data": _status_payload()})
+    return True
+
+
+async def _cancel_scheduled_scale_in_after_exit(trade_id: int, result_code: str) -> None:
+    """1차 50%만 보유한 채 청산되면 미체결 2차 주문과 관련 상태를 전부 제거한다."""
+    for run_key, analysis_run in list(_scheduled_analysis_runs.items()):
+        split = analysis_run.get("scale_in") or {}
+        if int(split.get("trade_id") or 0) != int(trade_id):
+            continue
+        session_date, session_key = run_key.split(":", 1)
+        direction = str(split.get("direction") or "HOLD")
+        target = float(split.get("second_entry_price") or 0)
+        state.pending_paper_order = None
+        detail = (
+            f"PAPER 1차 50% #{trade_id} {result_code} 종료 · "
+            f"미체결 2차 ${target:,.2f} 주문 취소"
+        )
+        record_scheduled_entry_session(
+            session_date, session_key, "ENTERED", "PAPER_TRADING", direction, detail
+        )
+        _scheduled_analysis_runs.pop(run_key, None)
+        msg = state.add_log(f"[고정 진입 {session_key}] {detail}")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        return
+
+
+async def _check_active_scheduled_scale_in() -> None:
+    """가격 루프에서 2차 진입가를 손절 검사보다 먼저 처리한다."""
+    for run_key, analysis_run in list(_scheduled_analysis_runs.items()):
+        if not analysis_run.get("scale_in"):
+            continue
+        session_date, session_key = run_key.split(":", 1)
+        await _complete_scheduled_paper_scale_in(
+            session_date, session_key, run_key, analysis_run
+        )
+        return
+
+
 async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     """최신 분석을 여러 번 확인한 뒤 고정 세션 의무 진입을 한 번 실행한다."""
     run_key = f"{session_date}:{session_key}"
@@ -1180,6 +1265,15 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     mode = state.trading_mode
     if not state.auto_trade_enabled or state.emergency_stopped or mode == "SIGNAL_ONLY":
         return False
+
+    analysis_run = _scheduled_analysis_runs.setdefault(
+        run_key,
+        {"samples": [], "attempts": 0, "last_analysis_at": 0.0},
+    )
+    if analysis_run.get("scale_in"):
+        return await _complete_scheduled_paper_scale_in(
+            session_date, session_key, run_key, analysis_run
+        )
 
     has_position = (
         paper_trader.is_open
@@ -1201,13 +1295,10 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     if not state.last_price:
         return False
 
-    analysis_run = _scheduled_analysis_runs.setdefault(
-        run_key,
-        {"samples": [], "attempts": 0, "last_analysis_at": 0.0},
-    )
     now = time.monotonic()
     remaining_seconds = seconds_until_session_end(session_date, session_key)
     force_entry_due = remaining_seconds <= SCHEDULED_FORCE_ENTRY_BEFORE_END_SECONDS
+    split_entry_due = remaining_seconds <= SCHEDULED_SPLIT_ENTRY_BEFORE_END_SECONDS
     if (
         not force_entry_due
         and
@@ -1245,6 +1336,7 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     # 분석 완료 시점 기준으로 마감 의무 진입 여부를 다시 판단한다.
     remaining_seconds = seconds_until_session_end(session_date, session_key)
     force_entry_due = remaining_seconds <= SCHEDULED_FORCE_ENTRY_BEFORE_END_SECONDS
+    split_entry_due = remaining_seconds <= SCHEDULED_SPLIT_ENTRY_BEFORE_END_SECONDS
 
     # 분석 중 일반 루프에서 먼저 포지션을 열었으면 세션은 정상 완료로 기록한다.
     position_opened_during_analysis = (
@@ -1274,7 +1366,7 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         and all(direction == stable_direction for direction in recent_directions)
         and all(_is_order_eligible(sample) for sample in recent_samples)
     )
-    analysis_complete = confirmed or force_entry_due
+    analysis_complete = confirmed or split_entry_due
     if not analysis_complete or not latest:
         return False
 
@@ -1287,30 +1379,67 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     forced = build_forced_entry_result(
         latest, float(state.last_price), direction, session_key, risk_cfg
     )
-    size_multiplier = float(forced.get("scheduled_size_multiplier") or 0.3)
     forced["reasons"] = [
         f"고정 진입 세션 {session_key}: 최신 분석 {len(consensus_inputs)}회 후 의무 진입",
         f"다중 시간봉·확률·추세 합산 점수 {consensus_score:+.2f} → {direction}",
-        f"시간봉 정렬도에 따른 진입 수량 {size_multiplier * 100:.0f}%",
+        "총 주문계획 100% (애매한 신호는 가격 기준 50%+50% 분할)",
         f"ATR 기반 손절, 목표 손익비 1:{float(forced.get('risk_reward_ratio') or 0):.1f}",
         (
             f"최근 {SCHEDULED_STABLE_SIGNAL_SAMPLES}회 적격 신호가 {stable_direction}으로 일치해 최적 타이밍 진입"
             if confirmed
-            else "세션 종료 임박: HOLD 포함 전체 누적 분석의 우세 방향으로 의무 진입"
+            else "적격 신호 미확정: 누적 우세 방향으로 1차 50% 진입 후 가격 기준 2차 대기"
         ),
     ]
     if mode == "PAPER_TRADING":
-        forced["position_size_btc"] = round(
-            _paper_full_leverage_size(forced["entry_price"]) * size_multiplier,
-            8,
-        )
+        full_size = _paper_full_leverage_size(forced["entry_price"])
+        if not confirmed and split_entry_due:
+            # 기존 손절 후보를 2차 진입가로 전환한다. 예상 평균단가 기준으로
+            # 손절을 한 단계 더 밖에 두어 2차 가격 도달 시 손절이 먼저 나가지 않게 한다.
+            second_entry = float(forced["stop_loss"])
+            projected_average = (float(forced["entry_price"]) + second_entry) / 2
+            projected = reprice_scheduled_result(forced, projected_average)
+            first_size = round(full_size * 0.5, 8)
+            second_size = round(full_size - first_size, 8)
+            first_plan = dict(projected)
+            first_plan.update({
+                "entry_price": float(forced["entry_price"]),
+                "take_profit_1": forced["take_profit_1"],
+                "take_profit_2": forced["take_profit_2"],
+                "position_size_btc": first_size,
+            })
+            first_plan["reasons"] = list(forced["reasons"]) + [
+                f"애매한 신호 1차 50% 진입, 2차 LONG/SHORT 대응 가격 ${second_entry:,.2f}",
+                "2차 가격보다 바깥에 최종 손절 배치, 1차 익절 시 미체결 잔량 취소",
+            ]
+            trade_id = paper_trader.open_trade(direction, first_plan)
+            if state.paper_account_start_trade_id is None:
+                state.paper_account_start_trade_id = trade_id
+            analysis_run["scale_in"] = {
+                "trade_id": trade_id,
+                "direction": direction,
+                "second_entry_price": second_entry,
+                "second_size_btc": second_size,
+                "result": forced,
+            }
+            risk_mgr.record_order_placed()
+            msg = state.add_log(
+                f"[고정 진입 {session_key}] {direction} 1차 50% #{trade_id} "
+                f"${forced['entry_price']:,.2f} · 2차 ${second_entry:,.2f} 대기 · "
+                f"1차 청산 시 미체결 잔량 전부 취소"
+            )
+            await manager.broadcast({"type": "log", "data": {"message": msg}})
+            await _send_filled_position_email(first_plan, "PAPER")
+            await manager.broadcast({"type": "trade_update"})
+            await manager.broadcast({"type": "status", "data": _status_payload()})
+            return False
+        forced["position_size_btc"] = round(full_size, 8)
         trade_id = paper_trader.open_trade(direction, forced)
         if state.paper_account_start_trade_id is None:
             state.paper_account_start_trade_id = trade_id
         detail = f"PAPER 현재가 체결 #{trade_id} @ ${forced['entry_price']:,.2f}"
         await _send_filled_position_email(forced, "PAPER")
     elif mode == "LIVE_TRADING":
-        size_value = float(risk_cfg.order_size_btc) * size_multiplier
+        size_value = float(risk_cfg.order_size_btc)
         size = f"{size_value:.8f}".rstrip("0").rstrip(".")
         side = "buy" if direction == "LONG" else "sell"
         try:

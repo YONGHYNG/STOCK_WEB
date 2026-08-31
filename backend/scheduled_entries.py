@@ -11,6 +11,7 @@ SCHEDULED_ENTRY_WINDOWS = (
     ("EUROPE", time(16, 30), time(17, 0)),
     ("US", time(23, 40), time(0, 20)),
 )
+SCHEDULED_SPLIT_ENTRY_BEFORE_END_SECONDS = 10 * 60
 
 
 def scheduled_session_bounds(session_date: str, session_key: str) -> tuple[datetime, datetime]:
@@ -152,24 +153,6 @@ def choose_consensus_direction(results: list[dict]) -> tuple[str, float]:
     return ("LONG" if total > 0 else "SHORT"), total
 
 
-def scheduled_size_multiplier(result: dict, direction: str) -> float:
-    """의무 진입은 유지하면서 시간봉 정렬도에 따라 노출을 30/60/100%로 조절한다."""
-    directions = result.get("timeframe_directions") or {}
-    opposite = "SHORT" if direction == "LONG" else "LONG"
-    higher = [str(directions.get(tf) or "HOLD").upper() for tf in ("1H", "4H", "6H")]
-    lower = [str(directions.get(tf) or "HOLD").upper() for tf in ("5m", "15m")]
-    higher_agree = higher.count(direction)
-    higher_oppose = higher.count(opposite)
-
-    if higher_oppose >= 2 or (higher_agree == 0 and higher_oppose > 0):
-        return 0.3
-    if higher_agree >= 2 and higher_oppose == 0:
-        if direction in lower and opposite not in lower:
-            return 1.0
-        return 0.6
-    return 0.6
-
-
 def _scheduled_atr(result: dict) -> float:
     metrics = (result.get("diagnostics") or {}).get("metrics") or {}
     for value in (metrics.get("atr14"), result.get("atr14")):
@@ -192,7 +175,6 @@ def build_forced_entry_result(result: dict, price: float, direction: str, sessio
     stop_gap = min(max(atr * float(getattr(settings, "atr_stop_multiplier", 1.5)), min_stop), max_stop) if atr else fallback_gap
     tp1_gap = stop_gap * 1.3
     tp2_gap = stop_gap * 1.8
-    size_multiplier = scheduled_size_multiplier(result, direction)
     forced = dict(result)
     forced.update({
         "direction": direction,
@@ -201,15 +183,35 @@ def build_forced_entry_result(result: dict, price: float, direction: str, sessio
         "take_profit_1": entry + tp1_gap if direction == "LONG" else entry - tp1_gap,
         "take_profit_2": entry + tp2_gap if direction == "LONG" else entry - tp2_gap,
         "risk_reward_ratio": round(tp1_gap / stop_gap, 3),
-        "scheduled_size_multiplier": size_multiplier,
+        "scheduled_stop_gap": stop_gap,
+        "scheduled_tp1_ratio": 1.3,
+        "scheduled_tp2_ratio": 1.8,
         "confidence": float(result.get("confidence") or 0),
         "entry_grade": "SCHEDULED_MANDATORY",
         "strategy_signal": f"SCHEDULED_{session_key}_{direction}",
         "reasons": [
             f"고정 진입 세션 {session_key}: 포지션 없음 → 현재가 강제 진입",
             f"최신 지표·시간봉 방향 선택: {direction}",
-            f"시간봉 정렬도에 따른 진입 수량: {size_multiplier * 100:.0f}%",
             f"ATR 기반 손절 ${stop_gap:,.2f}, 목표 손익비 1:{tp1_gap / stop_gap:.1f}",
         ],
     })
     return forced
+
+
+def reprice_scheduled_result(result: dict, average_entry: float) -> dict:
+    """분할 체결 평균단가를 기준으로 SL/TP를 동일 위험 거리로 다시 계산한다."""
+    repriced = dict(result)
+    direction = str(repriced.get("direction") or "HOLD").upper()
+    entry = float(average_entry)
+    stop_gap = float(repriced.get("scheduled_stop_gap") or 0)
+    if direction not in ("LONG", "SHORT") or entry <= 0 or stop_gap <= 0:
+        return repriced
+    tp1_gap = stop_gap * float(repriced.get("scheduled_tp1_ratio") or 1.3)
+    tp2_gap = stop_gap * float(repriced.get("scheduled_tp2_ratio") or 1.8)
+    repriced.update({
+        "entry_price": entry,
+        "stop_loss": entry - stop_gap if direction == "LONG" else entry + stop_gap,
+        "take_profit_1": entry + tp1_gap if direction == "LONG" else entry - tp1_gap,
+        "take_profit_2": entry + tp2_gap if direction == "LONG" else entry - tp2_gap,
+    })
+    return repriced

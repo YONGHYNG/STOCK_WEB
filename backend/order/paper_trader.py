@@ -157,6 +157,29 @@ class PaperTrader:
         db.update_trade_size(self._open_id, size)
         self._open_data["size"] = size
 
+    def scale_in(self, fill_price: float, added_size: float, plan: dict) -> tuple[int, float]:
+        """기존 PAPER 포지션에 추가 체결하고 평균단가와 보호가격을 갱신한다."""
+        if not self._open_id or not self._open_data:
+            return 0, 0.0
+        current_size = float(self._open_data.get("size") or 0)
+        added = float(added_size or 0)
+        if current_size <= 0 or added <= 0:
+            return self._open_id, float(self._open_data.get("entry") or 0)
+        total_size = current_size + added
+        average = (
+            float(self._open_data["entry"]) * current_size + float(fill_price) * added
+        ) / total_size
+        db.update_paper_trade_position(
+            self._open_id, average, total_size,
+            plan.get("stop_loss"), plan.get("take_profit_1"), plan.get("take_profit_2"),
+        )
+        self._open_data.update({
+            "entry": average, "size": total_size,
+            "sl": plan.get("stop_loss"), "tp1": plan.get("take_profit_1"),
+            "tp2": plan.get("take_profit_2"),
+        })
+        return self._open_id, average
+
     def restore_from_db(self):
         """프로그램 재시작 시 PAPER_OPEN 상태의 거래를 복구합니다."""
         row = db.get_open_trade(SYMBOL, trade_type="PAPER")

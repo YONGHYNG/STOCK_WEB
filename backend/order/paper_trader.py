@@ -79,6 +79,7 @@ class PaperTrader:
             "tp1":       r.get("take_profit_1"),
             "tp2":       r.get("take_profit_2"),
             "size":      r.get("position_size_btc"),
+            "position_size_percent": float(r.get("position_size_percent") or 100),
         }
         return trade_id
 
@@ -175,6 +176,7 @@ class PaperTrader:
         )
         self._open_data.update({
             "entry": average, "size": total_size,
+            "position_size_percent": 100.0,
             "sl": plan.get("stop_loss"), "tp1": plan.get("take_profit_1"),
             "tp2": plan.get("take_profit_2"),
         })
@@ -192,4 +194,5 @@ class PaperTrader:
                 "tp1":       row["take_profit_1"],
                 "tp2":       row["take_profit_2"],
                 "size":      row.get("size_btc"),
+                "position_size_percent": 100.0,
             }

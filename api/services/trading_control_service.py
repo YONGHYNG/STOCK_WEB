@@ -655,6 +655,8 @@ async def _check_paper_tp_sl(price: float):
             "take_profit_2": t.get("tp2"),
             "exit_price": limit_exit_price,
             "pnl_pct": pnl,
+            "position_size_btc": t.get("size"),
+            "position_size_percent": t.get("position_size_percent", 100),
         },
         "PAPER",
     )
@@ -1206,6 +1208,11 @@ async def _complete_scheduled_paper_scale_in(
         float(current.get("entry") or 0) * current_size + fill_price * added_size
     ) / total_size
     repriced = reprice_scheduled_result(split["result"], average)
+    repriced["position_size_btc"] = total_size
+    repriced["position_size_percent"] = 100.0
+    repriced["entry_stage"] = 2
+    repriced["second_entry_price"] = fill_price
+    repriced["average_entry_price"] = average
     trade_id, average = paper_trader.scale_in(fill_price, added_size, repriced)
     detail = (
         f"PAPER 50%+50% 완료 #{trade_id} · 2차 지정가 ${fill_price:,.2f} · "
@@ -1218,6 +1225,7 @@ async def _complete_scheduled_paper_scale_in(
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "trade_update"})
     await manager.broadcast({"type": "status", "data": _status_payload()})
+    await _send_filled_position_email(repriced, "PAPER")
     return True
 
 
@@ -1406,6 +1414,7 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
                 "take_profit_1": forced["take_profit_1"],
                 "take_profit_2": forced["take_profit_2"],
                 "position_size_btc": first_size,
+                "position_size_percent": 50.0,
             })
             first_plan["reasons"] = list(forced["reasons"]) + [
                 f"애매한 신호 1차 50% 진입, 2차 LONG/SHORT 대응 가격 ${second_entry:,.2f}",
@@ -1658,6 +1667,34 @@ def _status_payload() -> dict:
 
 def _pending_entry_payload() -> Optional[dict]:
     now = time.time()
+    for analysis_run in _scheduled_analysis_runs.values():
+        split = analysis_run.get("scale_in") or {}
+        if not split:
+            continue
+        result = split.get("result") or {}
+        target = float(split.get("second_entry_price") or 0)
+        current = paper_trader.open_data or {}
+        current_size = float(current.get("size") or 0)
+        second_size = float(split.get("second_size_btc") or 0)
+        total_size = current_size + second_size
+        average = (
+            (float(current.get("entry") or 0) * current_size + target * second_size) / total_size
+            if total_size > 0 else target
+        )
+        repriced = reprice_scheduled_result(result, average)
+        return {
+            "mode": "PAPER · 2차 50%",
+            "direction": split.get("direction"),
+            "entry_price": target,
+            "stop_loss": repriced.get("stop_loss"),
+            "take_profit_1": repriced.get("take_profit_1"),
+            "take_profit_2": repriced.get("take_profit_2"),
+            "position_size_percent": 50,
+            "filled_percent": 50,
+            "pending_stage": 2,
+            "expected_average_entry": average,
+            "remaining_seconds": None,
+        }
     if state.pending_paper_order:
         result = state.pending_paper_order.get("result") or {}
         expires_at = float(state.pending_paper_order.get("expires_at") or 0)

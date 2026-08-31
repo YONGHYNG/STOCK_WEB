@@ -186,6 +186,7 @@ def build_forced_entry_result(result: dict, price: float, direction: str, sessio
         "scheduled_stop_gap": stop_gap,
         "scheduled_tp1_ratio": 1.3,
         "scheduled_tp2_ratio": 1.8,
+        "position_size_percent": 100.0,
         "confidence": float(result.get("confidence") or 0),
         "entry_grade": "SCHEDULED_MANDATORY",
         "strategy_signal": f"SCHEDULED_{session_key}_{direction}",

@@ -59,9 +59,11 @@ class ScheduledEntryTests(unittest.TestCase):
         )
         long = build_forced_entry_result({}, 64000, "LONG", "MORNING", settings)
         short = build_forced_entry_result({}, 64000, "SHORT", "US", settings)
-        self.assertEqual((long["stop_loss"], long["take_profit_1"]), (63450, 64715))
-        self.assertEqual((short["stop_loss"], short["take_profit_1"]), (64550, 63285))
-        self.assertEqual(long["risk_reward_ratio"], 1.3)
+        self.assertEqual((long["stop_loss"], long["take_profit_1"]), (63475, 64630))
+        self.assertEqual((short["stop_loss"], short["take_profit_1"]), (64525, 63370))
+        self.assertEqual(long["risk_reward_ratio"], 1.2)
+        self.assertEqual(long["scalp_max_hold_seconds"], 45 * 60)
+        self.assertEqual(long["scalp_no_progress_seconds"], 15 * 60)
 
     def test_atr_controls_stop_distance_with_configured_bounds(self):
         settings = SimpleNamespace(
@@ -71,10 +73,10 @@ class ScheduledEntryTests(unittest.TestCase):
         )
         result = {"diagnostics": {"metrics": {"atr14": 400}}}
         plan = build_forced_entry_result(result, 64000, "LONG", "US", settings)
-        self.assertEqual(plan["stop_loss"], 63400)
-        self.assertEqual(plan["take_profit_1"], 64780)
+        self.assertEqual(plan["stop_loss"], 63550)
+        self.assertEqual(plan["take_profit_1"], 64540)
 
-    def test_higher_timeframes_override_short_term_countertrend(self):
+    def test_scalp_direction_prioritizes_five_and_fifteen_minute_frames(self):
         results = [{
             "direction": "SHORT", "long_probability": 30, "short_probability": 70,
             "timeframe_directions": {
@@ -82,7 +84,7 @@ class ScheduledEntryTests(unittest.TestCase):
             },
         }]
         direction, _ = choose_consensus_direction(results)
-        self.assertEqual(direction, "LONG")
+        self.assertEqual(direction, "SHORT")
 
     def test_split_fill_reprices_protection_from_average_entry(self):
         settings = SimpleNamespace(
@@ -91,11 +93,11 @@ class ScheduledEntryTests(unittest.TestCase):
             take_profit_2_usdt=800, atr_stop_multiplier=1.5,
         )
         initial = build_forced_entry_result({}, 68000, "LONG", "US", settings)
-        self.assertEqual(initial["stop_loss"], 67450)
+        self.assertEqual(initial["stop_loss"], 67475)
         repriced = reprice_scheduled_result(initial, 67725)
-        self.assertEqual(repriced["stop_loss"], 67175)
-        self.assertEqual(repriced["take_profit_1"], 68440)
-        self.assertEqual(repriced["take_profit_2"], 68715)
+        self.assertEqual(repriced["stop_loss"], 67200)
+        self.assertEqual(repriced["take_profit_1"], 68355)
+        self.assertEqual(repriced["take_profit_2"], 68512.5)
 
     def test_consensus_uses_multiple_analyses_and_recent_weight(self):
         results = [

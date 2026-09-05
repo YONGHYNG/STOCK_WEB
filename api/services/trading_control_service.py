@@ -82,8 +82,9 @@ PAPER_ACCOUNT_LEVERAGE = 20
 PENDING_ORDER_TTL_SECONDS = 10 * 60
 RANGE_PENDING_ORDER_TTL_SECONDS = 10 * 60
 PENDING_CANCEL_RETRY_SECONDS = 60
-SCHEDULED_ANALYSIS_INTERVAL_SECONDS = 60
+SCHEDULED_ANALYSIS_INTERVAL_SECONDS = 20
 SCHEDULED_STABLE_SIGNAL_SAMPLES = 3
+SCHEDULED_REQUIRED_MATCHING_SAMPLES = 2
 SCHEDULED_FORCE_ENTRY_BEFORE_END_SECONDS = 60
 KST = ZoneInfo("Asia/Seoul")
 _scheduled_analysis_runs: dict[str, dict] = {}
@@ -662,6 +663,50 @@ async def _check_paper_tp_sl(price: float):
     )
 
 
+async def _check_paper_scalp_time_exit(price: float) -> bool:
+    """고정 세션 단타가 진행되지 않거나 45분을 넘기면 시장가로 정리한다."""
+    if not paper_trader.is_open or not paper_trader.open_data:
+        return False
+    trade_id = paper_trader.open_id
+    row = get_trade(trade_id) or {}
+    if "고정 진입 세션" not in str(row.get("entry_reason") or ""):
+        return False
+    elapsed = _elapsed_since_entry(row)
+    t = paper_trader.open_data
+    stop_gap = abs(float(t.get("entry") or 0) - float(t.get("sl") or 0))
+    current_favorable = (
+        float(price) - float(t.get("entry") or 0)
+        if t.get("direction") == "LONG"
+        else float(t.get("entry") or 0) - float(price)
+    )
+    max_favorable = max(float(t.get("max_favorable_move") or 0), current_favorable)
+    t["max_favorable_move"] = max_favorable
+    no_progress_seconds = int(t.get("scalp_no_progress_seconds") or 15 * 60)
+    max_hold_seconds = int(t.get("scalp_max_hold_seconds") or 45 * 60)
+    min_progress = stop_gap * float(t.get("scalp_min_progress_ratio") or 0.3)
+    reason = None
+    if elapsed >= max_hold_seconds:
+        reason = f"단타 최대 보유 {max_hold_seconds // 60}분 도달"
+    elif elapsed >= no_progress_seconds and max_favorable < min_progress:
+        reason = f"{no_progress_seconds // 60}분 동안 +0.3R 진행 없음"
+    if not reason:
+        return False
+    tid, pnl = paper_trader.close_trade(
+        exit_price=price,
+        result="TIME_EXIT",
+        profit_reason=f"[단타 시간청산] {reason}" if _pnl_pct(t["direction"], t["entry"], price) >= 0 else "",
+        loss_reason=f"[단타 시간청산] {reason}" if _pnl_pct(t["direction"], t["entry"], price) < 0 else "",
+        exit_fee_rate=TAKER_FEE_RATE,
+    )
+    await _cancel_scheduled_scale_in_after_exit(tid, "TIME_EXIT")
+    risk_mgr.record_trade_result(pnl, "TIME_EXIT")
+    msg = state.add_log(f"[모의매매 시간청산] #{tid} {pnl:+.2f}% · {reason}")
+    await manager.broadcast({"type": "log", "data": {"message": msg}})
+    await manager.broadcast({"type": "trade_update"})
+    await manager.broadcast({"type": "status", "data": _status_payload()})
+    return True
+
+
 # ── Auto trade ─────────────────────────────────────────────────────────────────
 
 
@@ -1140,7 +1185,9 @@ async def price_loop():
                 if paper_trader.is_open:
                     await _check_active_scheduled_scale_in()
                 if paper_trader.is_open:
-                    await _check_paper_tp_sl(price)
+                    time_exited = await _check_paper_scalp_time_exit(price)
+                    if not time_exited:
+                        await _check_paper_tp_sl(price)
                     if paper_trader.is_open:
                         await manager.broadcast({"type": "status", "data": _status_payload()})
         except Exception:
@@ -1192,9 +1239,9 @@ async def _complete_scheduled_paper_scale_in(
     target = float(split.get("second_entry_price") or 0)
     direction = str(split.get("direction") or "HOLD")
     target_hit = (
-        direction == "LONG" and price <= target
+        direction == "LONG" and price >= target
     ) or (
-        direction == "SHORT" and price >= target
+        direction == "SHORT" and price <= target
     )
     if not target_hit:
         return False
@@ -1368,11 +1415,20 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         for sample in recent_samples
     ]
     stable_direction = recent_directions[-1] if recent_directions else "HOLD"
-    confirmed = bool(
+    eligible_directions = [
+        direction for sample, direction in zip(recent_samples, recent_directions)
+        if direction in ("LONG", "SHORT") and _is_order_eligible(sample)
+    ]
+    long_matches = eligible_directions.count("LONG")
+    short_matches = eligible_directions.count("SHORT")
+    confirmed_direction = (
+        "LONG" if long_matches >= SCHEDULED_REQUIRED_MATCHING_SAMPLES
+        else "SHORT" if short_matches >= SCHEDULED_REQUIRED_MATCHING_SAMPLES
+        else "HOLD"
+    )
+    confirmed = (
         len(recent_samples) == SCHEDULED_STABLE_SIGNAL_SAMPLES
-        and stable_direction in ("LONG", "SHORT")
-        and all(direction == stable_direction for direction in recent_directions)
-        and all(_is_order_eligible(sample) for sample in recent_samples)
+        and confirmed_direction in ("LONG", "SHORT")
     )
     analysis_complete = confirmed or split_entry_due
     if not analysis_complete or not latest:
@@ -1384,6 +1440,8 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
 
     consensus_inputs = samples or [latest]
     direction, consensus_score = choose_consensus_direction(consensus_inputs)
+    if confirmed:
+        direction = confirmed_direction
     forced = build_forced_entry_result(
         latest, float(state.last_price), direction, session_key, risk_cfg
     )
@@ -1393,7 +1451,7 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         "총 주문계획 100% (애매한 신호는 가격 기준 50%+50% 분할)",
         f"ATR 기반 손절, 목표 손익비 1:{float(forced.get('risk_reward_ratio') or 0):.1f}",
         (
-            f"최근 {SCHEDULED_STABLE_SIGNAL_SAMPLES}회 적격 신호가 {stable_direction}으로 일치해 최적 타이밍 진입"
+            f"최근 {SCHEDULED_STABLE_SIGNAL_SAMPLES}회 중 {SCHEDULED_REQUIRED_MATCHING_SAMPLES}회 적격 신호가 {confirmed_direction}으로 일치해 단타 진입"
             if confirmed
             else "적격 신호 미확정: 누적 우세 방향으로 1차 50% 진입 후 가격 기준 2차 대기"
         ),
@@ -1401,9 +1459,14 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     if mode == "PAPER_TRADING":
         full_size = _paper_full_leverage_size(forced["entry_price"])
         if not confirmed and split_entry_due:
-            # 기존 손절 후보를 2차 진입가로 전환한다. 예상 평균단가 기준으로
-            # 손절을 한 단계 더 밖에 두어 2차 가격 도달 시 손절이 먼저 나가지 않게 한다.
-            second_entry = float(forced["stop_loss"])
+            # 불리한 방향 물타기 대신 +0.35R 진행을 확인한 뒤 잔여 50%를 추가한다.
+            stop_gap = float(forced.get("scheduled_stop_gap") or 0)
+            add_on_gap = stop_gap * float(forced.get("scheduled_add_on_ratio") or 0.35)
+            second_entry = (
+                float(forced["entry_price"]) + add_on_gap
+                if direction == "LONG"
+                else float(forced["entry_price"]) - add_on_gap
+            )
             projected_average = (float(forced["entry_price"]) + second_entry) / 2
             projected = reprice_scheduled_result(forced, projected_average)
             first_size = round(full_size * 0.5, 8)
@@ -1417,8 +1480,8 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
                 "position_size_percent": 50.0,
             })
             first_plan["reasons"] = list(forced["reasons"]) + [
-                f"애매한 신호 1차 50% 진입, 2차 LONG/SHORT 대응 가격 ${second_entry:,.2f}",
-                "2차 가격보다 바깥에 최종 손절 배치, 1차 익절 시 미체결 잔량 취소",
+                f"애매한 신호 1차 50% 진입, 유리하게 +0.35R 진행 시 2차 ${second_entry:,.2f}",
+                "불리한 방향 물타기 금지, 1차 청산 시 미체결 잔량 취소",
             ]
             trade_id = paper_trader.open_trade(direction, first_plan)
             if state.paper_account_start_trade_id is None:

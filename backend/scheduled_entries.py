@@ -12,6 +12,12 @@ SCHEDULED_ENTRY_WINDOWS = (
     ("US", time(23, 40), time(0, 20)),
 )
 SCHEDULED_SPLIT_ENTRY_BEFORE_END_SECONDS = 10 * 60
+SCALP_STOP_ATR_MULTIPLIER = 0.8
+SCALP_STOP_GAP_MIN_USDT = 450.0
+SCALP_STOP_GAP_MAX_USDT = 600.0
+SCALP_TP1_RISK_RATIO = 1.2
+SCALP_TP2_RISK_RATIO = 1.5
+SCALP_ADD_ON_RISK_RATIO = 0.35
 
 
 def scheduled_session_bounds(session_date: str, session_key: str) -> tuple[datetime, datetime]:
@@ -76,8 +82,12 @@ def choose_forced_direction(result: dict) -> str:
         (long_score := long_score + 1) if close >= vwap else (short_score := short_score + 1)
     if slope:
         (long_score := long_score + 1) if slope > 0 else (short_score := short_score + 1)
+    timeframe_weights = {
+        "1m": 1, "5m": 3, "15m": 4, "30m": 2,
+        "1H": 2, "4H": 1, "6H": 1, "1D": 1,
+    }
     for tf, vote in (result.get("timeframe_directions") or {}).items():
-        weight = 2 if tf in ("15m", "1H", "4H") else 1
+        weight = timeframe_weights.get(tf, 1)
         if vote == "LONG":
             long_score += weight
         elif vote == "SHORT":
@@ -108,9 +118,11 @@ def direction_bias_score(result: dict) -> float:
     if slope:
         score += 2 if slope > 0 else -2
 
+    # 고정 세션은 수십 분 안에 끝내는 단타이므로 5m·15m에 가장 큰
+    # 가중치를 주고, 4H 이상은 방향을 뒤집지 않는 보조 필터로만 쓴다.
     timeframe_weights = {
-        "1m": 1, "5m": 2, "15m": 3, "30m": 3,
-        "1H": 4, "4H": 4, "6H": 3, "1D": 2,
+        "1m": 1, "5m": 3, "15m": 4, "30m": 2,
+        "1H": 2, "4H": 1, "6H": 1, "1D": 1,
     }
     for timeframe, vote in (result.get("timeframe_directions") or {}).items():
         weight = timeframe_weights.get(timeframe, 1)
@@ -122,7 +134,7 @@ def direction_bias_score(result: dict) -> float:
 
 
 def choose_consensus_direction(results: list[dict]) -> tuple[str, float]:
-    """여러 분석을 합산하되 최종 방향은 최신 상위 시간봉을 우선한다."""
+    """여러 분석을 합산하되 단타 방향인 최신 5m·15m 합의를 우선한다."""
     usable = [result for result in results if result]
     if not usable:
         return "LONG", 0.0
@@ -133,20 +145,11 @@ def choose_consensus_direction(results: list[dict]) -> tuple[str, float]:
         total += direction_bias_score(result) * recency_weight
     latest = usable[-1]
     directions = latest.get("timeframe_directions") or {}
-    one_hour = str(directions.get("1H") or "HOLD").upper()
-    four_hour = str(directions.get("4H") or "HOLD").upper()
+    five_min = str(directions.get("5m") or "HOLD").upper()
     fifteen_min = str(directions.get("15m") or "HOLD").upper()
-
-    # 1H와 4H가 합의하면 단기 잡음이나 오래된 표본이 방향을 뒤집지 못하게 한다.
-    if one_hour == four_hour and one_hour in ("LONG", "SHORT"):
-        return one_hour, total
-    # 1H가 아직 중립이면 4H 추세를 따른다. 이는 단기 반등/하락 추격을 막는다.
-    if one_hour == "HOLD" and four_hour in ("LONG", "SHORT"):
-        return four_hour, total
-    if four_hour == "HOLD" and one_hour in ("LONG", "SHORT"):
-        return one_hour, total
-    # 상위 시간봉이 정면 충돌할 때에만 15m를 타이브레이커로 쓴다.
-    if one_hour != four_hour and fifteen_min in ("LONG", "SHORT"):
+    if five_min == fifteen_min and five_min in ("LONG", "SHORT"):
+        return five_min, total
+    if fifteen_min in ("LONG", "SHORT"):
         return fifteen_min, total
     if total == 0:
         return choose_forced_direction(latest), total
@@ -166,15 +169,16 @@ def _scheduled_atr(result: dict) -> float:
 
 
 def build_forced_entry_result(result: dict, price: float, direction: str, session_key: str, settings) -> dict:
-    """의무 현재가 진입용 ATR 손절·양의 기대 손익비 계획을 만든다."""
+    """고정 세션 단타용 5분 ATR 손절·익절 계획을 만든다."""
     entry = float(price)
-    min_stop = float(settings.stop_gap_min_usdt)
-    max_stop = float(settings.stop_gap_max_usdt)
     atr = _scheduled_atr(result)
-    fallback_gap = (min_stop + max_stop) / 2
-    stop_gap = min(max(atr * float(getattr(settings, "atr_stop_multiplier", 1.5)), min_stop), max_stop) if atr else fallback_gap
-    tp1_gap = stop_gap * 1.3
-    tp2_gap = stop_gap * 1.8
+    fallback_gap = (SCALP_STOP_GAP_MIN_USDT + SCALP_STOP_GAP_MAX_USDT) / 2
+    stop_gap = (
+        min(max(atr * SCALP_STOP_ATR_MULTIPLIER, SCALP_STOP_GAP_MIN_USDT), SCALP_STOP_GAP_MAX_USDT)
+        if atr else fallback_gap
+    )
+    tp1_gap = stop_gap * SCALP_TP1_RISK_RATIO
+    tp2_gap = stop_gap * SCALP_TP2_RISK_RATIO
     forced = dict(result)
     forced.update({
         "direction": direction,
@@ -184,8 +188,12 @@ def build_forced_entry_result(result: dict, price: float, direction: str, sessio
         "take_profit_2": entry + tp2_gap if direction == "LONG" else entry - tp2_gap,
         "risk_reward_ratio": round(tp1_gap / stop_gap, 3),
         "scheduled_stop_gap": stop_gap,
-        "scheduled_tp1_ratio": 1.3,
-        "scheduled_tp2_ratio": 1.8,
+        "scheduled_tp1_ratio": SCALP_TP1_RISK_RATIO,
+        "scheduled_tp2_ratio": SCALP_TP2_RISK_RATIO,
+        "scheduled_add_on_ratio": SCALP_ADD_ON_RISK_RATIO,
+        "scalp_max_hold_seconds": 45 * 60,
+        "scalp_no_progress_seconds": 15 * 60,
+        "scalp_min_progress_ratio": 0.3,
         "position_size_percent": 100.0,
         "confidence": float(result.get("confidence") or 0),
         "entry_grade": "SCHEDULED_MANDATORY",
@@ -193,7 +201,7 @@ def build_forced_entry_result(result: dict, price: float, direction: str, sessio
         "reasons": [
             f"고정 진입 세션 {session_key}: 포지션 없음 → 현재가 강제 진입",
             f"최신 지표·시간봉 방향 선택: {direction}",
-            f"ATR 기반 손절 ${stop_gap:,.2f}, 목표 손익비 1:{tp1_gap / stop_gap:.1f}",
+            f"5분 ATR 단타 손절 ${stop_gap:,.2f}, 목표 손익비 1:{tp1_gap / stop_gap:.1f}",
         ],
     })
     return forced
@@ -207,8 +215,8 @@ def reprice_scheduled_result(result: dict, average_entry: float) -> dict:
     stop_gap = float(repriced.get("scheduled_stop_gap") or 0)
     if direction not in ("LONG", "SHORT") or entry <= 0 or stop_gap <= 0:
         return repriced
-    tp1_gap = stop_gap * float(repriced.get("scheduled_tp1_ratio") or 1.3)
-    tp2_gap = stop_gap * float(repriced.get("scheduled_tp2_ratio") or 1.8)
+    tp1_gap = stop_gap * float(repriced.get("scheduled_tp1_ratio") or SCALP_TP1_RISK_RATIO)
+    tp2_gap = stop_gap * float(repriced.get("scheduled_tp2_ratio") or SCALP_TP2_RISK_RATIO)
     repriced.update({
         "entry_price": entry,
         "stop_loss": entry - stop_gap if direction == "LONG" else entry + stop_gap,

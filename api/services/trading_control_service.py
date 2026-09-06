@@ -1944,6 +1944,9 @@ async def emergency_resume():
 async def emergency_close():
     position_closed = False
     state.pending_paper_order = None
+    # 고정 세션의 메모리상 2차 분할진입도 함께 제거한다.
+    # 원 포지션을 청산한 뒤 예상 체결 대기가 화면에 남지 않게 한다.
+    _scheduled_analysis_runs.clear()
     if private_client and state.pending_live_order_id and state.pending_live_order_id != "pending":
         try:
             private_client.cancel_order(state.pending_live_order_id)
@@ -2055,6 +2058,18 @@ async def place_paper_pending_order(payload: PaperPendingOrderPayload):
 
 
 async def close_position():
+    if state.trading_mode == "PAPER_TRADING":
+        if not paper_trader.is_open or not state.last_price:
+            return {"ok": False, "error": "진행 중인 모의 포지션이 없습니다"}
+        state.pending_paper_order = None
+        _scheduled_analysis_runs.clear()
+        tid, pnl = paper_trader.force_close(state.last_price)
+        risk_mgr.record_trade_result(pnl, "MANUAL_CLOSE")
+        msg = state.add_log(f"[모의매매 수동청산] #{tid} PnL={pnl:+.2f}%")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        await manager.broadcast({"type": "trade_update"})
+        await manager.broadcast({"type": "status", "data": _status_payload()})
+        return {"ok": True, "trade_id": tid, "pnl_pct": pnl}
     if not private_client:
         return {"ok": False, "error": "API 키가 설정되지 않았습니다"}
     try:

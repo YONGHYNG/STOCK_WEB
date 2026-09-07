@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from backend.scheduled_entries import (
@@ -12,6 +12,7 @@ from backend.scheduled_entries import (
     reprice_scheduled_result,
     scheduled_session_bounds,
     seconds_until_session_end,
+    scheduled_exit_deadline,
 )
 
 
@@ -42,6 +43,20 @@ class ScheduledEntryTests(unittest.TestCase):
         self.assertEqual(us_start.date().isoformat(), "2026-08-19")
         self.assertEqual(us_end.date().isoformat(), "2026-08-20")
 
+    def test_exit_before_next_session_including_overnight(self):
+        for entered, expected in (
+            ("2026-09-07 09:19", "2026-09-07 16:29"),
+            ("2026-09-07 16:50", "2026-09-07 23:39"),
+            ("2026-09-07 23:55", "2026-09-08 08:57"),
+            ("2026-09-08 00:10", "2026-09-08 08:57"),
+            ("2026-09-07 16:30", "2026-09-07 23:39"),
+        ):
+            with self.subTest(entered=entered):
+                entry = datetime.strptime(entered, "%Y-%m-%d %H:%M").replace(tzinfo=KST)
+                deadline = datetime.strptime(expected, "%Y-%m-%d %H:%M").replace(tzinfo=KST)
+                self.assertEqual(scheduled_exit_deadline(entry), deadline)
+                self.assertEqual(scheduled_exit_deadline(entry.astimezone(timezone.utc)), deadline)
+
     def test_hold_uses_indicator_bias(self):
         result = {
             "direction": "HOLD", "long_probability": 50, "short_probability": 50,
@@ -62,8 +77,8 @@ class ScheduledEntryTests(unittest.TestCase):
         self.assertEqual((long["stop_loss"], long["take_profit_1"]), (63475, 64630))
         self.assertEqual((short["stop_loss"], short["take_profit_1"]), (64525, 63370))
         self.assertEqual(long["risk_reward_ratio"], 1.2)
-        self.assertEqual(long["scalp_max_hold_seconds"], 45 * 60)
-        self.assertEqual(long["scalp_no_progress_seconds"], 15 * 60)
+        self.assertNotIn("scalp_max_hold_seconds", long)
+        self.assertNotIn("scalp_no_progress_seconds", long)
 
     def test_atr_controls_stop_distance_with_configured_bounds(self):
         settings = SimpleNamespace(

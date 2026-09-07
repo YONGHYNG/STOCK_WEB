@@ -3,7 +3,7 @@ import asyncio
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -57,6 +57,7 @@ from backend.scheduled_entries import (
     choose_consensus_direction,
     reprice_scheduled_result,
     seconds_until_session_end,
+    scheduled_exit_deadline,
 )
 from backend.server_state import state
 from api.schemas.trading_schema import (
@@ -122,7 +123,7 @@ def _append_loss_analysis(base: str, trade_id: Optional[int], elapsed_seconds: O
 
 
 def _entry_timestamp_ms(row: dict) -> int:
-    entered = datetime.strptime(str(row["entry_time"]), "%Y-%m-%d %H:%M:%S").replace(tzinfo=KST)
+    entered = datetime.strptime(str(row["entry_time"]), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
     return int(entered.timestamp() * 1000)
 
 
@@ -663,39 +664,25 @@ async def _check_paper_tp_sl(price: float):
     )
 
 
-async def _check_paper_scalp_time_exit(price: float) -> bool:
-    """고정 세션 단타가 진행되지 않거나 45분을 넘기면 시장가로 정리한다."""
+async def _check_paper_session_time_exit(price: float) -> bool:
+    """다음 고정 세션 시작 1분 전부터 잔여 모의 포지션을 시장가로 정리한다."""
     if not paper_trader.is_open or not paper_trader.open_data:
         return False
     trade_id = paper_trader.open_id
     row = get_trade(trade_id) or {}
     if "고정 진입 세션" not in str(row.get("entry_reason") or ""):
         return False
-    elapsed = _elapsed_since_entry(row)
-    t = paper_trader.open_data
-    stop_gap = abs(float(t.get("entry") or 0) - float(t.get("sl") or 0))
-    current_favorable = (
-        float(price) - float(t.get("entry") or 0)
-        if t.get("direction") == "LONG"
-        else float(t.get("entry") or 0) - float(price)
-    )
-    max_favorable = max(float(t.get("max_favorable_move") or 0), current_favorable)
-    t["max_favorable_move"] = max_favorable
-    no_progress_seconds = int(t.get("scalp_no_progress_seconds") or 15 * 60)
-    max_hold_seconds = int(t.get("scalp_max_hold_seconds") or 45 * 60)
-    min_progress = stop_gap * float(t.get("scalp_min_progress_ratio") or 0.3)
-    reason = None
-    if elapsed >= max_hold_seconds:
-        reason = f"단타 최대 보유 {max_hold_seconds // 60}분 도달"
-    elif elapsed >= no_progress_seconds and max_favorable < min_progress:
-        reason = f"{no_progress_seconds // 60}분 동안 +0.3R 진행 없음"
-    if not reason:
+    entered = datetime.fromtimestamp(_entry_timestamp_ms(row) / 1000, tz=timezone.utc)
+    deadline = scheduled_exit_deadline(entered)
+    if datetime.now(KST) < deadline:
         return False
+    t = paper_trader.open_data
+    reason = f"다음 고정 세션 전 청산: {deadline:%Y-%m-%d %H:%M} KST 마감"
     tid, pnl = paper_trader.close_trade(
         exit_price=price,
         result="TIME_EXIT",
-        profit_reason=f"[단타 시간청산] {reason}" if _pnl_pct(t["direction"], t["entry"], price) >= 0 else "",
-        loss_reason=f"[단타 시간청산] {reason}" if _pnl_pct(t["direction"], t["entry"], price) < 0 else "",
+        profit_reason=f"[세션 마감청산] {reason}" if _pnl_pct(t["direction"], t["entry"], price) >= 0 else "",
+        loss_reason=f"[세션 마감청산] {reason}" if _pnl_pct(t["direction"], t["entry"], price) < 0 else "",
         exit_fee_rate=TAKER_FEE_RATE,
     )
     await _cancel_scheduled_scale_in_after_exit(tid, "TIME_EXIT")
@@ -1185,7 +1172,7 @@ async def price_loop():
                 if paper_trader.is_open:
                     await _check_active_scheduled_scale_in()
                 if paper_trader.is_open:
-                    time_exited = await _check_paper_scalp_time_exit(price)
+                    time_exited = await _check_paper_session_time_exit(price)
                     if not time_exited:
                         await _check_paper_tp_sl(price)
                     if paper_trader.is_open:
@@ -1329,6 +1316,12 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         return await _complete_scheduled_paper_scale_in(
             session_date, session_key, run_key, analysis_run
         )
+
+    if mode == "PAPER_TRADING" and paper_trader.is_open:
+        price = await asyncio.to_thread(_worker_price)
+        if not price:
+            return False
+        await _check_paper_session_time_exit(price)
 
     has_position = (
         paper_trader.is_open

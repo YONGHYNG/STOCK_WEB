@@ -80,9 +80,6 @@ class PaperTrader:
             "tp2":       r.get("take_profit_2"),
             "size":      r.get("position_size_btc"),
             "position_size_percent": float(r.get("position_size_percent") or 100),
-            "scalp_max_hold_seconds": r.get("scalp_max_hold_seconds"),
-            "scalp_no_progress_seconds": r.get("scalp_no_progress_seconds"),
-            "scalp_min_progress_ratio": r.get("scalp_min_progress_ratio"),
             "max_favorable_move": 0.0,
         }
         return trade_id
@@ -206,8 +203,5 @@ class PaperTrader:
                 "tp2":       row["take_profit_2"],
                 "size":      row.get("size_btc"),
                 "position_size_percent": 100.0,
-                "scalp_max_hold_seconds": None,
-                "scalp_no_progress_seconds": None,
-                "scalp_min_progress_ratio": None,
                 "max_favorable_move": 0.0,
             }

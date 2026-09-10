@@ -81,14 +81,13 @@ class RiskManager:
         # 진입 직전에도 상위 시간봉 역방향 여부를 다시 검증한다.
         directions = timeframe_directions or {}
         opposite = "SHORT" if direction == "LONG" else "LONG"
-        if directions.get("15m", "HOLD") == opposite:
+        opposing_frames = [
+            timeframe for timeframe in ("15m", "1H", "4H", "6H")
+            if str(directions.get(timeframe, "HOLD")).upper() == opposite
+        ]
+        if opposing_frames:
             return False, (
-                f"15분봉 강한 반대 추세: 15m={opposite} · "
-                f"{direction} 진입 차단"
-            )
-        if directions.get("1H", "HOLD") == opposite:
-            return False, (
-                f"1시간봉 강한 반대 추세: 1H={opposite} · "
+                f"상위 시간봉 강한 반대 추세: {', '.join(opposing_frames)}={opposite} · "
                 f"{direction} 진입 차단"
             )
 

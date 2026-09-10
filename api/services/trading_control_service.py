@@ -55,6 +55,7 @@ from backend.scheduled_entries import (
     active_scheduled_session,
     build_forced_entry_result,
     choose_consensus_direction,
+    choose_forced_direction,
     reprice_scheduled_result,
     seconds_until_session_end,
     scheduled_exit_deadline,
@@ -1435,6 +1436,17 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     direction, consensus_score = choose_consensus_direction(consensus_inputs)
     if confirmed:
         direction = confirmed_direction
+    # 고정 세션은 합의·상위 시간봉 필터와 무관하게 반드시 진입한다.
+    # 방향이 HOLD인 경우 choose_consensus_direction()이 최신 지표 투표로
+    # LONG/SHORT를 선택한다.
+    if direction not in ("LONG", "SHORT"):
+        direction = choose_forced_direction(latest)
+    if direction not in ("LONG", "SHORT"):
+        record_scheduled_entry_session(
+            session_date, session_key, "SKIPPED", mode,
+            detail="강제 진입 방향 계산 실패",
+        )
+        return False
     forced = build_forced_entry_result(
         latest, float(state.last_price), direction, session_key, risk_cfg
     )

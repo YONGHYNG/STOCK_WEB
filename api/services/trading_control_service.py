@@ -1447,9 +1447,27 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
             detail="강제 진입 방향 계산 실패",
         )
         return False
+    current_price = float(state.last_price or 0)
     forced = build_forced_entry_result(
-        latest, float(state.last_price), direction, session_key, risk_cfg
+        latest, current_price, direction, session_key, risk_cfg
     )
+    planned_entry = float(forced.get("entry_price") or current_price)
+    reached_planned = (
+        direction == "LONG" and current_price <= planned_entry
+    ) or (
+        direction == "SHORT" and current_price >= planned_entry
+    )
+    if not reached_planned and not force_entry_due:
+        # 세션 중에는 계획 타점 지정가가 체결될 때까지 기다린다.
+        return False
+    if not reached_planned:
+        # 종료 1분 전 미체결이면 시장가 강제 체결로 전환한다.
+        forced = build_forced_entry_result(
+            latest, current_price, direction, session_key, risk_cfg
+        )
+        forced["reasons"] = list(forced.get("reasons") or []) + [
+            "계획 타점 미체결 → 세션 종료 1분 전 현재 시장가 강제 체결",
+        ]
     forced["reasons"] = [
         f"고정 진입 세션 {session_key}: 최신 분석 {len(consensus_inputs)}회 후 의무 진입",
         f"다중 시간봉·확률·추세 합산 점수 {consensus_score:+.2f} → {direction}",

@@ -179,10 +179,42 @@ def _scheduled_atr(result: dict) -> float:
     return 0.0
 
 
+def _scheduled_entry_price(result: dict, price: float, direction: str, atr: float) -> tuple[float, str]:
+    """세션 강제 진입도 현재가 추격을 줄이도록 VWAP/EMA20 눌림 타점을 사용한다."""
+    current = float(price or 0)
+    if current <= 0:
+        return current, "현재가"
+    metrics = (result.get("diagnostics") or {}).get("metrics") or {}
+    references = []
+    for key in ("vwap", "ema20"):
+        try:
+            value = float(metrics.get(key) or 0)
+        except (TypeError, ValueError):
+            value = 0.0
+        if value > 0:
+            references.append((key, value))
+    if not references or atr <= 0:
+        return current, "현재가"
+    max_pullback = atr * 0.5
+    if direction == "LONG":
+        candidates = [(key, value) for key, value in references if value < current]
+        if candidates:
+            key, value = max(candidates, key=lambda item: item[1])
+            if current - value <= max_pullback:
+                return value, f"{key} 눌림"
+    else:
+        candidates = [(key, value) for key, value in references if value > current]
+        if candidates:
+            key, value = min(candidates, key=lambda item: item[1])
+            if value - current <= max_pullback:
+                return value, f"{key} 눌림"
+    return current, "현재가"
+
+
 def build_forced_entry_result(result: dict, price: float, direction: str, session_key: str, settings) -> dict:
     """고정 세션 단타용 5분 ATR 손절·익절 계획을 만든다."""
-    entry = float(price)
     atr = _scheduled_atr(result)
+    entry, entry_basis = _scheduled_entry_price(result, price, direction, atr)
     fallback_gap = (SCALP_STOP_GAP_MIN_USDT + SCALP_STOP_GAP_MAX_USDT) / 2
     stop_gap = (
         min(max(atr * SCALP_STOP_ATR_MULTIPLIER, SCALP_STOP_GAP_MIN_USDT), SCALP_STOP_GAP_MAX_USDT)
@@ -207,7 +239,8 @@ def build_forced_entry_result(result: dict, price: float, direction: str, sessio
         "entry_grade": "SCHEDULED_MANDATORY",
         "strategy_signal": f"SCHEDULED_{session_key}_{direction}",
         "reasons": [
-            f"고정 진입 세션 {session_key}: 포지션 없음 → 현재가 강제 진입",
+            f"고정 진입 세션 {session_key}: 포지션 없음 → 강제 진입",
+            f"진입 타점: {entry_basis} ${entry:,.2f}",
             f"최신 지표·시간봉 방향 선택: {direction}",
             f"5분 ATR 단타 손절 ${stop_gap:,.2f}, 목표 손익비 1:{tp1_gap / stop_gap:.1f}",
         ],

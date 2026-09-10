@@ -211,9 +211,23 @@ def _scheduled_entry_price(result: dict, price: float, direction: str, atr: floa
     return current, "현재가"
 
 
+def scheduled_volume_ratio(result: dict) -> float:
+    """강제 세션에서 사용할 최신 5분 거래량 비율."""
+    metrics = (result.get("diagnostics") or {}).get("metrics") or {}
+    for key in ("volume_ratio", "volumeRatio"):
+        try:
+            value = float(metrics.get(key) or result.get(key) or 0)
+        except (TypeError, ValueError):
+            value = 0.0
+        if value > 0:
+            return value
+    return 0.0
+
+
 def build_forced_entry_result(result: dict, price: float, direction: str, session_key: str, settings) -> dict:
     """고정 세션 단타용 5분 ATR 손절·익절 계획을 만든다."""
     atr = _scheduled_atr(result)
+    volume_ratio = scheduled_volume_ratio(result)
     entry, entry_basis = _scheduled_entry_price(result, price, direction, atr)
     fallback_gap = (SCALP_STOP_GAP_MIN_USDT + SCALP_STOP_GAP_MAX_USDT) / 2
     stop_gap = (
@@ -233,6 +247,10 @@ def build_forced_entry_result(result: dict, price: float, direction: str, sessio
         "scheduled_stop_gap": stop_gap,
         "scheduled_tp1_ratio": SCALP_TP1_RISK_RATIO,
         "scheduled_tp2_ratio": SCALP_TP2_RISK_RATIO,
+        "scheduled_volume_ratio": volume_ratio,
+        "scheduled_volume_quality": (
+            "STRONG" if volume_ratio >= 1.0 else "WEAK" if volume_ratio >= 0.65 else "THIN"
+        ),
         "scheduled_add_on_ratio": SCALP_ADD_ON_RISK_RATIO,
         "position_size_percent": 100.0,
         "confidence": float(result.get("confidence") or 0),
@@ -241,6 +259,8 @@ def build_forced_entry_result(result: dict, price: float, direction: str, sessio
         "reasons": [
             f"고정 진입 세션 {session_key}: 포지션 없음 → 강제 진입",
             f"진입 타점: {entry_basis} ${entry:,.2f}",
+            f"거래량 비율 {volume_ratio:.2f} · "
+            f"{'정상' if volume_ratio >= 1.0 else '약세 · 분할 진입' if volume_ratio >= 0.65 else '매우 약세 · 종료 직전 강제 체결'}",
             f"최신 지표·시간봉 방향 선택: {direction}",
             f"5분 ATR 단타 손절 ${stop_gap:,.2f}, 목표 손익비 1:{tp1_gap / stop_gap:.1f}",
         ],

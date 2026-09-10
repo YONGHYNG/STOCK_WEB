@@ -57,6 +57,7 @@ from backend.scheduled_entries import (
     choose_consensus_direction,
     choose_forced_direction,
     reprice_scheduled_result,
+    scheduled_volume_ratio,
     seconds_until_session_end,
     scheduled_exit_deadline,
 )
@@ -1457,10 +1458,12 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     ) or (
         direction == "SHORT" and current_price >= planned_entry
     )
-    if not reached_planned and not force_entry_due:
+    volume_ratio = scheduled_volume_ratio(latest)
+    volume_allows_planned = volume_ratio >= 0.65
+    if (not reached_planned or not volume_allows_planned) and not force_entry_due:
         # 세션 중에는 계획 타점 지정가가 체결될 때까지 기다린다.
         return False
-    if not reached_planned:
+    if not reached_planned or not volume_allows_planned:
         # 종료 1분 전 미체결이면 시장가 강제 체결로 전환한다.
         forced = build_forced_entry_result(
             latest, current_price, direction, session_key, risk_cfg
@@ -1479,9 +1482,10 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
             else "적격 신호 미확정: 누적 우세 방향으로 1차 50% 진입 후 가격 기준 2차 대기"
         ),
     ]
+    split_required = (not confirmed) or volume_ratio < 1.0
     if mode == "PAPER_TRADING":
         full_size = _paper_full_leverage_size(forced["entry_price"])
-        if not confirmed and split_entry_due:
+        if split_required and split_entry_due:
             # 불리한 방향 물타기 대신 +0.35R 진행을 확인한 뒤 잔여 50%를 추가한다.
             stop_gap = float(forced.get("scheduled_stop_gap") or 0)
             add_on_gap = stop_gap * float(forced.get("scheduled_add_on_ratio") or 0.35)

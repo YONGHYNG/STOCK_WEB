@@ -7,6 +7,7 @@ from backend.config import SYMBOL, TAKER_FEE_RATE, TIMEFRAMES
 from backend.risk.settings import load as load_risk_settings
 from backend.strategy.indicator import add_indicators
 from backend.strategy.strategy import VolumeTrendRsiStrategy
+from backend.strategy.entry_timing import assess_entry_timing, timing_entry_check
 
 
 @dataclass
@@ -60,6 +61,7 @@ class TradingResult:
     open_interest_change_rate: Optional[float] = None
     diagnostics: Optional[dict] = None
     block_reasons: Optional[list[str]] = None
+    entry_timing: Optional[dict] = None
 
     def to_dict(self) -> dict:
         data = self.__dict__.copy()
@@ -107,6 +109,17 @@ class TradingAIEngine:
         candidate_direction = decision.direction
         warnings = list(decision.warnings)
         reasons = list(decision.reasons)
+        timing = {
+            side: assess_entry_timing(entry_frame, side, frame_info["directions"])
+            for side in ("LONG", "SHORT")
+        }
+        if direction in ("LONG", "SHORT"):
+            timing_ok, timing_reason = timing_entry_check(timing[direction], analysis_price)
+            if not timing_ok:
+                warnings.append(f"타점 진입 보류: {timing_reason}")
+                direction = "HOLD"
+            else:
+                reasons.append(timing_reason)
         settings = load_risk_settings()
         strategy_id = self._strategy_id(decision.signal)
         registered_strategies = {
@@ -207,32 +220,15 @@ class TradingAIEngine:
         entry = market_entry
         entry_atr = float(last.get("atr14") or 0)
         retest_distance = 0.0
-        if (
-            direction in ("LONG", "SHORT")
-            and not is_range_signal
-            and not is_volume_breakout
-            and not is_neutral_momentum
-        ):
-            entry, anchor_name, retest_distance = self._retest_entry(
-                direction=direction,
-                market_entry=market_entry,
-                ema20=float(last.get("ema20") or 0),
-                vwap=float(last.get("vwap") or 0),
-                atr=entry_atr,
-            )
-            max_retest_distance = entry_atr * 0.5
-            if entry_atr > 0 and retest_distance > max_retest_distance:
-                warnings.append(
-                    f"{anchor_name} 재테스트 거리 ${retest_distance:,.2f} > "
-                    f"5분봉 ATR 0.5배 ${max_retest_distance:,.2f}, 추격 진입 보류"
-                )
+        # Confirmation already includes the pullback/retest. Do not place a
+        # blind resting order back at EMA after the confirmation candle.
+        if direction in ("LONG", "SHORT"):
+            timing_ok, timing_reason = timing_entry_check(timing[direction], market_entry)
+            if not timing_ok:
+                warnings.append(f"타점 진입 보류: {timing_reason}")
                 direction = "HOLD"
-                entry = analysis_price
-            elif retest_distance > 0:
-                reasons.append(
-                    f"{anchor_name} 재테스트 지정가 ${entry:,.2f} "
-                    f"(현재 진입가 대비 ${retest_distance:,.2f} 대기)"
-                )
+            else:
+                reasons.append("확정 5분봉 재출발 확인 가격 기준 주문")
         if is_range_signal:
             stop, tp1, tp2, rr = self._range_risk_prices(
                 preview_direction,
@@ -340,6 +336,7 @@ class TradingAIEngine:
             size=size,
             warnings=warnings,
         )
+        diagnostics["entry_timing"] = timing
         return TradingResult(
             timestamp=int(last.get("timestamp") or 0),
             entry_price=round(entry, 2),
@@ -386,6 +383,7 @@ class TradingAIEngine:
             open_interest_change_rate=oi_change,
             diagnostics=diagnostics,
             block_reasons=block_reasons,
+            entry_timing=timing,
         )
 
     @staticmethod

@@ -74,9 +74,9 @@ class ScheduledEntryTests(unittest.TestCase):
         )
         long = build_forced_entry_result({}, 64000, "LONG", "MORNING", settings)
         short = build_forced_entry_result({}, 64000, "SHORT", "US", settings)
-        self.assertEqual((long["stop_loss"], long["take_profit_1"]), (63475, 64630))
-        self.assertEqual((short["stop_loss"], short["take_profit_1"]), (64525, 63370))
-        self.assertEqual(long["risk_reward_ratio"], 1.2)
+        self.assertEqual((long["stop_loss"], long["take_profit_1"]), (63475, 64525))
+        self.assertEqual((short["stop_loss"], short["take_profit_1"]), (64525, 63475))
+        self.assertEqual(long["risk_reward_ratio"], 1.0)
         self.assertNotIn("scalp_max_hold_seconds", long)
         self.assertNotIn("scalp_no_progress_seconds", long)
 
@@ -89,7 +89,7 @@ class ScheduledEntryTests(unittest.TestCase):
         result = {"diagnostics": {"metrics": {"atr14": 400}}}
         plan = build_forced_entry_result(result, 64000, "LONG", "US", settings)
         self.assertEqual(plan["stop_loss"], 63550)
-        self.assertEqual(plan["take_profit_1"], 64540)
+        self.assertEqual(plan["take_profit_1"], 64450)
 
     def test_scalp_direction_prioritizes_five_and_fifteen_minute_frames(self):
         results = [{
@@ -111,7 +111,7 @@ class ScheduledEntryTests(unittest.TestCase):
         self.assertEqual(initial["stop_loss"], 67475)
         repriced = reprice_scheduled_result(initial, 67725)
         self.assertEqual(repriced["stop_loss"], 67200)
-        self.assertEqual(repriced["take_profit_1"], 68355)
+        self.assertEqual(repriced["take_profit_1"], 68250)
         self.assertEqual(repriced["take_profit_2"], 68512.5)
 
     def test_consensus_uses_multiple_analyses_and_recent_weight(self):

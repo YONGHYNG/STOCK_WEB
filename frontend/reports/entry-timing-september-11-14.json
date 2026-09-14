@@ -1,0 +1,184 @@
+{
+  "start_kst": "2026-09-11",
+  "end_kst_exclusive": "2026-09-15",
+  "limitation": "Stored final entry prices can include scale-ins. Historical entry-time feed availability is unknown. This audits the original entry, not subsequent alternative fills or profitability. Scheduled deadline exceptions remain enabled; a failed filter does not imply an avoided loss.",
+  "counts": {
+    "wait": 9
+  },
+  "entries": [
+    {
+      "id": 111,
+      "entry_kst": "2026-09-11 00:19:14",
+      "direction": "SHORT",
+      "actual_result": "TP1",
+      "actual_pnl": 13.80064771,
+      "scheduled": true,
+      "timing_allowed": false,
+      "reason": "5분봉 누락 또는 중복으로 타점 확인 대기",
+      "timing": {
+        "confirmed": false,
+        "direction": "SHORT",
+        "reason": "5분봉 누락 또는 중복으로 타점 확인 대기"
+      }
+    },
+    {
+      "id": 113,
+      "entry_kst": "2026-09-11 08:17:46",
+      "direction": "SHORT",
+      "actual_result": "SL",
+      "actual_pnl": -21.92620364,
+      "scheduled": false,
+      "timing_allowed": false,
+      "reason": "새 눌림·재테스트 대기 또는 기준선 대비 추격 거리 초과",
+      "timing": {
+        "confirmed": false,
+        "direction": "SHORT",
+        "reason": "새 눌림·재테스트 대기 또는 기준선 대비 추격 거리 초과",
+        "timestamp": 1789081800000,
+        "atr": 134.94999999999814,
+        "confirmation_price": 76471.1,
+        "opposing_frames": []
+      }
+    },
+    {
+      "id": 114,
+      "entry_kst": "2026-09-11 16:50:08",
+      "direction": "SHORT",
+      "actual_result": "TP1",
+      "actual_pnl": 12.79741781,
+      "scheduled": true,
+      "timing_allowed": false,
+      "reason": "확인 종가에서 0.25 ATR 초과 추격 진입 차단",
+      "timing": {
+        "confirmed": true,
+        "direction": "SHORT",
+        "reason": "구조 돌파·재테스트 후 재출발 확인",
+        "timestamp": 1789112700000,
+        "atr": 48.00714285714431,
+        "confirmation_price": 77204.9,
+        "opposing_frames": [],
+        "kind": "STRUCTURE_RETEST",
+        "setup_start": 1789112100000,
+        "anchor": 77232.0,
+        "invalidation_price": 77239.3
+      }
+    },
+    {
+      "id": 115,
+      "entry_kst": "2026-09-12 00:19:05",
+      "direction": "LONG",
+      "actual_result": "SL",
+      "actual_pnl": -16.88962774,
+      "scheduled": true,
+      "timing_allowed": false,
+      "reason": "직전 5분봉 고점 위 종가 확인 대기",
+      "timing": {
+        "confirmed": false,
+        "direction": "LONG",
+        "reason": "직전 5분봉 고점 위 종가 확인 대기",
+        "timestamp": 1789139400000,
+        "atr": 275.24285714285776,
+        "confirmation_price": 78477.7,
+        "opposing_frames": []
+      }
+    },
+    {
+      "id": 116,
+      "entry_kst": "2026-09-12 09:27:04",
+      "direction": "SHORT",
+      "actual_result": "TIME_EXIT",
+      "actual_pnl": 0.58866966,
+      "scheduled": true,
+      "timing_allowed": false,
+      "reason": "직전 5분봉 저점 아래 종가 확인 대기",
+      "timing": {
+        "confirmed": false,
+        "direction": "SHORT",
+        "reason": "직전 5분봉 저점 아래 종가 확인 대기",
+        "timestamp": 1789172400000,
+        "atr": 38.82857142857184,
+        "confirmation_price": 77267.0,
+        "opposing_frames": []
+      }
+    },
+    {
+      "id": 117,
+      "entry_kst": "2026-09-13 16:50:02",
+      "direction": "SHORT",
+      "actual_result": "TIME_EXIT",
+      "actual_pnl": -6.18544339,
+      "scheduled": true,
+      "timing_allowed": false,
+      "reason": "직전 5분봉 저점 아래 종가 확인 대기",
+      "timing": {
+        "confirmed": false,
+        "direction": "SHORT",
+        "reason": "직전 5분봉 저점 아래 종가 확인 대기",
+        "timestamp": 1789285500000,
+        "atr": 42.41428571428696,
+        "confirmation_price": 77125.6,
+        "opposing_frames": []
+      }
+    },
+    {
+      "id": 119,
+      "entry_kst": "2026-09-14 00:10:26",
+      "direction": "LONG",
+      "actual_result": "SL",
+      "actual_pnl": -13.85722547,
+      "scheduled": true,
+      "timing_allowed": false,
+      "reason": "직전 5분봉 고점 위 종가 확인 대기",
+      "timing": {
+        "confirmed": false,
+        "direction": "LONG",
+        "reason": "직전 5분봉 고점 위 종가 확인 대기",
+        "timestamp": 1789311900000,
+        "atr": 72.02857142856998,
+        "confirmation_price": 77099.1,
+        "opposing_frames": [
+          "30m",
+          "1H"
+        ]
+      }
+    },
+    {
+      "id": 120,
+      "entry_kst": "2026-09-14 09:18:15",
+      "direction": "SHORT",
+      "actual_result": "SL",
+      "actual_pnl": -11.83754276,
+      "scheduled": true,
+      "timing_allowed": false,
+      "reason": "직전 5분봉 저점 아래 종가 확인 대기",
+      "timing": {
+        "confirmed": false,
+        "direction": "SHORT",
+        "reason": "직전 5분봉 저점 아래 종가 확인 대기",
+        "timestamp": 1789344600000,
+        "atr": 96.62857142857163,
+        "confirmation_price": 76872.1,
+        "opposing_frames": []
+      }
+    },
+    {
+      "id": 123,
+      "entry_kst": "2026-09-14 16:50:23",
+      "direction": "LONG",
+      "actual_result": "OPEN",
+      "actual_pnl": null,
+      "scheduled": true,
+      "timing_allowed": false,
+      "reason": "직전 5분봉 고점 위 종가 확인 대기",
+      "timing": {
+        "confirmed": false,
+        "direction": "LONG",
+        "reason": "직전 5분봉 고점 위 종가 확인 대기",
+        "timestamp": 1789371900000,
+        "atr": 101.27142857143086,
+        "confirmation_price": 77807.1,
+        "opposing_frames": []
+      }
+    }
+  ]
+}

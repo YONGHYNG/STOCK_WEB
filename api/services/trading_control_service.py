@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from fastapi import WebSocket, WebSocketDisconnect
 
 from backend.strategy.multi_timeframe_strategy import TradingAIEngine
+from backend.strategy.entry_timing import timing_entry_check, scheduled_timing_check
 from backend.strategy.backtester import Backtester, BacktestConfig
 from backend.bitget.market_api import BitgetClient
 from backend.bitget.client import BitgetPrivateClient
@@ -43,6 +44,7 @@ from backend.database import (
     get_paper_account,
     get_recent_candles,
     get_recent_trades,
+    get_last_closed_trade,
     insert_candles,
     insert_signal,
     get_scheduled_entry_session,
@@ -731,6 +733,10 @@ async def _check_auto_trade(result: dict):
         else None
     )
     if pending:
+        timing_ok, timing_reason = _entry_timing_check(result, str(pending.get("direction")))
+        if not timing_ok:
+            await _cancel_pending_order(f"타점 무효: {timing_reason}")
+            return
         pending_direction = str(pending.get("direction") or "HOLD")
         pending_is_range = _is_range_result(_pending_result(pending))
         opposite_signal = (
@@ -754,6 +760,12 @@ async def _check_auto_trade(result: dict):
         else:
             await _refresh_pending_live_order(direction, result)
             return
+
+    timing_ok, timing_reason = _entry_timing_check(result, direction)
+    if direction in ("LONG", "SHORT") and not timing_ok:
+        msg = state.add_log(f"[타점 대기] {timing_reason}")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        return
 
     allowed, reason = risk_mgr.check_entry(
         direction=direction, confidence=confidence, mode=mode,
@@ -837,12 +849,23 @@ def _is_better_entry(direction: str, current_entry, new_entry) -> bool:
     return False
 
 
+def _entry_timing_check(result: dict, direction: str, price: Optional[float] = None) -> tuple[bool, str]:
+    trade_type = "PAPER" if state.trading_mode == "PAPER_TRADING" else "LIVE"
+    return timing_entry_check(
+        (result.get("entry_timing") or {}).get(direction) or {},
+        float(price if price is not None else state.last_price or result.get("entry_price") or 0),
+        int(time.time() * 1000),
+        get_last_closed_trade(SYMBOL, trade_type),
+    )
+
+
 def _is_order_eligible(result: dict) -> bool:
     return (
         result.get("direction") in ("LONG", "SHORT")
         and result.get("entry_grade") in ("A", "B")
         and float(result.get("confidence") or 0) >= risk_cfg.confidence_threshold
         and not result.get("risk_warnings")
+        and _entry_timing_check(result, result.get("direction"))[0]
     )
 
 
@@ -988,6 +1011,7 @@ async def _check_pending_paper_entry(price: float):
     still_valid = (
         latest.get("direction") == direction
         and _is_order_eligible(latest)
+        and _entry_timing_check(latest, direction, price)[0]
         and latest_directions.get("1H", "HOLD") != opposite
     )
     if not still_valid:
@@ -1017,6 +1041,12 @@ async def _expire_pending_order_if_needed(now: Optional[float] = None) -> bool:
     pending = state.pending_paper_order or state.pending_live_order
     if not pending:
         return False
+
+    pending_result = _pending_result(pending)
+    if pending_result.get("entry_timing") and not str(pending_result.get("strategy_signal", "")).startswith("SCHEDULED_"):
+        valid, reason = _entry_timing_check(pending_result, str(pending.get("direction")))
+        if not valid:
+            return await _cancel_pending_order(f"확인 타점 만료: {reason}")
 
     expires_at = float(pending.get("expires_at") or 0)
     if expires_at <= 0:
@@ -1429,10 +1459,6 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     if not analysis_complete or not latest:
         return False
 
-    if state.pending_paper_order or state.pending_live_order:
-        if not await _cancel_pending_order(f"고정 진입 {session_key} 현재가 주문 우선"):
-            return False
-
     consensus_inputs = samples or [latest]
     direction, consensus_score = choose_consensus_direction(consensus_inputs)
     if confirmed:
@@ -1449,30 +1475,30 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         )
         return False
     current_price = float(state.last_price or 0)
-    forced = build_forced_entry_result(
-        latest, current_price, direction, session_key, risk_cfg
+    timing = (latest.get("entry_timing") or {}).get(direction) or {}
+    trade_type = "PAPER" if mode == "PAPER_TRADING" else "LIVE"
+    timing_ok, timing_status, timing_reason = scheduled_timing_check(
+        timing, current_price, force_entry_due, int(time.time() * 1000),
+        get_last_closed_trade(SYMBOL, trade_type),
     )
-    planned_entry = float(forced.get("entry_price") or current_price)
-    reached_planned = (
-        direction == "LONG" and current_price <= planned_entry
-    ) or (
-        direction == "SHORT" and current_price >= planned_entry
-    )
-    volume_ratio = scheduled_volume_ratio(latest)
-    volume_allows_planned = volume_ratio >= 0.65
-    if (not reached_planned or not volume_allows_planned) and not force_entry_due:
-        # 세션 중에는 계획 타점 지정가가 체결될 때까지 기다린다.
+    if not timing_ok:
+        msg = state.add_log(f"[고정 진입 {session_key} 타점 대기] {timing_reason}")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
         return False
-    if not reached_planned or not volume_allows_planned:
-        # 종료 1분 전 미체결이면 시장가 강제 체결로 전환한다.
-        forced = build_forced_entry_result(
-            latest, current_price, direction, session_key, risk_cfg
-        )
-        forced["reasons"] = list(forced.get("reasons") or []) + [
-            "계획 타점 미체결 → 세션 종료 1분 전 현재 시장가 강제 체결",
-        ]
+    volume_ratio = scheduled_volume_ratio(latest)
+    if volume_ratio < 0.65 and not force_entry_due:
+        return False
+    if state.pending_paper_order or state.pending_live_order:
+        if not await _cancel_pending_order(f"고정 진입 {session_key} 확인 타점 주문 우선"):
+            return False
+    forced = build_forced_entry_result(latest, current_price, direction, session_key, risk_cfg)
+    # Execution follows confirmation (or the explicit deadline exception),
+    # never a historical EMA price that the market has not actually filled.
+    forced = reprice_scheduled_result(forced, current_price)
+    forced["entry_timing_status"] = timing_status
     forced["reasons"] = [
         f"고정 진입 세션 {session_key}: 최신 분석 {len(consensus_inputs)}회 후 의무 진입",
+        f"타점 판정: {timing_status} · {timing_reason}",
         f"다중 시간봉·확률·추세 합산 점수 {consensus_score:+.2f} → {direction}",
         "총 주문계획 100% (애매한 신호는 가격 기준 50%+50% 분할)",
         f"ATR 기반 손절, 목표 손익비 1:{float(forced.get('risk_reward_ratio') or 0):.1f}",

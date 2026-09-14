@@ -1,6 +1,7 @@
 # 역할: 매매 기록과 상태 저장용 데이터베이스를 관리하는 파일.
 import json
 import sqlite3
+from contextlib import closing
 from typing import Iterable, Optional
 
 from backend.config import DB_PATH, DATA_DIR
@@ -759,6 +760,18 @@ def set_live_emergency_stop(stopped: bool, reason: str = "") -> None:
             (1 if stopped else 0, reason),
         )
         conn.commit()
+
+
+def get_last_closed_trade(symbol: str, trade_type: str) -> Optional[dict]:
+    """Real execution history only; survives restart and excludes PLAN rows."""
+    with closing(get_connection()) as conn:
+        row = conn.execute(
+            "SELECT * FROM trades WHERE symbol=? AND trade_type=? "
+            "AND exit_time IS NOT NULL AND result != 'OPEN' "
+            "ORDER BY exit_time DESC, id DESC LIMIT 1",
+            (symbol, trade_type),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def get_recent_trades(symbol: str, limit: Optional[int] = 50, trade_type: Optional[str] = None) -> list[dict]:

@@ -1,4 +1,6 @@
 import json
+import gc
+from contextlib import closing
 import tempfile
 import time
 import unittest
@@ -331,7 +333,7 @@ class StrategyTests(unittest.TestCase):
         self.assertTrue(decision.regime_transition_pending)
         self.assertIn("신규 진입 대기", decision.reasons[0])
 
-    def test_neutral_transition_allows_symmetric_volume_momentum_entries(self):
+    def test_neutral_transition_waits_for_confirmed_regime_despite_volume_momentum(self):
         long_frame = strategy_frame("LONG")
         long_frame.loc[219, "adx14"] = 22.5
         long_frame.loc[219, "bb_width"] = 0.04
@@ -340,8 +342,8 @@ class StrategyTests(unittest.TestCase):
             105.0, 1.5, 65.0
         ]
         long_decision = VolumeTrendRsiStrategy().evaluate(long_frame)
-        self.assertEqual(long_decision.signal, "LONG_NEUTRAL_MOMENTUM")
-        self.assertEqual(long_decision.direction, "LONG")
+        self.assertEqual(long_decision.signal, "HOLD")
+        self.assertEqual(long_decision.direction, "HOLD")
 
         short_frame = strategy_frame("SHORT")
         short_frame.loc[219, "adx14"] = 22.5
@@ -351,8 +353,8 @@ class StrategyTests(unittest.TestCase):
             95.0, 1.5, 35.0
         ]
         short_decision = VolumeTrendRsiStrategy().evaluate(short_frame)
-        self.assertEqual(short_decision.signal, "SHORT_NEUTRAL_MOMENTUM")
-        self.assertEqual(short_decision.direction, "SHORT")
+        self.assertEqual(short_decision.signal, "HOLD")
+        self.assertEqual(short_decision.direction, "HOLD")
 
     def test_neutral_transition_rejects_weak_volume_momentum(self):
         frame = strategy_frame("SHORT")
@@ -520,7 +522,7 @@ class RiskManagerTests(unittest.TestCase):
             timeframe_directions={"15m": "LONG", "1H": "SHORT"},
         )
         self.assertFalse(allowed)
-        self.assertIn("1시간봉", reason)
+        self.assertIn("1H", reason)
 
 
 class SignalDiagnosticsDatabaseTests(unittest.TestCase):
@@ -568,7 +570,7 @@ class SignalDiagnosticsDatabaseTests(unittest.TestCase):
                         "block_reasons": [],
                     },
                 )
-                with database.get_connection() as conn:
+                with closing(database.get_connection()) as conn:
                     row = conn.execute(
                         "SELECT market_regime, entry_grade, diagnostics_json, block_reason "
                         "FROM signals ORDER BY id DESC LIMIT 1"
@@ -600,7 +602,7 @@ class SignalDiagnosticsDatabaseTests(unittest.TestCase):
                         "block_reasons": ["이미 소비된 RSI 신호"],
                     },
                 )
-                with database.get_connection() as conn:
+                with closing(database.get_connection()) as conn:
                     row = conn.execute(
                         "SELECT direction, entry_price, confidence, entry_grade, "
                         "strategy_signal, block_reason FROM signals WHERE timestamp=1"
@@ -639,7 +641,7 @@ class SignalDiagnosticsDatabaseTests(unittest.TestCase):
                         "entry_grade": "B",
                     },
                 )
-                with database.get_connection() as conn:
+                with closing(database.get_connection()) as conn:
                     row = conn.execute(
                         "SELECT direction, entry_price, confidence, entry_grade, "
                         "strategy_signal FROM signals WHERE timestamp=1"
@@ -652,6 +654,7 @@ class SignalDiagnosticsDatabaseTests(unittest.TestCase):
             finally:
                 database.DATA_DIR = original_data_dir
                 database.DB_PATH = original_db_path
+                gc.collect()
 
 
 class LiveOrderSizingTests(unittest.TestCase):
@@ -877,6 +880,7 @@ class LiveExecutionDatabaseTests(unittest.TestCase):
             finally:
                 database.DATA_DIR = original_data_dir
                 database.DB_PATH = original_db_path
+                gc.collect()
 
     def test_risk_manager_restores_actual_net_loss(self):
         manager = RiskManager(

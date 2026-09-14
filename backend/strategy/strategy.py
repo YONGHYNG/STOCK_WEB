@@ -95,6 +95,7 @@ class VolumeTrendRsiStrategy:
 
         rsi = float(last["rsi14"])
         previous_rsi = float(prev["rsi14"])
+        previous_close = float(prev["close"])
         if rsi <= LONG_ARM_RSI:
             self.long_armed = True
         if rsi >= SHORT_ARM_RSI:

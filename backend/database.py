@@ -216,6 +216,8 @@ def init_db() -> None:
             conn.execute(
                 "ALTER TABLE paper_account ADD COLUMN reset_after_trade_id INTEGER NOT NULL DEFAULT 0"
             )
+        if "round_name" not in paper_account_columns:
+            conn.execute("ALTER TABLE paper_account ADD COLUMN round_name TEXT NOT NULL DEFAULT ''")
         conn.commit()
 
 

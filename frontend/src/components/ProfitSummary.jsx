@@ -42,7 +42,10 @@ export function ProfitSummary({ trades, paperAccount }) {
   const feeRatePct = DEFAULT_LIMIT_FEE_RATE_PCT
   const currentDay = kstDayNumber(new Date())
   const startDay = currentDay == null ? null : currentDay - rangeDays + 1
-  const actualTrades = trades.filter((t) => t.trade_type !== 'PLAN')
+  const resetAfter = Number(paperAccount?.reset_after_trade_id || 0)
+  const actualTrades = trades.filter((t) => (
+    t.trade_type !== 'PLAN' && (t.trade_type !== 'PAPER' || Number(t.id) > resetAfter)
+  ))
   const inRange = (value) => {
     const day = kstDayNumber(value)
     return day != null && startDay != null && currentDay != null && day >= startDay && day <= currentDay

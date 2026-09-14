@@ -389,7 +389,10 @@ def _ensure_paper_account_start_id() -> Optional[int]:
 def _recent_consecutive_paper_losses() -> int:
     """Restore the current PAPER loss streak from newest closed trades."""
     count = 0
+    reset_after = int(get_paper_account().get("reset_after_trade_id") or 0)
     for trade in get_recent_trades(SYMBOL, limit=None, trade_type="PAPER"):
+        if int(trade.get("id") or 0) <= reset_after:
+            continue
         if trade.get("result") == "OPEN" or trade.get("pnl_pct") is None:
             continue
         try:
@@ -421,6 +424,8 @@ def _paper_account_payload() -> dict:
     equity = balance + unrealized_pnl
     return {
         "initial_balance": initial_balance,
+        "round_name": account.get("round_name", ""),
+        "reset_after_trade_id": int(account.get("reset_after_trade_id") or 0),
         "balance": balance,
         "leverage": leverage,
         "notional": balance * leverage,

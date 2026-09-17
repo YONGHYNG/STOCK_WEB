@@ -14,9 +14,31 @@ from backend.scheduled_entries import (
     seconds_until_session_end,
     scheduled_exit_deadline,
 )
+from backend.strategy.regime_direction import (
+    reverse_uncertain_direction,
+    should_reverse_uncertain_direction,
+)
 
 
 class ScheduledEntryTests(unittest.TestCase):
+    def test_range_and_neutral_regimes_reverse_direction(self):
+        self.assertTrue(should_reverse_uncertain_direction("RANGE", "RANGE"))
+        self.assertEqual(
+            reverse_uncertain_direction("LONG", "RANGE", "RANGE"),
+            ("SHORT", True),
+        )
+        self.assertEqual(
+            reverse_uncertain_direction("SHORT", "TREND", "NEUTRAL"),
+            ("LONG", True),
+        )
+
+    def test_clear_trend_keeps_direction(self):
+        self.assertFalse(should_reverse_uncertain_direction("TREND", "TREND_DOWN"))
+        self.assertEqual(
+            reverse_uncertain_direction("SHORT", "TREND", "TREND_DOWN"),
+            ("SHORT", False),
+        )
+
     def test_windows_and_overnight_session_date(self):
         self.assertIsNone(active_scheduled_session(datetime(2026, 8, 19, 8, 57, tzinfo=KST)))
         self.assertEqual(active_scheduled_session(datetime(2026, 8, 19, 8, 58, tzinfo=KST)), ("2026-08-19", "MORNING"))

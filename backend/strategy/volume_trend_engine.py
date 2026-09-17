@@ -8,6 +8,7 @@ from backend.risk.settings import load as load_risk_settings
 from backend.strategy.indicator import add_indicators
 from backend.strategy.strategy import VolumeTrendRsiStrategy
 from backend.strategy.entry_timing import assess_entry_timing, timing_entry_check
+from backend.strategy.regime_direction import reverse_uncertain_direction
 
 
 @dataclass
@@ -109,6 +110,18 @@ class TradingAIEngine:
         candidate_direction = decision.direction
         warnings = list(decision.warnings)
         reasons = list(decision.reasons)
+        original_direction = direction
+        direction, regime_direction_reversed = reverse_uncertain_direction(
+            direction,
+            decision.market_regime,
+            decision.raw_market_regime,
+        )
+        if regime_direction_reversed:
+            candidate_direction = direction
+            reasons.append(
+                f"횡보·애매 장세 역방향 적용: {original_direction} → {direction} "
+                f"(확정 {decision.market_regime}, 최신 {decision.raw_market_regime})"
+            )
         timing = {
             side: assess_entry_timing(entry_frame, side, frame_info["directions"])
             for side in ("LONG", "SHORT")
@@ -229,7 +242,9 @@ class TradingAIEngine:
                 direction = "HOLD"
             else:
                 reasons.append("확정 5분봉 재출발 확인 가격 기준 주문")
-        if is_range_signal:
+        # 기존 횡보 반전 신호를 역방향으로 쓸 때는 밴드 중앙 목표가가
+        # 반대편에 놓이므로, 역방향 기준 ATR 보호가를 새로 계산한다.
+        if is_range_signal and not regime_direction_reversed:
             stop, tp1, tp2, rr = self._range_risk_prices(
                 preview_direction,
                 entry,
@@ -269,7 +284,13 @@ class TradingAIEngine:
         value = size * entry if size else None
         fee = value * float(market.get("fee_rate") or TAKER_FEE_RATE) * 2 if value else None
 
-        final_signal = decision.signal if direction in ("LONG", "SHORT") else "HOLD"
+        final_signal = (
+            f"REVERSED_{decision.signal}"
+            if direction in ("LONG", "SHORT") and regime_direction_reversed
+            else decision.signal
+            if direction in ("LONG", "SHORT")
+            else "HOLD"
+        )
         confidence = (
             self._signal_score(
                 decision=decision,
@@ -337,6 +358,8 @@ class TradingAIEngine:
             warnings=warnings,
         )
         diagnostics["entry_timing"] = timing
+        diagnostics["regime_direction_reversed"] = regime_direction_reversed
+        diagnostics["original_direction"] = original_direction
         return TradingResult(
             timestamp=int(last.get("timestamp") or 0),
             entry_price=round(entry, 2),
@@ -544,8 +567,8 @@ class TradingAIEngine:
             },
             "filters": {
                 "15m_not_opposite": not (
-                    (decision.direction == "LONG" and strong_15m == "SHORT")
-                    or (decision.direction == "SHORT" and strong_15m == "LONG")
+                    (final_direction == "LONG" and strong_15m == "SHORT")
+                    or (final_direction == "SHORT" and strong_15m == "LONG")
                 ),
                 "ma90_distance_ok": ma_distance_atr <= max_ma_distance_atr,
                 "oi_not_sharp_drop": oi_change is None or oi_change > -abs(oi_drop_limit),

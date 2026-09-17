@@ -11,6 +11,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from backend.strategy.multi_timeframe_strategy import TradingAIEngine
 from backend.strategy.entry_timing import timing_entry_check, scheduled_timing_check
+from backend.strategy.regime_direction import reverse_uncertain_direction
 from backend.strategy.backtester import Backtester, BacktestConfig
 from backend.bitget.market_api import BitgetClient
 from backend.bitget.client import BitgetPrivateClient
@@ -1479,6 +1480,22 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
             detail="강제 진입 방향 계산 실패",
         )
         return False
+    latest_diagnostics = latest.get("diagnostics") or {}
+    original_direction = direction
+    if not latest_diagnostics.get("regime_direction_reversed"):
+        direction, reversed_for_regime = reverse_uncertain_direction(
+            direction,
+            latest.get("market_mode") or latest_diagnostics.get("market_regime"),
+            latest_diagnostics.get("raw_market_regime"),
+        )
+    else:
+        reversed_for_regime = False
+    if reversed_for_regime:
+        msg = state.add_log(
+            f"[고정 진입 {session_key}] 횡보·애매 장세 역방향 적용: "
+            f"{original_direction} → {direction}"
+        )
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
     current_price = float(state.last_price or 0)
     timing = (latest.get("entry_timing") or {}).get(direction) or {}
     trade_type = "PAPER" if mode == "PAPER_TRADING" else "LIVE"
@@ -1503,6 +1520,11 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     forced["entry_timing_status"] = timing_status
     forced["reasons"] = [
         f"고정 진입 세션 {session_key}: 최신 분석 {len(consensus_inputs)}회 후 의무 진입",
+        *(
+            [f"횡보·애매 장세 역방향 적용: {original_direction} → {direction}"]
+            if reversed_for_regime
+            else []
+        ),
         f"타점 판정: {timing_status} · {timing_reason}",
         f"다중 시간봉·확률·추세 합산 점수 {consensus_score:+.2f} → {direction}",
         "총 주문계획 100% (애매한 신호는 가격 기준 50%+50% 분할)",

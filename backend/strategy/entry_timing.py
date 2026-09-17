@@ -11,6 +11,11 @@ from datetime import datetime, timezone
 import pandas as pd
 
 BAR_MS = 300_000
+ENTRY_TIMING_LOOKBACK_BARS = 60
+STRUCTURE_BREAK_LOOKBACK_BARS = 36
+STRUCTURE_LEVEL_LOOKBACK_BARS = 18
+RETEST_LOOKBACK_BARS = 12
+PULLBACK_LOOKBACK_BARS = 12
 TOUCH_TOLERANCE_ATR = 0.20
 MAX_ANCHOR_DISTANCE_ATR = 0.75
 MAX_CHASE_ATR = 0.25
@@ -19,9 +24,13 @@ MAX_CHASE_ATR = 0.25
 def assess_entry_timing(frame: pd.DataFrame, direction: str, directions: dict) -> dict:
     result = {"confirmed": False, "direction": direction, "reason": "확정 5분봉 타점 데이터 부족"}
     required = ["timestamp", "open", "high", "low", "close", "atr14", "ema20", "vwap"]
-    if direction not in ("LONG", "SHORT") or len(frame) < 20 or any(k not in frame for k in required):
+    if (
+        direction not in ("LONG", "SHORT")
+        or len(frame) < ENTRY_TIMING_LOOKBACK_BARS
+        or any(k not in frame for k in required)
+    ):
         return result
-    recent = frame.iloc[-20:]
+    recent = frame.iloc[-ENTRY_TIMING_LOOKBACK_BARS:]
     if not all(math.isfinite(float(v)) for v in recent[required].to_numpy().ravel()):
         return result
     if not (recent.timestamp.diff().dropna() == BAR_MS).all():
@@ -43,14 +52,14 @@ def assess_entry_timing(frame: pd.DataFrame, direction: str, directions: dict) -
     setups = []
     # A break must precede a separate retest. The breakout level uses only
     # candles preceding that break; no centered pivots or future candles.
-    for b in range(len(frame) - 12, len(frame) - 2):
-        history = frame.iloc[b - 6:b]
+    for b in range(len(frame) - STRUCTURE_BREAK_LOOKBACK_BARS, len(frame) - 2):
+        history = frame.iloc[b - STRUCTURE_LEVEL_LOOKBACK_BARS:b]
         level = float(history.high.max() if long else history.low.min())
         bar = frame.iloc[b]
         crossed = bar.close > level and frame.iloc[b - 1].close <= level if long else bar.close < level and frame.iloc[b - 1].close >= level
         if not crossed:
             continue
-        for t in range(max(b + 1, len(frame) - 4), len(frame) - 1):
+        for t in range(max(b + 1, len(frame) - RETEST_LOOKBACK_BARS), len(frame) - 1):
             touch = frame.iloc[t]
             held = frame.iloc[b + 1:]
             if long:
@@ -66,7 +75,7 @@ def assess_entry_timing(frame: pd.DataFrame, direction: str, directions: dict) -
 
     # Countertrend entries require the structural break/retest above.
     if not opposing:
-        for t in range(len(frame) - 4, len(frame) - 1):
+        for t in range(len(frame) - PULLBACK_LOOKBACK_BARS, len(frame) - 1):
             touch, before = frame.iloc[t], frame.iloc[t - 1]
             retracing = touch.low < before.low and touch.close < before.close if long else touch.high > before.high and touch.close > before.close
             if not retracing:

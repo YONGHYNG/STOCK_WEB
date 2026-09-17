@@ -9,14 +9,15 @@ from unittest.mock import AsyncMock, Mock, patch
 import pandas as pd
 
 from backend.strategy.entry_timing import (
-    BAR_MS, assess_entry_timing, timing_entry_check, scheduled_timing_check,
+    BAR_MS, ENTRY_TIMING_LOOKBACK_BARS, assess_entry_timing,
+    timing_entry_check, scheduled_timing_check,
 )
 
 
 def frame_for(side="LONG", structural=False):
     rows = [dict(timestamp=1_800_000_000_000 + i * BAR_MS,
                  open=100., high=103., low=98., close=102., atr14=10.,
-                 ema20=100., vwap=99.) for i in range(30)]
+                 ema20=100., vwap=99.) for i in range(90)]
     if structural:
         rows[-3].update(open=102., high=107., low=101., close=106.)
         rows[-2].update(open=106., high=105., low=103., close=104.)
@@ -37,6 +38,16 @@ def frame_for(side="LONG", structural=False):
 
 
 class EntryTimingTests(unittest.TestCase):
+    def test_entry_timing_uses_sixty_completed_five_minute_bars(self):
+        frame = frame_for()
+        self.assertEqual(ENTRY_TIMING_LOOKBACK_BARS, 60)
+        self.assertFalse(
+            assess_entry_timing(frame.iloc[-59:], "LONG", {})["confirmed"]
+        )
+        self.assertTrue(
+            assess_entry_timing(frame.iloc[-60:], "LONG", {})["confirmed"]
+        )
+
     def test_touch_alone_does_not_confirm_but_restart_does_both_sides(self):
         for side in ("LONG", "SHORT"):
             frame = frame_for(side)
@@ -82,7 +93,7 @@ class EntryTimingTests(unittest.TestCase):
         for now in (result["timestamp"], result["timestamp"] + 2 * BAR_MS):
             self.assertFalse(timing_entry_check(result, 104, now)[0])
         self.assertFalse(timing_entry_check({}, 104)[0])
-        frame.loc[25, "timestamp"] += 1
+        frame.loc[55, "timestamp"] += 1
         self.assertFalse(assess_entry_timing(frame, "LONG", {})["confirmed"])
 
     def test_deadline_override_is_explicit_and_only_at_deadline(self):
@@ -104,7 +115,7 @@ class EngineTimingTests(unittest.TestCase):
         frame = strategy_frame("LONG")
         tail = frame_for()
         for key in tail.columns:
-            frame.loc[190:219, key] = tail[key].to_numpy()
+            frame.loc[130:219, key] = tail[key].to_numpy()
         candidate = StrategyDecision("LONG_RSI_RECLAIM", "LONG", "READY", 104, None, None, [], [])
         raw = [{"timestamp": i} for i in range(221)]
         frames = {"directions": {"5m": "LONG"}, "summaries": {}}

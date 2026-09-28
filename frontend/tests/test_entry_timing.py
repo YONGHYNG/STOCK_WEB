@@ -170,8 +170,9 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
             add_log=lambda message: message)
         trader = Mock(is_open=False)
         trader.open_trade.return_value = 77
+        analysis_runs = {}
         with patch.object(svc, "state", fake_state), patch.object(svc, "paper_trader", trader), \
-             patch.object(svc, "_scheduled_analysis_runs", {}), \
+             patch.object(svc, "_scheduled_analysis_runs", analysis_runs), \
              patch.object(svc, "get_scheduled_entry_session", return_value=None), \
              patch.object(svc, "get_last_closed_trade", return_value=None), \
              patch.object(svc, "_worker_analyze", return_value=(result, [])), \
@@ -191,6 +192,162 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("DEADLINE_OVERRIDE", "\n".join(plan["reasons"]))
             self.assertEqual(plan["entry_price"], 104)
             self.assertEqual(plan["position_size_btc"], .01)
+            split = analysis_runs["2026-09-14:EUROPE"]["scale_in"]
+            self.assertEqual(split["first_entry_price"], plan["entry_price"])
+            self.assertNotIn("second_entry_price", split)
+            self.assertIn("거래량 급증 후 25~60% 조정", "\n".join(plan["reasons"]))
+
+    def test_scheduled_dynamic_pullback_uses_volume_contraction_and_restart(self):
+        from api.services import trading_control_service as svc
+
+        def result(timestamp, open_, high, low, close, volume_ratio):
+            return {
+                "timestamp": timestamp,
+                "diagnostics": {"metrics": {
+                    "timestamp": timestamp, "open": open_, "high": high,
+                    "low": low, "close": close, "volume_ratio": volume_ratio,
+                    "ema20": 110, "vwap": 109, "atr14": 10,
+                }},
+            }
+
+        split = {
+            "direction": "LONG", "first_entry_price": 115.0,
+            "last_candle_timestamp": 0, "impulse": None, "pullback": None,
+        }
+        action, _ = svc._advance_scheduled_pullback(
+            split, result(1, 101, 110, 100, 109, 2.0), 109,
+        )
+        self.assertEqual(action, "WAIT")
+        self.assertIsNotNone(split["impulse"])
+
+        action, _ = svc._advance_scheduled_pullback(
+            split, result(2, 118, 119, 112, 114, 1.2), 113,
+        )
+        self.assertEqual(action, "WAIT")
+        self.assertAlmostEqual(split["pullback"]["ratio"], 7 / 19)
+
+        action, reason = svc._advance_scheduled_pullback(
+            split, result(3, 114, 121, 113, 120, 1.3), 114,
+        )
+        self.assertEqual(action, "FILL")
+        self.assertIn("거래량 재확대", reason)
+
+    def test_scheduled_dynamic_short_pullback_improves_average(self):
+        from api.services import trading_control_service as svc
+
+        def result(timestamp, open_, high, low, close, volume_ratio):
+            return {
+                "timestamp": timestamp,
+                "diagnostics": {"metrics": {
+                    "timestamp": timestamp, "open": open_, "high": high,
+                    "low": low, "close": close, "volume_ratio": volume_ratio,
+                }},
+            }
+
+        split = {
+            "direction": "SHORT", "first_entry_price": 112.0,
+            "last_candle_timestamp": 0, "impulse": None, "pullback": None,
+        }
+        self.assertEqual(
+            svc._advance_scheduled_pullback(
+                split, result(1, 119, 120, 110, 111, 2.0), 111,
+            )[0],
+            "WAIT",
+        )
+        self.assertEqual(
+            svc._advance_scheduled_pullback(
+                split, result(2, 112, 115, 111, 114, 1.0), 114,
+            )[0],
+            "WAIT",
+        )
+        action, _ = svc._advance_scheduled_pullback(
+            split, result(3, 114, 115, 108, 109, 1.2), 113,
+        )
+        self.assertEqual(action, "FILL")
+
+    async def test_scheduled_pullback_scale_in_improves_average_without_widening_stop(self):
+        from api.services import trading_control_service as svc
+        result = {
+            "direction": "LONG", "entry_price": 1000.0,
+            "stop_loss": 900.0, "take_profit_1": 1100.0, "take_profit_2": 1150.0,
+        }
+        split = {
+            "direction": "LONG", "first_entry_price": 1000.0,
+            "second_size_btc": 1.0, "result": result,
+            "last_candle_timestamp": 2,
+            "impulse": {
+                "timestamp": 1, "open": 960.0, "high": 1020.0, "low": 950.0,
+                "close": 1010.0, "volume_ratio": 2.0,
+                "origin": 950.0, "favorable_extreme": 1020.0,
+            },
+            "pullback": {
+                "timestamp": 2, "open": 1010.0, "high": 1000.0, "low": 980.0,
+                "close": 985.0, "volume_ratio": 0.8, "ratio": 40 / 70,
+            },
+        }
+        analysis_run = {"scale_in": split}
+        runs = {"2026-09-14:EUROPE": analysis_run}
+        latest = {"timestamp": 3, "diagnostics": {"metrics": {
+            "timestamp": 3, "open": 985.0, "high": 1005.0, "low": 982.0,
+            "close": 1002.0, "volume_ratio": 1.0, "ema20": 990.0,
+            "vwap": 992.0, "atr14": 50.0,
+        }}}
+        state = SimpleNamespace(last_price=990.0, last_result=latest, add_log=lambda message: message)
+        trader = Mock(is_open=True, open_data={
+            "entry": 1000.0, "size": 1.0, "sl": 900.0,
+            "tp1": 1100.0, "tp2": 1150.0,
+        })
+        trader.scale_in.return_value = (77, 995.0)
+        with patch.object(svc, "state", state), patch.object(svc, "paper_trader", trader), \
+             patch.object(svc, "_scheduled_analysis_runs", runs), \
+             patch.object(svc, "record_scheduled_entry_session"), \
+             patch.object(svc, "_status_payload", return_value={}), \
+             patch.object(svc, "manager", SimpleNamespace(broadcast=AsyncMock())), \
+             patch.object(svc, "_send_filled_position_email", AsyncMock()):
+            completed = await svc._complete_scheduled_paper_scale_in(
+                "2026-09-14", "EUROPE", "2026-09-14:EUROPE", analysis_run,
+            )
+
+        self.assertTrue(completed)
+        fill_price, added_size, plan = trader.scale_in.call_args.args
+        self.assertEqual((fill_price, added_size), (990.0, 1.0))
+        self.assertEqual(plan["average_entry_price"], 995.0)
+        self.assertEqual(plan["stop_loss"], 900.0)
+        self.assertEqual(plan["take_profit_1"], 1100.0)
+        self.assertNotIn("2026-09-14:EUROPE", runs)
+
+    async def test_scheduled_scale_in_does_not_add_after_stop_is_breached(self):
+        from api.services import trading_control_service as svc
+        split = {
+            "direction": "LONG", "first_entry_price": 1000.0,
+            "second_size_btc": 1.0, "last_candle_timestamp": 2,
+            "impulse": {
+                "timestamp": 1, "open": 960.0, "high": 1020.0, "low": 950.0,
+                "close": 1010.0, "volume_ratio": 2.0,
+                "origin": 950.0, "favorable_extreme": 1020.0,
+            },
+            "pullback": {
+                "timestamp": 2, "open": 1010.0, "high": 1000.0, "low": 980.0,
+                "close": 985.0, "volume_ratio": 0.8, "ratio": 40 / 70,
+            },
+            "result": {"stop_loss": 900.0, "take_profit_1": 1100.0},
+        }
+        analysis_run = {"scale_in": split}
+        latest = {"timestamp": 3, "diagnostics": {"metrics": {
+            "timestamp": 3, "open": 985.0, "high": 1005.0, "low": 982.0,
+            "close": 1002.0, "volume_ratio": 1.0,
+        }}}
+        state = SimpleNamespace(last_price=895.0, last_result=latest)
+        trader = Mock(is_open=True, open_data={
+            "entry": 1000.0, "size": 1.0, "sl": 900.0,
+        })
+        with patch.object(svc, "state", state), patch.object(svc, "paper_trader", trader):
+            completed = await svc._complete_scheduled_paper_scale_in(
+                "2026-09-14", "EUROPE", "2026-09-14:EUROPE", analysis_run,
+            )
+
+        self.assertFalse(completed)
+        trader.scale_in.assert_not_called()
 
     async def test_normal_entry_blocked_before_order_when_setup_predates_profit(self):
         from api.services import trading_control_service as svc

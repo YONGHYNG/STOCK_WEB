@@ -53,7 +53,6 @@ from backend.database import (
     purge_unaligned_candles,
 )
 from backend.scheduled_entries import (
-    SCHEDULED_SPLIT_ENTRY_BEFORE_END_SECONDS,
     active_scheduled_session,
     build_forced_entry_result,
     choose_consensus_direction,
@@ -91,6 +90,10 @@ SCHEDULED_ANALYSIS_INTERVAL_SECONDS = 20
 SCHEDULED_STABLE_SIGNAL_SAMPLES = 3
 SCHEDULED_REQUIRED_MATCHING_SAMPLES = 2
 SCHEDULED_FORCE_ENTRY_BEFORE_END_SECONDS = 60
+SCHEDULED_IMPULSE_VOLUME_RATIO = 1.5
+SCHEDULED_PULLBACK_MIN_RATIO = 0.25
+SCHEDULED_PULLBACK_MAX_RATIO = 0.60
+SCHEDULED_PULLBACK_VOLUME_CONTRACTION = 0.70
 KST = ZoneInfo("Asia/Seoul")
 _scheduled_analysis_runs: dict[str, dict] = {}
 
@@ -1249,46 +1252,183 @@ async def account_loop():
         await asyncio.sleep(10)
 
 
+def _scheduled_candle_snapshot(result: Optional[dict]) -> Optional[dict]:
+    """분할 진입 판단에 필요한 최신 완성 5분봉 지표만 정규화한다."""
+    result = result or {}
+    metrics = (result.get("diagnostics") or {}).get("metrics") or {}
+    try:
+        snapshot = {
+            "timestamp": int(metrics.get("timestamp") or result.get("timestamp") or 0),
+            "open": float(metrics.get("open") or 0),
+            "high": float(metrics.get("high") or 0),
+            "low": float(metrics.get("low") or 0),
+            "close": float(metrics.get("close") or 0),
+            "volume_ratio": float(metrics.get("volume_ratio") or 0),
+            "ema20": float(metrics.get("ema20") or 0),
+            "vwap": float(metrics.get("vwap") or 0),
+            "atr14": float(metrics.get("atr14") or 0),
+        }
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if (
+        snapshot["timestamp"] <= 0
+        or min(snapshot[key] for key in ("open", "high", "low", "close")) <= 0
+        or snapshot["high"] < snapshot["low"]
+    ):
+        return None
+    return snapshot
+
+
+def _is_directional_volume_impulse(snapshot: dict, direction: str) -> bool:
+    return (
+        snapshot["volume_ratio"] >= SCHEDULED_IMPULSE_VOLUME_RATIO
+        and (
+            snapshot["close"] > snapshot["open"]
+            if direction == "LONG"
+            else snapshot["close"] < snapshot["open"]
+        )
+    )
+
+
+def _initial_scheduled_impulse(results: list[dict], direction: str) -> tuple[Optional[dict], int]:
+    """세션 분석 중 발생한 가장 최근의 방향성 거래량 급증 봉을 찾는다."""
+    snapshots = {}
+    for result in results:
+        snapshot = _scheduled_candle_snapshot(result)
+        if snapshot:
+            snapshots[snapshot["timestamp"]] = snapshot
+    ordered = [snapshots[key] for key in sorted(snapshots)]
+    qualifying = [item for item in ordered if _is_directional_volume_impulse(item, direction)]
+    impulse = dict(qualifying[-1]) if qualifying else None
+    if impulse:
+        following = [item for item in ordered if item["timestamp"] >= impulse["timestamp"]]
+        impulse["origin"] = impulse["low"] if direction == "LONG" else impulse["high"]
+        impulse["favorable_extreme"] = (
+            max(item["high"] for item in following)
+            if direction == "LONG"
+            else min(item["low"] for item in following)
+        )
+    last_timestamp = ordered[-1]["timestamp"] if ordered else 0
+    return impulse, last_timestamp
+
+
+def _advance_scheduled_pullback(split: dict, result: Optional[dict], price: float) -> tuple[str, str]:
+    """새 완성봉으로 거래량 급증→조정→재출발 상태를 한 단계 진행한다."""
+    snapshot = _scheduled_candle_snapshot(result)
+    if not snapshot or snapshot["timestamp"] <= int(split.get("last_candle_timestamp") or 0):
+        return "WAIT", "새 완성 5분봉 대기"
+    split["last_candle_timestamp"] = snapshot["timestamp"]
+    direction = str(split.get("direction") or "HOLD")
+    long = direction == "LONG"
+    impulse = split.get("impulse")
+    if not impulse:
+        if not _is_directional_volume_impulse(snapshot, direction):
+            return "WAIT", f"거래량 {SCHEDULED_IMPULSE_VOLUME_RATIO:.1f}배 방향성 급증 대기"
+        impulse = dict(snapshot)
+        impulse["origin"] = snapshot["low"] if long else snapshot["high"]
+        impulse["favorable_extreme"] = snapshot["high"] if long else snapshot["low"]
+        split["impulse"] = impulse
+        return "WAIT", f"거래량 {snapshot['volume_ratio']:.2f}배 충격봉 확인 · 조정 대기"
+
+    impulse["favorable_extreme"] = (
+        max(float(impulse["favorable_extreme"]), snapshot["high"])
+        if long
+        else min(float(impulse["favorable_extreme"]), snapshot["low"])
+    )
+    origin = float(impulse["origin"])
+    favorable_extreme = float(impulse["favorable_extreme"])
+    impulse_move = favorable_extreme - origin if long else origin - favorable_extreme
+    if impulse_move <= 0:
+        return "WAIT", "거래량 급증 파동 확장 대기"
+
+    adverse_extreme = snapshot["low"] if long else snapshot["high"]
+    pullback_move = favorable_extreme - adverse_extreme if long else adverse_extreme - favorable_extreme
+    pullback_ratio = max(0.0, pullback_move / impulse_move)
+    structure_broken = snapshot["close"] <= origin if long else snapshot["close"] >= origin
+    if structure_broken or pullback_ratio > SCHEDULED_PULLBACK_MAX_RATIO:
+        return "CANCEL", f"조정 {pullback_ratio * 100:.1f}%로 충격 파동 구조 무효"
+
+    pullback = split.get("pullback")
+    if pullback and snapshot["timestamp"] > int(pullback["timestamp"]):
+        resumed = (
+            snapshot["close"] > float(pullback["high"]) and snapshot["close"] > snapshot["open"]
+            if long
+            else snapshot["close"] < float(pullback["low"]) and snapshot["close"] < snapshot["open"]
+        )
+        volume_reexpanded = snapshot["volume_ratio"] > float(pullback["volume_ratio"])
+        average_improves = price < float(split["first_entry_price"]) if long else price > float(split["first_entry_price"])
+        if resumed and volume_reexpanded and average_improves:
+            return "FILL", (
+                f"조정 {float(pullback['ratio']) * 100:.1f}% · 거래량 재확대 "
+                f"{float(pullback['volume_ratio']):.2f}→{snapshot['volume_ratio']:.2f}"
+            )
+
+    contracted = snapshot["volume_ratio"] <= float(impulse["volume_ratio"]) * SCHEDULED_PULLBACK_VOLUME_CONTRACTION
+    if SCHEDULED_PULLBACK_MIN_RATIO <= pullback_ratio <= SCHEDULED_PULLBACK_MAX_RATIO and contracted:
+        split["pullback"] = {**snapshot, "ratio": pullback_ratio}
+        return "WAIT", (
+            f"조정 {pullback_ratio * 100:.1f}% · 거래량 축소 "
+            f"{float(impulse['volume_ratio']):.2f}→{snapshot['volume_ratio']:.2f} · 재출발 대기"
+        )
+    return "WAIT", f"조정 {pullback_ratio * 100:.1f}% · 거래량 축소 조건 대기"
+
+
 async def _complete_scheduled_paper_scale_in(
     session_date: str,
     session_key: str,
     run_key: str,
     analysis_run: dict,
 ) -> bool:
-    """미리 정한 2차 가격에 도달했을 때만 PAPER 잔여 50%를 체결한다."""
+    """거래량 급증 후 조정·재출발이 확인되면 PAPER 잔여 50%를 체결한다."""
     split = analysis_run.get("scale_in") or {}
     if not split or not paper_trader.is_open or not paper_trader.open_data:
         return False
     price = float(state.last_price or 0)
-    target = float(split.get("second_entry_price") or 0)
     direction = str(split.get("direction") or "HOLD")
-    target_hit = (
-        direction == "LONG" and price >= target
-    ) or (
-        direction == "SHORT" and price <= target
-    )
-    if not target_hit:
+    action, reason = _advance_scheduled_pullback(split, state.last_result, price)
+    if action == "CANCEL":
+        detail = f"PAPER 1차 50% 유지 · 2차 취소: {reason}"
+        record_scheduled_entry_session(session_date, session_key, "ENTERED", "PAPER_TRADING", direction, detail)
+        _scheduled_analysis_runs.pop(run_key, None)
+        msg = state.add_log(f"[고정 진입 {session_key}] {detail}")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        await manager.broadcast({"type": "status", "data": _status_payload()})
+        return False
+    if action != "FILL":
         return False
 
-    fill_price = target
-    added_size = float(split.get("second_size_btc") or 0)
     current = paper_trader.open_data
+    stop = float(current.get("sl") or 0)
+    stop_breached = (
+        direction == "LONG" and stop > 0 and price <= stop
+    ) or (
+        direction == "SHORT" and stop > 0 and price >= stop
+    )
+    # 갭 하락·상승으로 이미 손절선을 넘었으면 2차를 추가하지 않고
+    # 이어지는 TP/SL 검사에서 기존 50% 포지션만 청산한다.
+    if stop_breached:
+        return False
+
+    fill_price = price
+    added_size = float(split.get("second_size_btc") or 0)
     current_size = float(current.get("size") or 0)
     total_size = current_size + added_size
     average = (
         float(current.get("entry") or 0) * current_size + fill_price * added_size
     ) / total_size
-    repriced = reprice_scheduled_result(split["result"], average)
-    repriced["position_size_btc"] = total_size
-    repriced["position_size_percent"] = 100.0
-    repriced["entry_stage"] = 2
-    repriced["second_entry_price"] = fill_price
-    repriced["average_entry_price"] = average
-    trade_id, average = paper_trader.scale_in(fill_price, added_size, repriced)
+    completed = dict(split["result"])
+    completed["entry_price"] = average
+    completed["position_size_btc"] = total_size
+    completed["position_size_percent"] = 100.0
+    completed["entry_stage"] = 2
+    completed["second_entry_price"] = fill_price
+    completed["average_entry_price"] = average
+    # 평단을 개선하더라도 기존 손절가를 더 멀리 늘리지 않는다.
+    trade_id, average = paper_trader.scale_in(fill_price, added_size, completed)
     detail = (
-        f"PAPER 50%+50% 완료 #{trade_id} · 2차 지정가 ${fill_price:,.2f} · "
-        f"평균단가 ${average:,.2f} · SL ${repriced['stop_loss']:,.2f} · "
-        f"TP1 ${repriced['take_profit_1']:,.2f}"
+        f"PAPER 조정 50%+50% 완료 #{trade_id} · {reason} · 2차 ${fill_price:,.2f} · "
+        f"평균단가 ${average:,.2f} · SL ${completed['stop_loss']:,.2f} · "
+        f"TP1 ${completed['take_profit_1']:,.2f}"
     )
     record_scheduled_entry_session(session_date, session_key, "ENTERED", "PAPER_TRADING", direction, detail)
     _scheduled_analysis_runs.pop(run_key, None)
@@ -1296,7 +1436,7 @@ async def _complete_scheduled_paper_scale_in(
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "trade_update"})
     await manager.broadcast({"type": "status", "data": _status_payload()})
-    await _send_filled_position_email(repriced, "PAPER")
+    await _send_filled_position_email(completed, "PAPER")
     return True
 
 
@@ -1308,11 +1448,10 @@ async def _cancel_scheduled_scale_in_after_exit(trade_id: int, result_code: str)
             continue
         session_date, session_key = run_key.split(":", 1)
         direction = str(split.get("direction") or "HOLD")
-        target = float(split.get("second_entry_price") or 0)
         state.pending_paper_order = None
         detail = (
             f"PAPER 1차 50% #{trade_id} {result_code} 종료 · "
-            f"미체결 2차 ${target:,.2f} 주문 취소"
+            "미체결 동적 조정 2차 50% 취소"
         )
         record_scheduled_entry_session(
             session_date, session_key, "ENTERED", "PAPER_TRADING", direction, detail
@@ -1324,7 +1463,7 @@ async def _cancel_scheduled_scale_in_after_exit(trade_id: int, result_code: str)
 
 
 async def _check_active_scheduled_scale_in() -> None:
-    """가격 루프에서 2차 진입가를 손절 검사보다 먼저 처리한다."""
+    """가격 루프에서 동적 조정 2차 진입 상태를 갱신한다."""
     for run_key, analysis_run in list(_scheduled_analysis_runs.items()):
         if not analysis_run.get("scale_in"):
             continue
@@ -1383,7 +1522,6 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     now = time.monotonic()
     remaining_seconds = seconds_until_session_end(session_date, session_key)
     force_entry_due = remaining_seconds <= SCHEDULED_FORCE_ENTRY_BEFORE_END_SECONDS
-    split_entry_due = remaining_seconds <= SCHEDULED_SPLIT_ENTRY_BEFORE_END_SECONDS
     if (
         not force_entry_due
         and
@@ -1421,7 +1559,6 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     # 분석 완료 시점 기준으로 마감 의무 진입 여부를 다시 판단한다.
     remaining_seconds = seconds_until_session_end(session_date, session_key)
     force_entry_due = remaining_seconds <= SCHEDULED_FORCE_ENTRY_BEFORE_END_SECONDS
-    split_entry_due = remaining_seconds <= SCHEDULED_SPLIT_ENTRY_BEFORE_END_SECONDS
 
     # 분석 중 일반 루프에서 먼저 포지션을 열었으면 세션은 정상 완료로 기록한다.
     position_opened_during_analysis = (
@@ -1460,7 +1597,9 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         len(recent_samples) == SCHEDULED_STABLE_SIGNAL_SAMPLES
         and confirmed_direction in ("LONG", "SHORT")
     )
-    analysis_complete = confirmed or split_entry_due
+    # 고정 세션 진입은 기존처럼 마감 1분 이내에만 실행한다.
+    # 세션 중 조기 신호는 방향·파동 판단에만 사용한다.
+    analysis_complete = force_entry_due
     if not analysis_complete or not latest:
         return False
 
@@ -1513,48 +1652,41 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
             else "적격 신호 미확정: 누적 우세 방향으로 1차 50% 진입 후 가격 기준 2차 대기"
         ),
     ]
-    split_required = (not confirmed) or volume_ratio < 1.0
     if mode == "PAPER_TRADING":
         full_size = _paper_full_leverage_size(forced["entry_price"])
-        if split_required and split_entry_due:
-            # 불리한 방향 물타기 대신 +0.35R 진행을 확인한 뒤 잔여 50%를 추가한다.
-            stop_gap = float(forced.get("scheduled_stop_gap") or 0)
-            add_on_gap = stop_gap * float(forced.get("scheduled_add_on_ratio") or 0.35)
-            second_entry = (
-                float(forced["entry_price"]) + add_on_gap
-                if direction == "LONG"
-                else float(forced["entry_price"]) - add_on_gap
-            )
-            projected_average = (float(forced["entry_price"]) + second_entry) / 2
-            projected = reprice_scheduled_result(forced, projected_average)
+        if force_entry_due:
+            # 마감 시 50%만 진입하고, 완성 5분봉에서 거래량 급증 후
+            # 25~60% 조정·거래량 축소·재출발이 확인될 때 잔여 50%를 추가한다.
             first_size = round(full_size * 0.5, 8)
             second_size = round(full_size - first_size, 8)
-            first_plan = dict(projected)
+            first_plan = dict(forced)
             first_plan.update({
                 "entry_price": float(forced["entry_price"]),
-                "take_profit_1": forced["take_profit_1"],
-                "take_profit_2": forced["take_profit_2"],
                 "position_size_btc": first_size,
                 "position_size_percent": 50.0,
             })
             first_plan["reasons"] = list(forced["reasons"]) + [
-                f"애매한 신호 1차 50% 진입, 유리하게 +0.35R 진행 시 2차 ${second_entry:,.2f}",
-                "불리한 방향 물타기 금지, 1차 청산 시 미체결 잔량 취소",
+                "마감 1차 50% 진입, 거래량 급증 후 25~60% 조정·재출발 시 2차 50%",
+                "2차 체결 후에도 최초 손절·익절가 유지, 1차 청산 시 미체결 잔량 취소",
             ]
             trade_id = paper_trader.open_trade(direction, first_plan)
             if state.paper_account_start_trade_id is None:
                 state.paper_account_start_trade_id = trade_id
+            impulse, last_candle_timestamp = _initial_scheduled_impulse(consensus_inputs, direction)
             analysis_run["scale_in"] = {
                 "trade_id": trade_id,
                 "direction": direction,
-                "second_entry_price": second_entry,
+                "first_entry_price": float(forced["entry_price"]),
                 "second_size_btc": second_size,
                 "result": forced,
+                "impulse": impulse,
+                "pullback": None,
+                "last_candle_timestamp": last_candle_timestamp,
             }
             risk_mgr.record_order_placed()
             msg = state.add_log(
                 f"[고정 진입 {session_key}] {direction} 1차 50% #{trade_id} "
-                f"${forced['entry_price']:,.2f} · 2차 ${second_entry:,.2f} 대기 · "
+                f"${forced['entry_price']:,.2f} · 2차 동적 조정·재출발 대기 · "
                 f"1차 청산 시 미체결 잔량 전부 취소"
             )
             await manager.broadcast({"type": "log", "data": {"message": msg}})
@@ -1793,23 +1925,31 @@ def _pending_entry_payload() -> Optional[dict]:
         if not split:
             continue
         result = split.get("result") or {}
-        target = float(split.get("second_entry_price") or 0)
+        pullback = split.get("pullback") or {}
+        candidate_price = float(pullback.get("close") or 0)
         current = paper_trader.open_data or {}
         current_size = float(current.get("size") or 0)
         second_size = float(split.get("second_size_btc") or 0)
         total_size = current_size + second_size
-        average = (
-            (float(current.get("entry") or 0) * current_size + target * second_size) / total_size
-            if total_size > 0 else target
+        average = None
+        if candidate_price > 0 and total_size > 0:
+            average = (
+                float(current.get("entry") or 0) * current_size + candidate_price * second_size
+            ) / total_size
+        mode = (
+            "PAPER · 거래량 급증 대기"
+            if not split.get("impulse")
+            else "PAPER · 조정 대기"
+            if not pullback
+            else "PAPER · 재출발 대기"
         )
-        repriced = reprice_scheduled_result(result, average)
         return {
-            "mode": "PAPER · 2차 50%",
+            "mode": mode,
             "direction": split.get("direction"),
-            "entry_price": target,
-            "stop_loss": repriced.get("stop_loss"),
-            "take_profit_1": repriced.get("take_profit_1"),
-            "take_profit_2": repriced.get("take_profit_2"),
+            "entry_price": candidate_price or None,
+            "stop_loss": result.get("stop_loss"),
+            "take_profit_1": result.get("take_profit_1"),
+            "take_profit_2": result.get("take_profit_2"),
             "position_size_percent": 50,
             "filled_percent": 50,
             "pending_stage": 2,

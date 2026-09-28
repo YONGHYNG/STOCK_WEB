@@ -586,6 +586,10 @@ class TradingAIEngine:
             "confidence": confidence,
             "entry_grade": entry_grade,
             "metrics": {
+                "timestamp": int(last.get("timestamp") or 0),
+                "open": float(last.get("open") or 0),
+                "high": float(last.get("high") or 0),
+                "low": float(last.get("low") or 0),
                 "close": close,
                 "ema20": ema20,
                 "ema50": ema50,
@@ -594,6 +598,7 @@ class TradingAIEngine:
                 "rsi14": rsi,
                 "previous_rsi14": previous_rsi,
                 "volume_ratio": volume_ratio,
+                "atr14": entry_atr,
                 "adx14": float(last.get("adx14") or 0),
                 "bb_width": float(last.get("bb_width") or 0),
                 "ma_distance_atr": (

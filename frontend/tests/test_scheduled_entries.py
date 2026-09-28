@@ -29,6 +29,30 @@ class ScheduledEntryTests(unittest.TestCase):
         self.assertEqual(active_scheduled_session(datetime(2026, 8, 20, 0, 10, tzinfo=KST)), ("2026-08-19", "US"))
         self.assertIsNone(active_scheduled_session(datetime(2026, 8, 19, 12, 0, tzinfo=KST)))
 
+    def test_weekend_disables_forced_entry_sessions(self):
+        # 금요일 밤에 시작한 미국 세션은 토요일 자정 이후에도 허용한다.
+        self.assertEqual(
+            active_scheduled_session(datetime(2026, 8, 22, 0, 10, tzinfo=KST)),
+            ("2026-08-21", "US"),
+        )
+        for current in (
+            datetime(2026, 8, 22, 8, 58, tzinfo=KST),
+            datetime(2026, 8, 22, 16, 30, tzinfo=KST),
+            datetime(2026, 8, 22, 23, 40, tzinfo=KST),
+            datetime(2026, 8, 23, 8, 58, tzinfo=KST),
+            datetime(2026, 8, 23, 16, 30, tzinfo=KST),
+            datetime(2026, 8, 23, 23, 40, tzinfo=KST),
+            # 월요일 자정 이후지만 일요일 밤 세션에 해당한다.
+            datetime(2026, 8, 24, 0, 10, tzinfo=KST),
+        ):
+            with self.subTest(current=current):
+                self.assertIsNone(active_scheduled_session(current))
+
+        self.assertEqual(
+            active_scheduled_session(datetime(2026, 8, 24, 8, 58, tzinfo=KST)),
+            ("2026-08-24", "MORNING"),
+        )
+
     def test_session_bounds_and_remaining_time(self):
         morning_start, morning_end = scheduled_session_bounds("2026-08-19", "MORNING")
         self.assertEqual((morning_start.hour, morning_start.minute), (8, 58))

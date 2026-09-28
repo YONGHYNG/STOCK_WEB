@@ -1,4 +1,4 @@
-"""한국시간 고정 진입 세션과 강제 진입 방향/가격 계획을 계산한다."""
+"""한국시간 평일 고정 진입 세션과 강제 진입 방향/가격 계획을 계산한다."""
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
@@ -57,7 +57,7 @@ def seconds_until_session_end(
 
 
 def active_scheduled_session(now: Optional[datetime] = None) -> Optional[tuple[str, str]]:
-    """현재 KST 시각의 (세션 기준일, 세션키)를 반환한다."""
+    """현재 KST 시각의 평일 (세션 기준일, 세션키)를 반환한다."""
     current = now.astimezone(KST) if now else datetime.now(KST)
     current_time = current.time().replace(tzinfo=None)
     for key, start, end in SCHEDULED_ENTRY_WINDOWS:
@@ -67,7 +67,10 @@ def active_scheduled_session(now: Optional[datetime] = None) -> Optional[tuple[s
         else:
             active = current_time >= start or current_time <= end
             session_date = current.date() if current_time >= start else current.date() - timedelta(days=1)
-        if active:
+        # 토·일요일은 한국/유럽/미국 고정 세션 강제 진입을 실행하지 않는다.
+        # 자정을 넘는 미국 세션은 시작한 날을 기준으로 판정하여,
+        # 금요일 23:40~토요일 00:20 세션은 금요일 세션으로 유지한다.
+        if active and session_date.weekday() < 5:
             return session_date.isoformat(), key
     return None
 

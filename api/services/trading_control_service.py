@@ -60,7 +60,6 @@ from backend.scheduled_entries import (
     reprice_scheduled_result,
     scheduled_volume_ratio,
     seconds_until_session_end,
-    scheduled_exit_deadline,
 )
 from backend.server_state import state
 from api.schemas.trading_schema import (
@@ -676,36 +675,6 @@ async def _check_paper_tp_sl(price: float):
     )
 
 
-async def _check_paper_session_time_exit(price: float) -> bool:
-    """다음 고정 세션 시작 1분 전부터 잔여 모의 포지션을 시장가로 정리한다."""
-    if not paper_trader.is_open or not paper_trader.open_data:
-        return False
-    trade_id = paper_trader.open_id
-    row = get_trade(trade_id) or {}
-    if "고정 진입 세션" not in str(row.get("entry_reason") or ""):
-        return False
-    entered = datetime.fromtimestamp(_entry_timestamp_ms(row) / 1000, tz=timezone.utc)
-    deadline = scheduled_exit_deadline(entered)
-    if datetime.now(KST) < deadline:
-        return False
-    t = paper_trader.open_data
-    reason = f"다음 고정 세션 전 청산: {deadline:%Y-%m-%d %H:%M} KST 마감"
-    tid, pnl = paper_trader.close_trade(
-        exit_price=price,
-        result="TIME_EXIT",
-        profit_reason=f"[세션 마감청산] {reason}" if _pnl_pct(t["direction"], t["entry"], price) >= 0 else "",
-        loss_reason=f"[세션 마감청산] {reason}" if _pnl_pct(t["direction"], t["entry"], price) < 0 else "",
-        exit_fee_rate=TAKER_FEE_RATE,
-    )
-    await _cancel_scheduled_scale_in_after_exit(tid, "TIME_EXIT")
-    risk_mgr.record_trade_result(pnl, "TIME_EXIT")
-    msg = state.add_log(f"[모의매매 시간청산] #{tid} {pnl:+.2f}% · {reason}")
-    await manager.broadcast({"type": "log", "data": {"message": msg}})
-    await manager.broadcast({"type": "trade_update"})
-    await manager.broadcast({"type": "status", "data": _status_payload()})
-    return True
-
-
 # ── Auto trade ─────────────────────────────────────────────────────────────────
 
 
@@ -1212,9 +1181,7 @@ async def price_loop():
                 if paper_trader.is_open:
                     await _check_active_scheduled_scale_in()
                 if paper_trader.is_open:
-                    time_exited = await _check_paper_session_time_exit(price)
-                    if not time_exited:
-                        await _check_paper_tp_sl(price)
+                    await _check_paper_tp_sl(price)
                     if paper_trader.is_open:
                         await manager.broadcast({"type": "status", "data": _status_payload()})
         except Exception:
@@ -1493,12 +1460,6 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
             session_date, session_key, run_key, analysis_run
         )
 
-    if mode == "PAPER_TRADING" and paper_trader.is_open:
-        price = await asyncio.to_thread(_worker_price)
-        if not price:
-            return False
-        await _check_paper_session_time_exit(price)
-
     has_position = (
         paper_trader.is_open
         if mode == "PAPER_TRADING"
@@ -1506,7 +1467,7 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
             [p for p in state.cached_positions if p.get("symbol") == SYMBOL]
         )
     )
-    if has_position:
+    if has_position and mode != "PAPER_TRADING":
         _scheduled_analysis_runs.pop(run_key, None)
         detail = "기존 포지션 보유로 세션 생략"
         record_scheduled_entry_session(session_date, session_key, "SKIPPED_POSITION", mode, detail=detail)
@@ -1561,10 +1522,8 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     force_entry_due = remaining_seconds <= SCHEDULED_FORCE_ENTRY_BEFORE_END_SECONDS
 
     # 분석 중 일반 루프에서 먼저 포지션을 열었으면 세션은 정상 완료로 기록한다.
-    position_opened_during_analysis = (
-        paper_trader.is_open
-        if mode == "PAPER_TRADING"
-        else bool(state.open_trade_id) or bool(
+    position_opened_during_analysis = mode != "PAPER_TRADING" and (
+        bool(state.open_trade_id) or bool(
             [p for p in state.cached_positions if p.get("symbol") == SYMBOL]
         )
     )
@@ -1619,6 +1578,50 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         )
         return False
     current_price = float(state.last_price or 0)
+    if mode == "PAPER_TRADING" and paper_trader.is_open and paper_trader.open_data:
+        current_position = dict(paper_trader.open_data)
+        current_direction = str(current_position.get("direction") or "HOLD").upper()
+        if current_direction == direction:
+            detail = (
+                f"기존 {current_direction} 포지션과 새 세션 방향 일치 · "
+                "청산·재진입 없이 계속 보유"
+            )
+            record_scheduled_entry_session(
+                session_date, session_key, "CARRIED_POSITION", mode, direction, detail
+            )
+            _scheduled_analysis_runs.pop(run_key, None)
+            msg = state.add_log(f"[고정 진입 {session_key}] {detail}")
+            await manager.broadcast({"type": "log", "data": {"message": msg}})
+            await manager.broadcast({"type": "status", "data": _status_payload()})
+            return True
+
+        previous_entry = float(current_position.get("entry") or 0)
+        previous_size = float(current_position.get("size") or 0)
+        trade_id, pnl = paper_trader.force_close(current_price)
+        await _cancel_scheduled_scale_in_after_exit(trade_id, "SESSION_DIRECTION_CHANGE")
+        risk_mgr.record_trade_result(pnl, "SESSION_DIRECTION_CHANGE")
+        msg = state.add_log(
+            f"[고정 진입 {session_key}] {current_direction}→{direction} 방향 전환 · "
+            f"기존 #{trade_id} {pnl:+.2f}% 청산"
+        )
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        await manager.broadcast({"type": "trade_update"})
+        await _send_trade_event_notification(
+            "SESSION_DIRECTION_CHANGE",
+            {
+                "direction": current_direction,
+                "entry_price": previous_entry,
+                "stop_loss": current_position.get("sl"),
+                "take_profit_1": current_position.get("tp1"),
+                "take_profit_2": current_position.get("tp2"),
+                "exit_price": current_price,
+                "pnl_pct": pnl,
+                "position_size_btc": previous_size,
+                "position_size_percent": current_position.get("position_size_percent", 100),
+            },
+            "PAPER",
+        )
+
     timing = (latest.get("entry_timing") or {}).get(direction) or {}
     trade_type = "PAPER" if mode == "PAPER_TRADING" else "LIVE"
     timing_ok, timing_status, timing_reason = scheduled_timing_check(

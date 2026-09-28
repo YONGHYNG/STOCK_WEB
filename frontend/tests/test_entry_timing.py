@@ -197,6 +197,84 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("second_entry_price", split)
             self.assertIn("거래량 급증 후 25~60% 조정", "\n".join(plan["reasons"]))
 
+    async def test_scheduled_session_keeps_same_direction_position_open(self):
+        from api.services import trading_control_service as svc
+        result = dict(
+            direction="HOLD", confidence=0, entry_price=104,
+            timeframe_directions={"5m": "LONG", "15m": "LONG"},
+        )
+        fake_state = SimpleNamespace(
+            trading_mode="PAPER_TRADING", auto_trade_enabled=True,
+            emergency_stopped=False, last_price=104, last_result=result,
+            pending_paper_order=None, pending_live_order=None,
+            add_log=lambda message: message,
+        )
+        trader = Mock(
+            is_open=True, open_id=55,
+            open_data={"direction": "LONG", "entry": 100, "size": .01},
+        )
+        runs = {}
+        with patch.object(svc, "state", fake_state), patch.object(svc, "paper_trader", trader), \
+             patch.object(svc, "_scheduled_analysis_runs", runs), \
+             patch.object(svc, "get_scheduled_entry_session", return_value=None), \
+             patch.object(svc, "_worker_analyze", return_value=(result, [])), \
+             patch.object(svc, "seconds_until_session_end", return_value=30), \
+             patch.object(svc, "record_scheduled_entry_session") as record, \
+             patch.object(svc, "_status_payload", return_value={}), \
+             patch.object(svc, "manager", SimpleNamespace(broadcast=AsyncMock())):
+            carried = await svc._execute_scheduled_entry("2026-09-14", "EUROPE")
+
+        self.assertTrue(carried)
+        trader.force_close.assert_not_called()
+        trader.open_trade.assert_not_called()
+        self.assertEqual(record.call_args.args[2], "CARRIED_POSITION")
+        self.assertNotIn("2026-09-14:EUROPE", runs)
+
+    async def test_scheduled_session_switches_only_when_direction_changes(self):
+        from api.services import trading_control_service as svc
+        result = dict(
+            direction="HOLD", confidence=0, entry_price=104,
+            timeframe_directions={"5m": "LONG", "15m": "LONG"},
+            entry_timing={"LONG": {"confirmed": False, "reason": "새 눌림 대기"}},
+        )
+        fake_state = SimpleNamespace(
+            trading_mode="PAPER_TRADING", auto_trade_enabled=True,
+            emergency_stopped=False, last_price=104, last_result=result,
+            pending_paper_order=None, pending_live_order=None,
+            paper_account_start_trade_id=None, add_log=lambda message: message,
+        )
+        trader = Mock(
+            is_open=True, open_id=55,
+            open_data={
+                "direction": "SHORT", "entry": 110, "size": .01,
+                "sl": 120, "tp1": 100, "tp2": 95,
+                "position_size_percent": 100,
+            },
+        )
+        trader.force_close.return_value = (55, -0.5)
+        trader.open_trade.return_value = 77
+        with patch.object(svc, "state", fake_state), patch.object(svc, "paper_trader", trader), \
+             patch.object(svc, "_scheduled_analysis_runs", {}), \
+             patch.object(svc, "get_scheduled_entry_session", return_value=None), \
+             patch.object(svc, "get_last_closed_trade", return_value=None), \
+             patch.object(svc, "_worker_analyze", return_value=(result, [])), \
+             patch.object(svc, "seconds_until_session_end", return_value=30), \
+             patch.object(svc, "_paper_full_leverage_size", return_value=.02), \
+             patch.object(svc, "_cancel_scheduled_scale_in_after_exit", AsyncMock()), \
+             patch.object(svc, "risk_mgr", Mock()), \
+             patch.object(svc, "_status_payload", return_value={}), \
+             patch.object(svc, "manager", SimpleNamespace(broadcast=AsyncMock())), \
+             patch.object(svc, "_send_trade_event_notification", AsyncMock()), \
+             patch.object(svc, "_send_filled_position_email", AsyncMock()):
+            switched = await svc._execute_scheduled_entry("2026-09-14", "EUROPE")
+
+        self.assertFalse(switched)
+        trader.force_close.assert_called_once_with(104.0)
+        trader.open_trade.assert_called_once()
+        direction, plan = trader.open_trade.call_args.args
+        self.assertEqual(direction, "LONG")
+        self.assertEqual(plan["position_size_btc"], .01)
+
     def test_scheduled_dynamic_pullback_uses_volume_contraction_and_restart(self):
         from api.services import trading_control_service as svc
 

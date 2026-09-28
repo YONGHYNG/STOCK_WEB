@@ -33,17 +33,6 @@ def scheduled_session_bounds(session_date: str, session_key: str) -> tuple[datet
     raise ValueError(f"알 수 없는 고정 진입 세션: {session_key}")
 
 
-def scheduled_exit_deadline(entry_time: datetime) -> datetime:
-    """진입 이후 첫 고정 세션 시작 1분 전에 기존 거래를 마감한다."""
-    entered = entry_time.astimezone(KST)
-    starts = [
-        datetime.combine(entered.date() + timedelta(days=offset), start, tzinfo=KST)
-        for offset in (0, 1)
-        for _, start, _ in SCHEDULED_ENTRY_WINDOWS
-    ]
-    return min(start for start in starts if start > entered) - timedelta(minutes=1)
-
-
 def seconds_until_session_end(
     session_date: str,
     session_key: str,

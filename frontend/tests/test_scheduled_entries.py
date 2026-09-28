@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime
 from types import SimpleNamespace
 
 from backend.scheduled_entries import (
@@ -12,7 +12,6 @@ from backend.scheduled_entries import (
     reprice_scheduled_result,
     scheduled_session_bounds,
     seconds_until_session_end,
-    scheduled_exit_deadline,
 )
 
 
@@ -66,20 +65,6 @@ class ScheduledEntryTests(unittest.TestCase):
         us_start, us_end = scheduled_session_bounds("2026-08-19", "US")
         self.assertEqual(us_start.date().isoformat(), "2026-08-19")
         self.assertEqual(us_end.date().isoformat(), "2026-08-20")
-
-    def test_exit_before_next_session_including_overnight(self):
-        for entered, expected in (
-            ("2026-09-07 09:19", "2026-09-07 16:29"),
-            ("2026-09-07 16:50", "2026-09-07 23:39"),
-            ("2026-09-07 23:55", "2026-09-08 08:57"),
-            ("2026-09-08 00:10", "2026-09-08 08:57"),
-            ("2026-09-07 16:30", "2026-09-07 23:39"),
-        ):
-            with self.subTest(entered=entered):
-                entry = datetime.strptime(entered, "%Y-%m-%d %H:%M").replace(tzinfo=KST)
-                deadline = datetime.strptime(expected, "%Y-%m-%d %H:%M").replace(tzinfo=KST)
-                self.assertEqual(scheduled_exit_deadline(entry), deadline)
-                self.assertEqual(scheduled_exit_deadline(entry.astimezone(timezone.utc)), deadline)
 
     def test_hold_uses_indicator_bias(self):
         result = {

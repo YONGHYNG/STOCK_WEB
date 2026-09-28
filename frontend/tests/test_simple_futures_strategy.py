@@ -389,6 +389,21 @@ class StrategyTests(unittest.TestCase):
         }
         self.assertEqual(trader.check_tp_sl(125.0), "TP1")
 
+    def test_first_half_position_ignores_stop_until_second_entry(self):
+        trader = PaperTrader()
+        trader._open_id = 1
+        trader._open_data = {
+            "direction": "LONG", "entry": 100.0,
+            "sl": 90.0, "tp1": 110.0, "tp2": 120.0,
+            "position_size_percent": 50.0, "entry_stage": 1,
+        }
+
+        self.assertIsNone(trader.check_tp_sl(85.0))
+        self.assertEqual(trader.check_tp_sl(110.0), "TP1")
+
+        trader._open_data.update(position_size_percent=100.0, entry_stage=2)
+        self.assertEqual(trader.check_tp_sl(85.0), "SL")
+
     def test_entry_grade_uses_real_score_bands(self):
         self.assertEqual(TradingAIEngine._entry_grade(80.0), "A")
         self.assertEqual(TradingAIEngine._entry_grade(65.0), "B")

@@ -192,7 +192,12 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("DEADLINE_OVERRIDE", "\n".join(plan["reasons"]))
             self.assertEqual(plan["entry_price"], 104)
             self.assertEqual(plan["position_size_btc"], .01)
+            self.assertEqual(plan["position_size_percent"], 50.0)
+            self.assertEqual(plan["entry_stage"], 1)
+            self.assertIsNone(plan["stop_loss"])
+            self.assertIsNotNone(plan["take_profit_1"])
             split = analysis_runs["2026-09-14:EUROPE"]["scale_in"]
+            self.assertIsNotNone(split["result"]["stop_loss"])
             self.assertEqual(split["first_entry_price"], plan["entry_price"])
             self.assertNotIn("second_entry_price", split)
             self.assertIn("거래량 급증 후 25~60% 조정", "\n".join(plan["reasons"]))
@@ -390,6 +395,8 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
         fill_price, added_size, plan = trader.scale_in.call_args.args
         self.assertEqual((fill_price, added_size), (990.0, 1.0))
         self.assertEqual(plan["average_entry_price"], 995.0)
+        self.assertEqual(plan["entry_stage"], 2)
+        self.assertEqual(plan["position_size_percent"], 100.0)
         self.assertEqual(plan["stop_loss"], 900.0)
         self.assertEqual(plan["take_profit_1"], 1100.0)
         self.assertNotIn("2026-09-14:EUROPE", runs)

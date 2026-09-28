@@ -369,6 +369,8 @@ def _paper_position_payload() -> Optional[dict]:
         "fee_pct": fee_pct,
         "pnl_pct": net_pnl_pct,
         "size_btc": data.get("size") or risk_cfg.order_size_btc,
+        "position_size_percent": data.get("position_size_percent", 100),
+        "entry_stage": data.get("entry_stage", 2),
         "entry_reason": row.get("entry_reason") if row else "",
     }
 
@@ -1365,14 +1367,15 @@ async def _complete_scheduled_paper_scale_in(
         return False
 
     current = paper_trader.open_data
-    stop = float(current.get("sl") or 0)
+    # 1차 포지션에는 실제 SL이 없으므로 2차 진입 가능 여부는 예정 SL로 검사한다.
+    stop = float(current.get("sl") or (split.get("result") or {}).get("stop_loss") or 0)
     stop_breached = (
         direction == "LONG" and stop > 0 and price <= stop
     ) or (
         direction == "SHORT" and stop > 0 and price >= stop
     )
-    # 갭 하락·상승으로 이미 손절선을 넘었으면 2차를 추가하지 않고
-    # 이어지는 TP/SL 검사에서 기존 50% 포지션만 청산한다.
+    # 예정 손절선을 이미 넘은 상태에서는 2차를 추가하지 않는다.
+    # 기존 50%는 손절 없이 TP만 유지한다.
     if stop_breached:
         return False
 
@@ -1665,12 +1668,14 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
             first_plan = dict(forced)
             first_plan.update({
                 "entry_price": float(forced["entry_price"]),
+                "stop_loss": None,
                 "position_size_btc": first_size,
                 "position_size_percent": 50.0,
+                "entry_stage": 1,
             })
             first_plan["reasons"] = list(forced["reasons"]) + [
                 "마감 1차 50% 진입, 거래량 급증 후 25~60% 조정·재출발 시 2차 50%",
-                "2차 체결 후에도 최초 손절·익절가 유지, 1차 청산 시 미체결 잔량 취소",
+                "1차 50%는 손절 없이 익절가만 활성화, 2차 체결 후 최초 손절가 활성화",
             ]
             trade_id = paper_trader.open_trade(direction, first_plan)
             if state.paper_account_start_trade_id is None:
@@ -1690,7 +1695,7 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
             msg = state.add_log(
                 f"[고정 진입 {session_key}] {direction} 1차 50% #{trade_id} "
                 f"${forced['entry_price']:,.2f} · 2차 동적 조정·재출발 대기 · "
-                f"1차 청산 시 미체결 잔량 전부 취소"
+                f"1차는 손절 없음 · TP1만 활성화"
             )
             await manager.broadcast({"type": "log", "data": {"message": msg}})
             await _send_filled_position_email(first_plan, "PAPER")
@@ -1791,15 +1796,18 @@ def _historical_trigger(row: dict) -> tuple[str, float, dict] | None:
     if not candle:
         return None
     direction = str(row["direction"]).upper()
-    sl_hit = candle["low"] <= row["stop_loss"] if direction == "LONG" else candle["high"] >= row["stop_loss"]
+    stop_loss = row.get("stop_loss")
+    sl_hit = bool(stop_loss is not None) and (
+        candle["low"] <= stop_loss if direction == "LONG" else candle["high"] >= stop_loss
+    )
     tp_hit = bool(row.get("take_profit_1")) and (
         candle["high"] >= row["take_profit_1"] if direction == "LONG" else candle["low"] <= row["take_profit_1"]
     )
     if sl_hit and tp_hit:
         # 1분봉 내부 순서는 알 수 없으므로 시가에서 더 가까운 주문이 먼저 체결된 것으로 봅니다.
-        sl_hit = abs(candle["open"] - row["stop_loss"]) <= abs(candle["open"] - row["take_profit_1"])
+        sl_hit = abs(candle["open"] - stop_loss) <= abs(candle["open"] - row["take_profit_1"])
         tp_hit = not sl_hit
-    return ("SL", float(row["stop_loss"]), candle) if sl_hit else ("TP1", float(row["take_profit_1"]), candle)
+    return ("SL", float(stop_loss), candle) if sl_hit else ("TP1", float(row["take_profit_1"]), candle)
 
 
 async def _reconcile_missed_exits() -> None:
@@ -1859,10 +1867,7 @@ async def startup_event():
         state.plan_trade_data = _trade_data_from_row(existing_plan)
     paper_trader.restore_from_db()
     await _reconcile_missed_exits()
-    if paper_trader.is_open and paper_trader.open_data:
-        paper_trader.update_open_size(
-            _paper_full_leverage_size(float(paper_trader.open_data.get("entry") or 0))
-        )
+    # 복구한 포지션의 실제 체결 수량을 유지한다. 재시작이 50%를 100%로 늘리면 안 된다.
     restored_losses = _recent_consecutive_paper_losses()
     risk_mgr.restore_consecutive_losses(restored_losses)
     if restored_losses >= risk_cfg.consecutive_loss_limit:

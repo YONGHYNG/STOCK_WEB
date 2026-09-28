@@ -99,12 +99,12 @@ def send_trade_event_email(event: str, result: dict) -> tuple[bool, str]:
     mode = str(result.get("mode") or result.get("trade_type") or "").upper()
     position_share = _position_share_percent(result)
     size_btc = float(result.get("position_size_btc") or result.get("size_btc") or 0)
-    entry_stage = int(result.get("entry_stage") or 1)
+    entry_stage = int(result.get("entry_stage") or (1 if position_share < 100 else 2))
     second_entry = float(result.get("second_entry_price") or 0)
     average_entry = float(result.get("average_entry_price") or entry)
     if direction not in ("LONG", "SHORT") or not entry:
         return False, "포지션 방향 또는 진입 가격이 완성되지 않음"
-    if event in ("PENDING", "ENTRY") and not all((stop, tp1, tp2)):
+    if event in ("PENDING", "ENTRY") and (not tp1 or not tp2 or (entry_stage >= 2 and not stop)):
         return False, "포지션 또는 진입·손절·익절 가격이 완성되지 않음"
 
     mode_label = f"{mode} " if mode else ""
@@ -113,7 +113,7 @@ def send_trade_event_email(event: str, result: dict) -> tuple[bool, str]:
         f"진입 비중: {position_share:g}%\n"
         + (f"진입 수량: {size_btc:.8f} BTC\n" if size_btc else "") +
         f"진입 지정가: {entry:,.2f} USDT\n"
-        f"손절가: {stop:,.2f} USDT\n"
+        + (f"손절가: {stop:,.2f} USDT\n" if stop else "손절가: 미설정 (2차 진입 후 활성화)\n") +
         f"1차 익절가: {tp1:,.2f} USDT\n"
         f"참고 목표가(주문 아님): {tp2:,.2f} USDT\n"
     )

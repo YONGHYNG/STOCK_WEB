@@ -123,7 +123,9 @@ def init_db() -> None:
                 profit_reason TEXT,
                 loss_reason   TEXT,
                 notes         TEXT,
-                size_btc      REAL
+                size_btc      REAL,
+                position_size_percent REAL NOT NULL DEFAULT 100,
+                entry_stage   INTEGER NOT NULL DEFAULT 2
             )
             """
         )
@@ -148,6 +150,8 @@ def init_db() -> None:
             "ALTER TABLE trades ADD COLUMN funding_fee REAL",
             "ALTER TABLE trades ADD COLUMN net_profit REAL",
             "ALTER TABLE trades ADD COLUMN synced_at DATETIME",
+            "ALTER TABLE trades ADD COLUMN position_size_percent REAL NOT NULL DEFAULT 100",
+            "ALTER TABLE trades ADD COLUMN entry_stage INTEGER NOT NULL DEFAULT 2",
         ):
             try:
                 conn.execute(migration)
@@ -395,6 +399,8 @@ def open_trade(
     entry_reason: str,
     trade_type: str = "LIVE",
     size_btc: Optional[float] = None,
+    position_size_percent: float = 100.0,
+    entry_stage: int = 2,
 ) -> int:
     """새 거래를 열고 trade ID를 반환합니다. trade_type: 'LIVE' | 'PAPER' | 'PLAN'"""
     with get_connection() as conn:
@@ -402,8 +408,9 @@ def open_trade(
             """
             INSERT INTO trades
             (symbol, trade_type, direction, entry_price, stop_loss, take_profit_1, take_profit_2,
-             risk_reward, confidence, long_prob, short_prob, tf_directions, entry_reason, size_btc, result)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
+             risk_reward, confidence, long_prob, short_prob, tf_directions, entry_reason, size_btc,
+             position_size_percent, entry_stage, result)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
             """,
             (
                 symbol, trade_type, direction, entry_price, stop_loss, take_profit_1, take_profit_2,
@@ -411,6 +418,8 @@ def open_trade(
                 json.dumps(tf_directions, ensure_ascii=False),
                 entry_reason,
                 size_btc,
+                float(position_size_percent),
+                int(entry_stage),
             ),
         )
         conn.commit()
@@ -482,15 +491,22 @@ def get_first_trade_trigger_candle(
     symbol: str,
     entry_timestamp_ms: int,
     direction: str,
-    stop_loss: float,
+    stop_loss: float | None,
     take_profit_1: float | None = None,
 ) -> dict | None:
     """진입 후 1분봉에서 TP1 또는 SL을 최초로 건드린 캔들을 반환합니다."""
     direction = str(direction).upper()
-    if direction == "LONG":
-        trigger_sql = "low <= ? OR (? IS NOT NULL AND high >= ?)"
-    else:
-        trigger_sql = "high >= ? OR (? IS NOT NULL AND low <= ?)"
+    clauses: list[str] = []
+    params: list[float] = []
+    if stop_loss is not None:
+        clauses.append("low <= ?" if direction == "LONG" else "high >= ?")
+        params.append(float(stop_loss))
+    if take_profit_1 is not None:
+        clauses.append("high >= ?" if direction == "LONG" else "low <= ?")
+        params.append(float(take_profit_1))
+    if not clauses:
+        return None
+    trigger_sql = " OR ".join(clauses)
     with get_connection() as conn:
         row = conn.execute(
             f"""
@@ -501,7 +517,7 @@ def get_first_trade_trigger_candle(
             ORDER BY timestamp ASC
             LIMIT 1
             """,
-            (symbol, int(entry_timestamp_ms), float(stop_loss), take_profit_1, take_profit_1),
+            (symbol, int(entry_timestamp_ms), *params),
         ).fetchone()
         return dict(row) if row else None
 
@@ -528,7 +544,7 @@ def update_paper_trade_position(
         conn.execute(
             """
             UPDATE trades SET entry_price=?, size_btc=?, stop_loss=?,
-                take_profit_1=?, take_profit_2=?
+                take_profit_1=?, take_profit_2=?, position_size_percent=100, entry_stage=2
             WHERE id=? AND trade_type='PAPER' AND result='OPEN'
             """,
             (

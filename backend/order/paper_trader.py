@@ -70,6 +70,8 @@ class PaperTrader:
             entry_reason  = reasons,
             trade_type    = "PAPER",
             size_btc      = r.get("position_size_btc"),
+            position_size_percent = float(r.get("position_size_percent") or 100),
+            entry_stage   = int(r.get("entry_stage") or 2),
         )
         self._open_id   = trade_id
         self._open_data = {
@@ -80,6 +82,7 @@ class PaperTrader:
             "tp2":       r.get("take_profit_2"),
             "size":      r.get("position_size_btc"),
             "position_size_percent": float(r.get("position_size_percent") or 100),
+            "entry_stage": int(r.get("entry_stage") or 2),
             "max_favorable_move": 0.0,
         }
         return trade_id
@@ -129,7 +132,12 @@ class PaperTrader:
         t["max_favorable_move"] = max(
             float(t.get("max_favorable_move") or 0), favorable_move
         )
-        sl  = t.get("sl")
+        # 1차 50% 포지션은 TP만 감시한다. 손절은 2차까지 체결된 뒤에만 활성화한다.
+        full_position = (
+            int(t.get("entry_stage") or 1) >= 2
+            and float(t.get("position_size_percent") or 0) >= 100
+        )
+        sl  = t.get("sl") if full_position else None
         tp1 = t.get("tp1")
 
         if direction == "LONG":
@@ -185,6 +193,7 @@ class PaperTrader:
         self._open_data.update({
             "entry": average, "size": total_size,
             "position_size_percent": 100.0,
+            "entry_stage": 2,
             "sl": plan.get("stop_loss"), "tp1": plan.get("take_profit_1"),
             "tp2": plan.get("take_profit_2"),
         })
@@ -202,6 +211,7 @@ class PaperTrader:
                 "tp1":       row["take_profit_1"],
                 "tp2":       row["take_profit_2"],
                 "size":      row.get("size_btc"),
-                "position_size_percent": 100.0,
+                "position_size_percent": float(row.get("position_size_percent") or 100),
+                "entry_stage": int(row.get("entry_stage") or 2),
                 "max_favorable_move": 0.0,
             }

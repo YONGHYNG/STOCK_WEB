@@ -444,7 +444,7 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(split["result"]["stop_loss"], 900.0)
         self.assertTrue(split["restored"])
 
-    async def test_scheduled_pullback_scale_in_improves_average_without_widening_stop(self):
+    async def test_scheduled_pullback_scale_in_reprices_protection_from_final_average(self):
         from api.services import trading_control_service as svc
         result = {
             "direction": "LONG", "entry_price": 1000.0,
@@ -493,11 +493,11 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan["average_entry_price"], 995.0)
         self.assertEqual(plan["entry_stage"], 2)
         self.assertEqual(plan["position_size_percent"], 100.0)
-        self.assertEqual(plan["stop_loss"], 900.0)
-        self.assertEqual(plan["take_profit_1"], 1100.0)
+        self.assertEqual(plan["stop_loss"], 895.0)
+        self.assertEqual(plan["take_profit_1"], 1095.0)
         self.assertNotIn("2026-09-14:EUROPE", runs)
 
-    async def test_scheduled_scale_in_does_not_add_after_stop_is_breached(self):
+    async def test_scheduled_scale_in_sets_stop_only_after_second_fill(self):
         from api.services import trading_control_service as svc
         split = {
             "direction": "LONG", "first_entry_price": 1000.0,
@@ -511,24 +511,39 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
                 "timestamp": 2, "open": 1010.0, "high": 1000.0, "low": 980.0,
                 "close": 985.0, "volume_ratio": 0.8, "ratio": 40 / 70,
             },
-            "result": {"stop_loss": 900.0, "take_profit_1": 1100.0},
+            "result": {
+                "direction": "LONG", "entry_price": 1000.0,
+                "stop_loss": 900.0, "take_profit_1": 1100.0,
+            },
         }
         analysis_run = {"scale_in": split}
         latest = {"timestamp": 3, "diagnostics": {"metrics": {
             "timestamp": 3, "open": 985.0, "high": 1005.0, "low": 982.0,
             "close": 1002.0, "volume_ratio": 1.0,
         }}}
-        state = SimpleNamespace(last_price=895.0, last_result=latest)
+        state = SimpleNamespace(
+            last_price=895.0,
+            last_result=latest,
+            add_log=lambda message: message,
+        )
         trader = Mock(is_open=True, open_data={
-            "entry": 1000.0, "size": 1.0, "sl": 900.0,
+            "entry": 1000.0, "size": 1.0, "sl": None,
         })
-        with patch.object(svc, "state", state), patch.object(svc, "paper_trader", trader):
+        trader.scale_in.return_value = (77, 947.5)
+        with patch.object(svc, "state", state), patch.object(svc, "paper_trader", trader), \
+             patch.object(svc, "record_scheduled_entry_session"), \
+             patch.object(svc, "_status_payload", return_value={}), \
+             patch.object(svc, "manager", SimpleNamespace(broadcast=AsyncMock())), \
+             patch.object(svc, "_send_filled_position_email", AsyncMock()):
             completed = await svc._complete_scheduled_paper_scale_in(
                 "2026-09-14", "EUROPE", "2026-09-14:EUROPE", analysis_run,
             )
 
-        self.assertFalse(completed)
-        trader.scale_in.assert_not_called()
+        self.assertTrue(completed)
+        plan = trader.scale_in.call_args.args[2]
+        self.assertEqual(plan["average_entry_price"], 947.5)
+        self.assertEqual(plan["stop_loss"], 847.5)
+        self.assertEqual(plan["take_profit_1"], 1047.5)
 
     async def test_normal_entry_blocked_before_order_when_setup_predates_profit(self):
         from api.services import trading_control_service as svc

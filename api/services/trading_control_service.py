@@ -1388,18 +1388,6 @@ async def _complete_scheduled_paper_scale_in(
         return False
 
     current = paper_trader.open_data
-    # 1차 포지션에는 실제 SL이 없으므로 2차 진입 가능 여부는 예정 SL로 검사한다.
-    stop = float(current.get("sl") or (split.get("result") or {}).get("stop_loss") or 0)
-    stop_breached = (
-        direction == "LONG" and stop > 0 and price <= stop
-    ) or (
-        direction == "SHORT" and stop > 0 and price >= stop
-    )
-    # 예정 손절선을 이미 넘은 상태에서는 2차를 추가하지 않는다.
-    # 기존 50%는 손절 없이 TP만 유지한다.
-    if stop_breached:
-        return False
-
     fill_price = price
     added_size = float(split.get("second_size_btc") or 0)
     current_size = float(current.get("size") or 0)
@@ -1408,7 +1396,15 @@ async def _complete_scheduled_paper_scale_in(
         float(current.get("entry") or 0) * current_size + fill_price * added_size
     ) / total_size
     completed = dict(split["result"])
-    completed["entry_price"] = average
+    original_entry = float(completed.get("entry_price") or current.get("entry") or 0)
+    original_stop = float(completed.get("stop_loss") or 0)
+    stop_gap = float(completed.get("scheduled_stop_gap") or 0)
+    if stop_gap <= 0 and original_entry > 0 and original_stop > 0:
+        stop_gap = abs(original_entry - original_stop)
+    completed["scheduled_stop_gap"] = stop_gap
+    # SL·TP는 1차 가격으로 미리 확정하지 않는다. 2차 체결가를 합친 실제
+    # 평균단가가 정해진 이 시점에 동일 위험 간격으로 처음 계산한다.
+    completed = reprice_scheduled_result(completed, average)
     completed["position_size_btc"] = total_size
     completed["position_size_percent"] = 100.0
     completed["entry_stage"] = 2
@@ -1514,6 +1510,9 @@ def _restore_open_scheduled_scale_in() -> bool:
         "stop_loss": planned_stop,
         "take_profit_1": tp1 or None,
         "take_profit_2": current.get("tp2") or row.get("take_profit_2"),
+        "scheduled_stop_gap": risk_gap,
+        "scheduled_tp1_ratio": 1.0,
+        "scheduled_tp2_ratio": 1.5,
         "risk_reward_ratio": row.get("risk_reward"),
         "confidence": float(row.get("confidence") or 0),
         "long_probability": float(row.get("long_prob") or 50),
@@ -2058,7 +2057,9 @@ def _pending_entry_payload() -> Optional[dict]:
             "mode": mode,
             "direction": split.get("direction"),
             "entry_price": candidate_price or None,
-            "stop_loss": result.get("stop_loss"),
+            # 1차 50% 상태에서는 SL이 아직 정해지지 않았다. 2차 체결 후
+            # 최종 평균단가를 기준으로 계산한 값만 활성 SL로 표시한다.
+            "stop_loss": None,
             "take_profit_1": result.get("take_profit_1"),
             "take_profit_2": result.get("take_profit_2"),
             "position_size_percent": 50,

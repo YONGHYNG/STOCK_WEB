@@ -348,6 +348,102 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(action, "FILL")
 
+    def test_scheduled_invalid_wave_keeps_second_half_plan_and_rearms(self):
+        from api.services import trading_control_service as svc
+
+        def result(timestamp, open_, high, low, close, volume_ratio):
+            return {"timestamp": timestamp, "diagnostics": {"metrics": {
+                "timestamp": timestamp, "open": open_, "high": high,
+                "low": low, "close": close, "volume_ratio": volume_ratio,
+            }}}
+
+        split = {
+            "direction": "LONG", "first_entry_price": 115.0,
+            "last_candle_timestamp": 1,
+            "impulse": {
+                "timestamp": 1, "open": 101, "high": 110, "low": 100,
+                "close": 109, "volume_ratio": 2.0,
+                "origin": 100, "favorable_extreme": 110,
+            },
+            "pullback": None,
+        }
+        action, reason = svc._advance_scheduled_pullback(
+            split, result(2, 105, 106, 94, 95, 1.0), 95,
+        )
+        self.assertEqual(action, "WAIT")
+        self.assertIn("2차 계획 유지", reason)
+        self.assertIsNone(split["impulse"])
+
+        action, reason = svc._advance_scheduled_pullback(
+            split, result(3, 96, 112, 95, 111, 2.2), 111,
+        )
+        self.assertEqual(action, "WAIT")
+        self.assertIn("충격봉 확인", reason)
+        self.assertIsNotNone(split["impulse"])
+
+    def test_scheduled_worse_pullback_does_not_replace_better_price(self):
+        from api.services import trading_control_service as svc
+
+        def result(timestamp, open_, high, low, close, volume_ratio):
+            return {"timestamp": timestamp, "diagnostics": {"metrics": {
+                "timestamp": timestamp, "open": open_, "high": high,
+                "low": low, "close": close, "volume_ratio": volume_ratio,
+            }}}
+
+        split = {
+            "direction": "LONG", "first_entry_price": 125.0,
+            "last_candle_timestamp": 1,
+            "impulse": {
+                "timestamp": 1, "open": 101, "high": 120, "low": 100,
+                "close": 119, "volume_ratio": 2.0,
+                "origin": 100, "favorable_extreme": 120,
+            },
+            "pullback": None,
+        }
+        svc._advance_scheduled_pullback(
+            split, result(2, 118, 119, 112, 114, 1.0), 114,
+        )
+        self.assertEqual(split["pullback"]["close"], 114)
+        action, reason = svc._advance_scheduled_pullback(
+            split, result(3, 116, 118, 111, 115, 0.9), 115,
+        )
+        self.assertEqual(action, "WAIT")
+        self.assertEqual(split["pullback"]["close"], 114)
+        self.assertIn("기존의 더 좋은 2차 후보", reason)
+
+    def test_open_first_half_restores_second_half_plan(self):
+        from api.services import trading_control_service as svc
+
+        trader = Mock(
+            is_open=True,
+            open_id=77,
+            open_data={
+                "direction": "LONG", "entry": 1000.0, "size": 1.0,
+                "sl": None, "tp1": 1100.0, "tp2": 1150.0,
+                "position_size_percent": 50.0, "entry_stage": 1,
+            },
+        )
+        row = {
+            "id": 77, "direction": "LONG", "entry_price": 1000.0,
+            "entry_time": "2026-09-29 00:27:07", "stop_loss": None,
+            "take_profit_1": 1100.0, "take_profit_2": 1150.0,
+            "size_btc": 1.0, "entry_stage": 1, "position_size_percent": 50.0,
+            "risk_reward": 1.0, "confidence": 0, "long_prob": 50,
+            "short_prob": 50, "tf_directions": "{}",
+            "entry_reason": "고정 진입 세션 MORNING: 재시작 복구",
+        }
+        runs = {}
+        with patch.object(svc, "paper_trader", trader), \
+             patch.object(svc, "_scheduled_analysis_runs", runs), \
+             patch.object(svc, "get_open_trade", return_value=row):
+            restored = svc._restore_open_scheduled_scale_in()
+
+        self.assertTrue(restored)
+        split = runs["2026-09-29:MORNING"]["scale_in"]
+        self.assertEqual(split["second_size_btc"], 1.0)
+        self.assertEqual(split["result"]["stop_loss"], 900.0)
+        self.assertTrue(split["restored"])
+
     async def test_scheduled_pullback_scale_in_improves_average_without_widening_stop(self):
         from api.services import trading_control_service as svc
         result = {

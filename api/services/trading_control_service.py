@@ -3,7 +3,7 @@ import asyncio
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -1315,7 +1315,23 @@ def _advance_scheduled_pullback(split: dict, result: Optional[dict], price: floa
     pullback_ratio = max(0.0, pullback_move / impulse_move)
     structure_broken = snapshot["close"] <= origin if long else snapshot["close"] >= origin
     if structure_broken or pullback_ratio > SCHEDULED_PULLBACK_MAX_RATIO:
-        return "CANCEL", f"조정 {pullback_ratio * 100:.1f}%로 충격 파동 구조 무효"
+        # 한 번 정한 잔여 50% 계획은 포지션이 끝날 때까지 유지한다. 기존
+        # 충격 파동만 폐기하고 이후의 더 좋은 거래량 파동을 다시 탐색한다.
+        split["impulse"] = None
+        split["pullback"] = None
+        if _is_directional_volume_impulse(snapshot, direction):
+            replacement = dict(snapshot)
+            replacement["origin"] = snapshot["low"] if long else snapshot["high"]
+            replacement["favorable_extreme"] = snapshot["high"] if long else snapshot["low"]
+            split["impulse"] = replacement
+            return "WAIT", (
+                f"기존 조정 {pullback_ratio * 100:.1f}% 파동 무효 · 2차 계획 유지 · "
+                f"거래량 {snapshot['volume_ratio']:.2f}배 새 충격봉으로 갱신"
+            )
+        return "WAIT", (
+            f"기존 조정 {pullback_ratio * 100:.1f}% 파동 무효 · "
+            "2차 계획 유지, 새 방향성 거래량 급증 대기"
+        )
 
     pullback = split.get("pullback")
     if pullback and snapshot["timestamp"] > int(pullback["timestamp"]):
@@ -1334,10 +1350,23 @@ def _advance_scheduled_pullback(split: dict, result: Optional[dict], price: floa
 
     contracted = snapshot["volume_ratio"] <= float(impulse["volume_ratio"]) * SCHEDULED_PULLBACK_VOLUME_CONTRACTION
     if SCHEDULED_PULLBACK_MIN_RATIO <= pullback_ratio <= SCHEDULED_PULLBACK_MAX_RATIO and contracted:
-        split["pullback"] = {**snapshot, "ratio": pullback_ratio}
+        current_pullback = split.get("pullback")
+        candidate_is_better = (
+            not current_pullback
+            or (long and snapshot["close"] < float(current_pullback["close"]))
+            or (not long and snapshot["close"] > float(current_pullback["close"]))
+        )
+        if candidate_is_better:
+            split["pullback"] = {**snapshot, "ratio": pullback_ratio}
+            candidate_text = "2차 후보가 갱신"
+        else:
+            candidate_text = (
+                f"기존의 더 좋은 2차 후보 ${float(current_pullback['close']):,.2f} 유지"
+            )
         return "WAIT", (
             f"조정 {pullback_ratio * 100:.1f}% · 거래량 축소 "
-            f"{float(impulse['volume_ratio']):.2f}→{snapshot['volume_ratio']:.2f} · 재출발 대기"
+            f"{float(impulse['volume_ratio']):.2f}→{snapshot['volume_ratio']:.2f} · "
+            f"{candidate_text} · 재출발 대기"
         )
     return "WAIT", f"조정 {pullback_ratio * 100:.1f}% · 거래량 축소 조건 대기"
 
@@ -1355,14 +1384,6 @@ async def _complete_scheduled_paper_scale_in(
     price = float(state.last_price or 0)
     direction = str(split.get("direction") or "HOLD")
     action, reason = _advance_scheduled_pullback(split, state.last_result, price)
-    if action == "CANCEL":
-        detail = f"PAPER 1차 50% 유지 · 2차 취소: {reason}"
-        record_scheduled_entry_session(session_date, session_key, "ENTERED", "PAPER_TRADING", direction, detail)
-        _scheduled_analysis_runs.pop(run_key, None)
-        msg = state.add_log(f"[고정 진입 {session_key}] {detail}")
-        await manager.broadcast({"type": "log", "data": {"message": msg}})
-        await manager.broadcast({"type": "status", "data": _status_payload()})
-        return False
     if action != "FILL":
         return False
 
@@ -1444,11 +1465,95 @@ async def _check_active_scheduled_scale_in() -> None:
         return
 
 
+def _restore_open_scheduled_scale_in() -> bool:
+    """재시작 후에도 이미 정한 잔여 50% 계획을 복구해 계속 추적한다."""
+    if not paper_trader.is_open or not paper_trader.open_data:
+        return False
+    current = paper_trader.open_data
+    if (
+        int(current.get("entry_stage") or 2) != 1
+        or float(current.get("position_size_percent") or 100) >= 100
+    ):
+        return False
+
+    row = get_open_trade(SYMBOL, trade_type="PAPER") or {}
+    reason = str(row.get("entry_reason") or "")
+    session_key = next(
+        (key for key in ("MORNING", "EUROPE", "US") if f"고정 진입 세션 {key}" in reason),
+        "RECOVERY",
+    )
+    try:
+        entered_utc = datetime.strptime(
+            str(row.get("entry_time")), "%Y-%m-%d %H:%M:%S"
+        ).replace(tzinfo=timezone.utc)
+        entered_kst = entered_utc.astimezone(KST)
+        session_day = entered_kst.date()
+        if session_key == "US" and entered_kst.hour == 0:
+            session_day -= timedelta(days=1)
+        session_date = session_day.isoformat()
+    except (TypeError, ValueError):
+        session_date = datetime.now(KST).date().isoformat()
+
+    direction = str(current.get("direction") or row.get("direction") or "HOLD").upper()
+    entry = float(current.get("entry") or row.get("entry_price") or 0)
+    tp1 = float(current.get("tp1") or row.get("take_profit_1") or 0)
+    risk_gap = abs(tp1 - entry) if tp1 > 0 and entry > 0 else 0.0
+    planned_stop = float(current.get("sl") or row.get("stop_loss") or 0)
+    if planned_stop <= 0 and risk_gap > 0:
+        planned_stop = entry - risk_gap if direction == "LONG" else entry + risk_gap
+    if direction not in ("LONG", "SHORT") or entry <= 0 or planned_stop <= 0:
+        return False
+
+    try:
+        timeframe_directions = json.loads(row.get("tf_directions") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        timeframe_directions = {}
+    result = {
+        "direction": direction,
+        "entry_price": entry,
+        "stop_loss": planned_stop,
+        "take_profit_1": tp1 or None,
+        "take_profit_2": current.get("tp2") or row.get("take_profit_2"),
+        "risk_reward_ratio": row.get("risk_reward"),
+        "confidence": float(row.get("confidence") or 0),
+        "long_probability": float(row.get("long_prob") or 50),
+        "short_probability": float(row.get("short_prob") or 50),
+        "timeframe_directions": timeframe_directions,
+        "strategy_signal": f"SCHEDULED_{session_key}_{direction}",
+        "reasons": ["재시작 후 기존 잔여 50% 계획 복구"],
+    }
+    run_key = f"{session_date}:{session_key}"
+    analysis_run = _scheduled_analysis_runs.setdefault(
+        run_key, {"samples": [], "attempts": 0, "last_analysis_at": 0.0}
+    )
+    if analysis_run.get("scale_in"):
+        return True
+    first_size = float(current.get("size") or row.get("size_btc") or 0)
+    if first_size <= 0:
+        return False
+    analysis_run["scale_in"] = {
+        "trade_id": int(paper_trader.open_id or row.get("id") or 0),
+        "direction": direction,
+        "first_entry_price": entry,
+        "second_size_btc": first_size,
+        "result": result,
+        "impulse": None,
+        "pullback": None,
+        "last_candle_timestamp": 0,
+        "restored": True,
+    }
+    return True
+
+
 async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     """최신 분석을 여러 번 확인한 뒤 고정 세션 의무 진입을 한 번 실행한다."""
     run_key = f"{session_date}:{session_key}"
+    existing_run = _scheduled_analysis_runs.get(run_key) or {}
+    if existing_run.get("scale_in"):
+        return await _complete_scheduled_paper_scale_in(
+            session_date, session_key, run_key, existing_run
+        )
     if get_scheduled_entry_session(session_date, session_key):
-        _scheduled_analysis_runs.pop(run_key, None)
         return True
     mode = state.trading_mode
     if not state.auto_trade_enabled or state.emergency_stopped or mode == "SIGNAL_ONLY":
@@ -1458,11 +1563,6 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         run_key,
         {"samples": [], "attempts": 0, "last_analysis_at": 0.0},
     )
-    if analysis_run.get("scale_in"):
-        return await _complete_scheduled_paper_scale_in(
-            session_date, session_key, run_key, analysis_run
-        )
-
     has_position = (
         paper_trader.is_open
         if mode == "PAPER_TRADING"
@@ -1835,6 +1935,7 @@ async def _reconcile_missed_exits() -> None:
             if result_code == "SL":
                 loss_reason = _append_loss_analysis(loss_reason, paper_row["id"], elapsed)
             tid, pnl = paper_trader.close_trade(exit_price, result_code, profit_reason, loss_reason)
+            await _cancel_scheduled_scale_in_after_exit(tid, result_code)
             risk_mgr.record_trade_result(pnl, result_code)
             state.add_log(f"[자동 복구] 모의매매 #{tid} {result_code} {pnl:+.2f}%")
 
@@ -1866,6 +1967,8 @@ async def startup_event():
         state.plan_trade_id = existing_plan["id"]
         state.plan_trade_data = _trade_data_from_row(existing_plan)
     paper_trader.restore_from_db()
+    if _restore_open_scheduled_scale_in():
+        state.add_log("[자동 복구] 기존 잔여 50% 계획 유지 · 더 좋은 가격 조건 계속 추적")
     await _reconcile_missed_exits()
     # 복구한 포지션의 실제 체결 수량을 유지한다. 재시작이 50%를 100%로 늘리면 안 된다.
     restored_losses = _recent_consecutive_paper_losses()

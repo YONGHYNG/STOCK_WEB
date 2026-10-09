@@ -66,7 +66,7 @@ def load() -> RiskSettings:
                 risk_per_trade_pct    = float(d.get("risk_per_trade_pct",    0.2)),
                 max_loss_pct          = float(d.get("max_loss_pct",          1.0)),
                 daily_max_loss_pct    = float(d.get("daily_max_loss_pct",    3.0)),
-                consecutive_loss_limit= 3,
+                consecutive_loss_limit= int(d.get("consecutive_loss_limit", 3)),
                 auto_stop_loss_analysis = bool(d.get("auto_stop_loss_analysis", True)),
                 confidence_threshold  = float(d.get("confidence_threshold",  30.0)),
                 reentry_wait_seconds  = int(d.get("reentry_wait_seconds", 900)),

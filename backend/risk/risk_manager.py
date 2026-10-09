@@ -117,10 +117,7 @@ class RiskManager:
             return False, f"재진입 대기 중 ({remaining}초 남음)"
 
         # 8. 일일 손실 제한
-        if (
-            mode != TradingMode.PAPER_TRADING
-            and self._daily_pnl_pct <= -abs(s.daily_max_loss_pct)
-        ):
+        if self._daily_pnl_pct <= -abs(s.daily_max_loss_pct):
             return False, (
                 f"일일 손실 한도 도달 ({self._daily_pnl_pct:.2f}% / "
                 f"-{s.daily_max_loss_pct:.1f}%)"

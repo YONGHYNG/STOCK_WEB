@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from fastapi import WebSocket, WebSocketDisconnect
 
 from backend.strategy.multi_timeframe_strategy import TradingAIEngine
+from backend.strategy.volume_event_strategy import VolumeEventStrategy
 from backend.strategy.entry_timing import timing_entry_check, scheduled_timing_check
 from backend.strategy.backtester import Backtester, BacktestConfig
 from backend.bitget.market_api import BitgetClient
@@ -59,6 +60,7 @@ from backend.scheduled_entries import (
     choose_forced_direction,
     reprice_scheduled_result,
     scheduled_volume_ratio,
+    scheduled_session_bounds,
     seconds_until_session_end,
 )
 from backend.server_state import state
@@ -76,6 +78,7 @@ from api.schemas.trading_schema import (
 
 clients = {tf: BitgetClient(timeframe=tf, demo_mode=USE_DEMO_DATA) for tf in TIMEFRAMES}
 engine = TradingAIEngine()
+volume_event_engine = VolumeEventStrategy()
 executor = ThreadPoolExecutor(max_workers=8)
 paper_trader = PaperTrader()
 risk_cfg = risk_settings_store.load()
@@ -146,6 +149,23 @@ def _paper_full_leverage_size(entry_price: float) -> float:
     account = get_paper_account(PAPER_ACCOUNT_INITIAL_BALANCE, PAPER_ACCOUNT_LEVERAGE)
     notional = max(0.0, float(account["balance"])) * PAPER_ACCOUNT_LEVERAGE
     return round(notional / entry, 8)
+
+
+def _paper_risk_position_size(entry_price: float, stop_loss: float) -> float:
+    """20배 레버리지는 유지하되 설정된 계좌 위험액으로 총 수량을 계산한다."""
+    entry = float(entry_price or 0)
+    stop = float(stop_loss or 0)
+    risk_per_btc = abs(entry - stop)
+    if entry <= 0 or stop <= 0 or risk_per_btc <= 0:
+        return 0.0
+    account = get_paper_account(PAPER_ACCOUNT_INITIAL_BALANCE, PAPER_ACCOUNT_LEVERAGE)
+    balance = max(0.0, float(account["balance"]))
+    risk_amount = balance * max(0.0, float(risk_cfg.risk_per_trade_pct)) / 100
+    # 손절은 시장가 체결될 수 있으므로 진입 maker + 청산 taker 수수료를 최악값으로 반영한다.
+    fee_per_btc = entry * (float(MAKER_FEE_RATE) + float(TAKER_FEE_RATE))
+    size = risk_amount / (risk_per_btc + fee_per_btc)
+    leverage_cap = balance * PAPER_ACCOUNT_LEVERAGE / entry
+    return round(max(0.0, min(size, leverage_cap)), 8)
 
 
 def _is_range_result(result: Optional[dict]) -> bool:
@@ -608,7 +628,7 @@ async def _check_tp_sl(price: float):
     tid = state.open_trade_id
     close_trade(trade_id=tid, exit_price=price, result=result_code, pnl_pct=pnl_pct,
                 profit_reason=profit_reason, loss_reason=loss_reason)
-    emoji = "익절" if result_code.startswith("TP") else "손절"
+    emoji = "익절" if result_code.startswith("TP") or result_code == "TRAILING_EXIT" else "손절"
     msg = state.add_log(f"[{emoji}] TRADE #{tid}  {result_code}  {sign}{pnl_pct:.2f}%")
     state.open_trade_id = None
     state.open_trade_data = None
@@ -631,17 +651,35 @@ async def _check_tp_sl(price: float):
 
 async def _check_paper_tp_sl(price: float):
     result_code = paper_trader.check_tp_sl(price)
+    t = paper_trader.open_data
+    if not result_code and t and t.get("tp2_taken"):
+        ema20 = float(((state.last_result or {}).get("diagnostics") or {}).get("metrics", {}).get("ema20") or 0)
+        if ema20 > 0:
+            if (t["direction"] == "LONG" and price < ema20) or (t["direction"] == "SHORT" and price > ema20):
+                result_code = "TRAILING_EXIT"
     if not result_code:
         return
-    t = paper_trader.open_data
     entry, direction = t["entry"], t["direction"]
+    if result_code in ("TP1_PARTIAL", "TP2_PARTIAL"):
+        partial_code = "TP1" if result_code == "TP1_PARTIAL" else "TP2"
+        target = float(t.get("tp1") if partial_code == "TP1" else t.get("tp2"))
+        tid, amount, remaining = paper_trader.take_partial(target, partial_code, 0.35)
+        await _cancel_scheduled_scale_in_after_exit(tid, result_code)
+        msg = state.add_log(
+            f"[모의매매 분할익절] #{tid} {partial_code} · "
+            f"+${amount:,.4f} · 잔여 {remaining:.8f} BTC"
+        )
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        await manager.broadcast({"type": "trade_update"})
+        await manager.broadcast({"type": "status", "data": _status_payload()})
+        return
     limit_exit_price = (
-        float(t.get("tp1")) if result_code == "TP1"
+        float(price) if result_code == "TRAILING_EXIT"
         else float(t.get("sl"))
     )
     pnl_pct = _pnl_pct(direction, entry, limit_exit_price)
     sign = "+" if pnl_pct >= 0 else ""
-    profit_reason = f"[모의 지정가] {result_code} 체결: ${entry:,.2f} → ${limit_exit_price:,.2f}  ({sign}{pnl_pct:.2f}%)" if result_code.startswith("TP") else ""
+    profit_reason = f"[모의 지정가] {result_code} 체결: ${entry:,.2f} → ${limit_exit_price:,.2f}  ({sign}{pnl_pct:.2f}%)" if result_code == "TRAILING_EXIT" else ""
     loss_reason = f"[모의 지정가] 손절 체결: ${entry:,.2f} → ${limit_exit_price:,.2f}  ({sign}{pnl_pct:.2f}%)" if result_code == "SL" else ""
     if result_code == "SL":
         row = get_trade(paper_trader.open_id) or {}
@@ -655,7 +693,7 @@ async def _check_paper_tp_sl(price: float):
         and risk_mgr.consecutive_losses >= risk_cfg.consecutive_loss_limit
     ):
         await _activate_consecutive_loss_stop()
-    emoji = "익절" if result_code.startswith("TP") else "손절"
+    emoji = "익절" if result_code.startswith("TP") or result_code == "TRAILING_EXIT" else "손절"
     msg = state.add_log(f"[모의매매 {emoji}] #{tid}  {result_code}  {sign}{pnl:.2f}%")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "trade_update"})
@@ -685,10 +723,10 @@ async def _check_auto_trade(result: dict):
         return
     if state.trading_mode == "SIGNAL_ONLY":
         return
-    # 고정 세션 중에는 15초 일반 루프가 먼저 진입하지 않도록 하고,
-    # 1분 단위 다회 분석을 수행하는 scheduled_entry_loop에 진입 결정을 맡긴다.
-    if active_scheduled_session():
-        return
+    # 신규 전략은 지정된 활성 시간대에서만 실행되며, 진입 결정은
+    # scheduled_entry_loop의 Volume Event 상태 머신이 전담한다. 일반 신호
+    # 루프가 세션 밖이나 세션 중에 별도 주문을 내지 않도록 한다.
+    return
 
     direction = result.get("direction", "HOLD")
     confidence = result.get("confidence", 0.0)
@@ -1430,7 +1468,7 @@ async def _complete_scheduled_paper_scale_in(
 async def _cancel_scheduled_scale_in_after_exit(trade_id: int, result_code: str) -> None:
     """1차 50%만 보유한 채 청산되면 미체결 2차 주문과 관련 상태를 전부 제거한다."""
     for run_key, analysis_run in list(_scheduled_analysis_runs.items()):
-        split = analysis_run.get("scale_in") or {}
+        split = analysis_run.get("pyramid") or analysis_run.get("scale_in") or {}
         if int(split.get("trade_id") or 0) != int(trade_id):
             continue
         session_date, session_key = run_key.split(":", 1)
@@ -1449,9 +1487,109 @@ async def _cancel_scheduled_scale_in_after_exit(trade_id: int, result_code: str)
         return
 
 
+async def _complete_scheduled_profit_add(
+    session_date: str,
+    session_key: str,
+    run_key: str,
+    analysis_run: dict,
+) -> bool:
+    """1차 진입이 수익 방향으로 진행했을 때만 25%씩 최대 두 번 추가한다."""
+    pyramid = analysis_run.get("pyramid") or {}
+    if not pyramid or not paper_trader.is_open or not paper_trader.open_data:
+        return False
+    current = paper_trader.open_data
+    if int(pyramid.get("trade_id") or 0) != int(paper_trader.open_id or 0):
+        analysis_run.pop("pyramid", None)
+        return False
+
+    metrics = (state.last_result or {}).get("diagnostics", {}).get("metrics", {})
+    timestamp = int(metrics.get("timestamp") or 0)
+    if timestamp <= int(pyramid.get("last_candle_timestamp") or 0):
+        return False
+    pyramid["last_candle_timestamp"] = timestamp
+
+    price = float(state.last_price or metrics.get("close") or 0)
+    close = float(metrics.get("close") or price)
+    ema20 = float(metrics.get("ema20") or 0)
+    volume_ratio = float(metrics.get("volume_ratio") or 0)
+    direction = str(pyramid.get("direction") or "NO_TRADE")
+    first_entry = float(pyramid.get("first_entry_price") or 0)
+    risk = float(pyramid.get("risk_per_btc") or 0)
+    stage = int(pyramid.get("next_stage") or 2)
+    threshold = first_entry + risk * (0.5 if stage == 2 else 1.0) * (1 if direction == "LONG" else -1)
+    favorable = price >= threshold if direction == "LONG" else price <= threshold
+    trend_held = (
+        close > ema20 if direction == "LONG" and ema20 > 0
+        else close < ema20 if direction == "SHORT" and ema20 > 0
+        else False
+    )
+    last_add = float(pyramid.get("last_add_price") or first_entry)
+    renewed_extreme = (
+        price >= last_add + risk * 0.25
+        if direction == "LONG"
+        else price <= last_add - risk * 0.25
+    )
+    if not (favorable and trend_held and renewed_extreme and volume_ratio >= 0.65):
+        return False
+
+    added_size = min(
+        float(pyramid.get("add_size_btc") or 0),
+        max(0.0, float(pyramid.get("target_size_btc") or 0) - float(current.get("size") or 0)),
+    )
+    if added_size <= 0:
+        analysis_run.pop("pyramid", None)
+        return False
+    current_size = float(current.get("size") or 0)
+    new_total = current_size + added_size
+    new_percent = 75.0 if stage == 2 else 100.0
+    average = (float(current["entry"]) * current_size + price * added_size) / new_total
+    plan = dict(pyramid.get("result") or {})
+    # 수익 확인 후 추가하므로 보호가를 더 멀리 늘리지 않는다.
+    old_stop = float(current.get("sl") or pyramid.get("original_stop") or 0)
+    if direction == "LONG":
+        protected_stop = max(old_stop, first_entry if stage == 2 else float(current["entry"]))
+    else:
+        protected_stop = min(old_stop, first_entry if stage == 2 else float(current["entry"]))
+    plan.update({
+        "stop_loss": protected_stop,
+        "position_size_percent": new_percent,
+        "entry_stage": stage,
+        "second_entry_price" if stage == 2 else "third_entry_price": price,
+        "average_entry_price": average,
+    })
+    trade_id, actual_average = paper_trader.scale_in(price, added_size, plan)
+    pyramid["last_add_price"] = price
+    pyramid["result"] = plan
+    if stage == 2:
+        pyramid["next_stage"] = 3
+        detail = (
+            f"PAPER 수익 확인 2차 25% #{trade_id} · 총 75% · "
+            f"평단 ${actual_average:,.2f} · SL ${protected_stop:,.2f}"
+        )
+    else:
+        analysis_run.pop("pyramid", None)
+        detail = (
+            f"PAPER 추세 지속 3차 25% #{trade_id} · 총 100% · "
+            f"평단 ${actual_average:,.2f} · SL ${protected_stop:,.2f}"
+        )
+    record_scheduled_entry_session(session_date, session_key, "ENTERED", "PAPER_TRADING", direction, detail)
+    msg = state.add_log(f"[고정 세션 {session_key}] {detail}")
+    await manager.broadcast({"type": "log", "data": {"message": msg}})
+    await manager.broadcast({"type": "trade_update"})
+    await manager.broadcast({"type": "status", "data": _status_payload()})
+    await _send_filled_position_email(plan, "PAPER")
+    return True
+
+
 async def _check_active_scheduled_scale_in() -> None:
-    """가격 루프에서 동적 조정 2차 진입 상태를 갱신한다."""
+    """가격 루프에서 수익 방향 50/25/25 추가 진입을 갱신한다."""
     for run_key, analysis_run in list(_scheduled_analysis_runs.items()):
+        if analysis_run.get("pyramid"):
+            session_date, session_key = run_key.split(":", 1)
+            await _complete_scheduled_profit_add(
+                session_date, session_key, run_key, analysis_run
+            )
+            return
         if not analysis_run.get("scale_in"):
             continue
         session_date, session_key = run_key.split(":", 1)
@@ -1462,14 +1600,13 @@ async def _check_active_scheduled_scale_in() -> None:
 
 
 def _restore_open_scheduled_scale_in() -> bool:
-    """재시작 후에도 이미 정한 잔여 50% 계획을 복구해 계속 추적한다."""
+    """재시작 후에도 수익 방향 50/25/25 추가 진입 계획을 복구한다."""
     if not paper_trader.is_open or not paper_trader.open_data:
         return False
     current = paper_trader.open_data
-    if (
-        int(current.get("entry_stage") or 2) != 1
-        or float(current.get("position_size_percent") or 100) >= 100
-    ):
+    position_percent = float(current.get("position_size_percent") or 100)
+    entry_stage = int(current.get("entry_stage") or 3)
+    if position_percent >= 100 or entry_stage not in (1, 2):
         return False
 
     row = get_open_trade(SYMBOL, trade_type="PAPER") or {}
@@ -1525,26 +1662,31 @@ def _restore_open_scheduled_scale_in() -> bool:
     analysis_run = _scheduled_analysis_runs.setdefault(
         run_key, {"samples": [], "attempts": 0, "last_analysis_at": 0.0}
     )
-    if analysis_run.get("scale_in"):
+    if analysis_run.get("pyramid"):
         return True
-    first_size = float(current.get("size") or row.get("size_btc") or 0)
-    if first_size <= 0:
+    current_size = float(current.get("size") or row.get("size_btc") or 0)
+    if current_size <= 0 or position_percent <= 0:
         return False
-    analysis_run["scale_in"] = {
+    target_size = current_size / (position_percent / 100)
+    add_size = target_size * 0.25
+    analysis_run["pyramid"] = {
         "trade_id": int(paper_trader.open_id or row.get("id") or 0),
         "direction": direction,
         "first_entry_price": entry,
-        "second_size_btc": first_size,
+        "original_stop": planned_stop,
+        "risk_per_btc": abs(entry - planned_stop),
+        "add_size_btc": add_size,
+        "target_size_btc": target_size,
+        "next_stage": 2 if position_percent <= 50 else 3,
+        "last_add_price": entry,
         "result": result,
-        "impulse": None,
-        "pullback": None,
         "last_candle_timestamp": 0,
         "restored": True,
     }
     return True
 
 
-async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
+async def _execute_legacy_scheduled_entry(session_date: str, session_key: str) -> bool:
     """최신 분석을 여러 번 확인한 뒤 고정 세션 의무 진입을 한 번 실행한다."""
     run_key = f"{session_date}:{session_key}"
     existing_run = _scheduled_analysis_runs.get(run_key) or {}
@@ -1837,12 +1979,203 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     return True
 
 
+async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
+    """Volume Event가 1~3개 확정봉에서 반전/지속을 확정했을 때만 진입한다."""
+    run_key = f"{session_date}:{session_key}"
+    if get_scheduled_entry_session(session_date, session_key):
+        return True
+    mode = state.trading_mode
+    if not state.auto_trade_enabled or state.emergency_stopped or mode == "SIGNAL_ONLY":
+        return False
+    if mode == "LIVE_TRADING" and (not private_client or not risk_cfg.live_trading_allowed):
+        return False
+
+    run = _scheduled_analysis_runs.setdefault(
+        run_key,
+        {"processed_event_ids": set(), "last_analysis_at": 0.0, "attempts": 0},
+    )
+    # 이미 시작한 50/25/25 피라미딩은 세션 종료 후에도 별도 루프가 추적한다.
+    if run.get("pyramid"):
+        return False
+
+    has_position = (
+        paper_trader.is_open
+        if mode == "PAPER_TRADING"
+        else bool(state.open_trade_id) or bool(
+            [p for p in getattr(state, "cached_positions", []) if p.get("symbol") == SYMBOL]
+        )
+    )
+    if has_position:
+        detail = "기존 포지션 보유 · 반대 방향 강제 청산/재진입 없음"
+        record_scheduled_entry_session(
+            session_date, session_key, "CARRIED_POSITION", mode,
+            (paper_trader.open_data or {}).get("direction") if mode == "PAPER_TRADING" else None,
+            detail,
+        )
+        _scheduled_analysis_runs.pop(run_key, None)
+        msg = state.add_log(f"[고정 세션 {session_key}] {detail}")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        return True
+
+    now = time.monotonic()
+    remaining_seconds = seconds_until_session_end(session_date, session_key)
+    if run["last_analysis_at"] and now - run["last_analysis_at"] < SCHEDULED_ANALYSIS_INTERVAL_SECONDS:
+        return False
+    run["last_analysis_at"] = now
+    run["attempts"] += 1
+
+    latest, errors = await asyncio.to_thread(_worker_analyze)
+    for error in errors:
+        msg = state.add_log(f"[고정 세션 {session_key} 분석 경고] {error}")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+    if latest:
+        state.last_result = latest
+
+    # 가장 마지막 항목은 진행 중인 봉이므로 제외하고 확정봉만 판단한다.
+    candles_5m = get_recent_candles(SYMBOL, "5m", 260)
+    candles_15m = get_recent_candles(SYMBOL, "15m", 260)
+    candles_1h = get_recent_candles(SYMBOL, "1H", 260)
+    decision = volume_event_engine.evaluate(
+        candles_5m[:-1] if len(candles_5m) > 1 else [],
+        candles_15m[:-1] if len(candles_15m) > 1 else [],
+        candles_1h[:-1] if len(candles_1h) > 1 else [],
+    )
+    result = decision.to_result(latest)
+    state.last_result = result
+    event_id = int(result.get("event_id") or 0)
+    session_start, _ = scheduled_session_bounds(session_date, session_key)
+    if event_id and event_id < int(session_start.timestamp() * 1000):
+        result["direction"] = "NO_TRADE"
+        result["reasons"] = ["활성 시간 시작 전에 발생한 Volume Event · 진입 제외"]
+    if event_id and event_id in run["processed_event_ids"]:
+        result["direction"] = "NO_TRADE"
+        result["reasons"] = ["이미 판단한 Volume Event · 중복 진입 차단"]
+
+    await manager.broadcast({"type": "signal", "data": result})
+    direction = str(result.get("direction") or "NO_TRADE")
+    if direction not in ("LONG", "SHORT"):
+        msg = state.add_log(
+            f"[고정 세션 {session_key}] NO_TRADE · "
+            f"{'; '.join(result.get('reasons') or ['확정 신호 없음'])}"
+        )
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        if remaining_seconds <= 0:
+            record_scheduled_entry_session(
+                session_date, session_key, "NO_TRADE", mode,
+                detail="세션 종료 · 반전/추세 지속 미확정",
+            )
+            _scheduled_analysis_runs.pop(run_key, None)
+            return True
+        return False
+
+    if event_id:
+        run["processed_event_ids"].add(event_id)
+    if float(result.get("risk_reward_ratio") or 0) < 1.5:
+        return False
+
+    tf_directions = result.get("timeframe_directions") or {}
+    allowed, block_reason = risk_mgr.check_entry(
+        direction=direction,
+        confidence=float(result.get("confidence") or 0),
+        mode=TradingMode(mode),
+        cached_positions=getattr(state, "cached_positions", []),
+        private_client=private_client,
+        entry_price=result.get("entry_price"),
+        stop_loss=result.get("stop_loss"),
+        entry_grade=result.get("entry_grade"),
+        risk_warnings=[],
+        strategy_signal=result.get("strategy_signal"),
+        timeframe_directions={key: tf_directions.get(key, "HOLD") for key in ("15m", "1H")},
+    )
+    if not allowed:
+        msg = state.add_log(f"[고정 세션 {session_key}] NO_TRADE · {block_reason}")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        return False
+
+    if mode == "PAPER_TRADING":
+        full_size = _paper_risk_position_size(result["entry_price"], result["stop_loss"])
+        first_size = round(full_size * 0.50, 8)
+        add_size = round(full_size * 0.25, 8)
+        if first_size <= 0 or add_size <= 0:
+            return False
+        plan = dict(result)
+        plan.update({
+            "position_size_btc": first_size,
+            "position_size_percent": 50.0,
+            "entry_stage": 1,
+        })
+        plan["reasons"] = list(result.get("reasons") or []) + [
+            "1차 50% 진입 · 손실 방향 추가 진입 금지",
+            "+0.5R 논리 유지 시 25%, +1.0R 고점/저점 갱신 시 25% 추가",
+        ]
+        trade_id = paper_trader.open_trade(direction, plan)
+        if state.paper_account_start_trade_id is None:
+            state.paper_account_start_trade_id = trade_id
+        run["pyramid"] = {
+            "trade_id": trade_id,
+            "direction": direction,
+            "first_entry_price": float(plan["entry_price"]),
+            "original_stop": float(plan["stop_loss"]),
+            "risk_per_btc": abs(float(plan["entry_price"]) - float(plan["stop_loss"])),
+            "add_size_btc": add_size,
+            "target_size_btc": full_size,
+            "next_stage": 2,
+            "last_add_price": float(plan["entry_price"]),
+            "last_candle_timestamp": int((result.get("diagnostics") or {}).get("metrics", {}).get("timestamp") or 0),
+            "result": plan,
+        }
+        risk_mgr.record_order_placed()
+        detail = f"PAPER {direction} 1차 50% #{trade_id} @ ${float(plan['entry_price']):,.2f}"
+        record_scheduled_entry_session(session_date, session_key, "ENTERED", mode, direction, detail)
+        msg = state.add_log(f"[고정 세션 {session_key}] {detail}")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        await manager.broadcast({"type": "trade_update"})
+        await manager.broadcast({"type": "status", "data": _status_payload()})
+        await _send_filled_position_email(plan, "PAPER")
+        return True
+
+    # LIVE는 실거래 허용이 명시적으로 켜진 경우에도 위험기반 전체 수량의 50%만 첫 주문한다.
+    full_size = max(0.0, float(result.get("position_size_btc") or risk_cfg.order_size_btc))
+    first_size = full_size * 0.50
+    if first_size <= 0:
+        return False
+    side = "buy" if direction == "LONG" else "sell"
+    size = f"{first_size:.8f}".rstrip("0").rstrip(".")
+    try:
+        response = await asyncio.to_thread(private_client.place_market_order, side, size, "open")
+    except Exception as exc:
+        msg = state.add_log(f"[고정 세션 {session_key}] LIVE 1차 주문 실패: {exc}")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        return False
+    record_scheduled_entry_session(
+        session_date, session_key, "ENTERED", mode, direction,
+        f"LIVE 1차 50% 시장가 주문 {response.get('orderId') or 'submitted'}",
+    )
+    return True
+
+
 async def scheduled_entry_loop():
     while True:
         try:
             active = active_scheduled_session()
             if active:
                 await _execute_scheduled_entry(*active)
+            else:
+                # 마지막 틱이 세션 종료 시각을 넘긴 경우에도 미확정 세션을
+                # 정상적인 NO_TRADE로 마감한다. 오픈 포지션의 피라미딩 상태는 유지한다.
+                now_kst = datetime.now(KST)
+                for run_key, run in list(_scheduled_analysis_runs.items()):
+                    if run.get("pyramid") or run.get("scale_in"):
+                        continue
+                    session_date, session_key = run_key.split(":", 1)
+                    _, end_at = scheduled_session_bounds(session_date, session_key)
+                    if now_kst <= end_at:
+                        continue
+                    record_scheduled_entry_session(
+                        session_date, session_key, "NO_TRADE", state.trading_mode,
+                        detail="세션 종료 · 반전/추세 지속 미확정",
+                    )
+                    _scheduled_analysis_runs.pop(run_key, None)
         except Exception as exc:
             msg = state.add_log(f"[고정 진입 오류] {exc}")
             await manager.broadcast({"type": "log", "data": {"message": msg}})

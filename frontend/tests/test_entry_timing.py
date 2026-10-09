@@ -96,12 +96,12 @@ class EntryTimingTests(unittest.TestCase):
         frame.loc[55, "timestamp"] += 1
         self.assertFalse(assess_entry_timing(frame, "LONG", {})["confirmed"])
 
-    def test_deadline_override_is_explicit_and_only_at_deadline(self):
+    def test_deadline_never_overrides_unconfirmed_timing(self):
         timing = {"confirmed": False, "reason": "구조 전환 대기"}
         self.assertEqual(scheduled_timing_check(timing, 100, False, 0)[:2], (False, "WAIT"))
         allowed, status, reason = scheduled_timing_check(timing, 100, True, 0)
-        self.assertTrue(allowed)
-        self.assertEqual(status, "DEADLINE_OVERRIDE")
+        self.assertFalse(allowed)
+        self.assertEqual(status, "NO_TRADE")
         self.assertIn("구조 전환 대기", reason)
 
 
@@ -159,7 +159,7 @@ class EngineTimingTests(unittest.TestCase):
 
 
 class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
-    async def test_scheduled_waits_then_records_deadline_exception(self):
+    async def test_scheduled_deadline_without_volume_confirmation_does_not_trade(self):
         from api.services import trading_control_service as svc
         result = dict(direction="HOLD", confidence=0, entry_price=104,
                       timeframe_directions={"5m": "LONG", "15m": "LONG"},
@@ -177,30 +177,17 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
              patch.object(svc, "get_last_closed_trade", return_value=None), \
              patch.object(svc, "_worker_analyze", return_value=(result, [])), \
              patch.object(svc, "seconds_until_session_end", return_value=590) as remaining, \
-             patch.object(svc, "_paper_full_leverage_size", return_value=.02), \
+             patch.object(svc, "get_recent_candles", return_value=[]), \
              patch.object(svc, "risk_mgr", Mock()), \
              patch.object(svc, "_status_payload", return_value={}), \
              patch.object(svc, "manager", SimpleNamespace(broadcast=AsyncMock())), \
              patch.object(svc, "_send_filled_position_email", AsyncMock()):
             await svc._execute_scheduled_entry("2026-09-14", "EUROPE")
             trader.open_trade.assert_not_called()
-            remaining.return_value = 30
+            analysis_runs["2026-09-14:EUROPE"]["last_analysis_at"] = 0
+            remaining.return_value = 0
             await svc._execute_scheduled_entry("2026-09-14", "EUROPE")
-            trader.open_trade.assert_called_once()
-            plan = trader.open_trade.call_args.args[1]
-            self.assertEqual(plan["entry_timing_status"], "DEADLINE_OVERRIDE")
-            self.assertIn("DEADLINE_OVERRIDE", "\n".join(plan["reasons"]))
-            self.assertEqual(plan["entry_price"], 104)
-            self.assertEqual(plan["position_size_btc"], .01)
-            self.assertEqual(plan["position_size_percent"], 50.0)
-            self.assertEqual(plan["entry_stage"], 1)
-            self.assertIsNone(plan["stop_loss"])
-            self.assertIsNotNone(plan["take_profit_1"])
-            split = analysis_runs["2026-09-14:EUROPE"]["scale_in"]
-            self.assertIsNotNone(split["result"]["stop_loss"])
-            self.assertEqual(split["first_entry_price"], plan["entry_price"])
-            self.assertNotIn("second_entry_price", split)
-            self.assertIn("거래량 급증 후 25~60% 조정", "\n".join(plan["reasons"]))
+            trader.open_trade.assert_not_called()
 
     async def test_scheduled_session_keeps_same_direction_position_open(self):
         from api.services import trading_control_service as svc
@@ -235,7 +222,7 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.call_args.args[2], "CARRIED_POSITION")
         self.assertNotIn("2026-09-14:EUROPE", runs)
 
-    async def test_scheduled_session_switches_only_when_direction_changes(self):
+    async def test_scheduled_session_never_force_switches_existing_position(self):
         from api.services import trading_control_service as svc
         result = dict(
             direction="HOLD", confidence=0, entry_price=104,
@@ -273,12 +260,9 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
              patch.object(svc, "_send_filled_position_email", AsyncMock()):
             switched = await svc._execute_scheduled_entry("2026-09-14", "EUROPE")
 
-        self.assertFalse(switched)
-        trader.force_close.assert_called_once_with(104.0)
-        trader.open_trade.assert_called_once()
-        direction, plan = trader.open_trade.call_args.args
-        self.assertEqual(direction, "LONG")
-        self.assertEqual(plan["position_size_btc"], .01)
+        self.assertTrue(switched)
+        trader.force_close.assert_not_called()
+        trader.open_trade.assert_not_called()
 
     def test_scheduled_dynamic_pullback_uses_volume_contraction_and_restart(self):
         from api.services import trading_control_service as svc
@@ -411,7 +395,7 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(split["pullback"]["close"], 114)
         self.assertIn("기존의 더 좋은 2차 후보", reason)
 
-    def test_open_first_half_restores_second_half_plan(self):
+    def test_open_first_half_restores_profit_pyramid_plan(self):
         from api.services import trading_control_service as svc
 
         trader = Mock(
@@ -439,10 +423,11 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
             restored = svc._restore_open_scheduled_scale_in()
 
         self.assertTrue(restored)
-        split = runs["2026-09-29:MORNING"]["scale_in"]
-        self.assertEqual(split["second_size_btc"], 1.0)
-        self.assertEqual(split["result"]["stop_loss"], 900.0)
-        self.assertTrue(split["restored"])
+        pyramid = runs["2026-09-29:MORNING"]["pyramid"]
+        self.assertEqual(pyramid["add_size_btc"], 0.5)
+        self.assertEqual(pyramid["target_size_btc"], 2.0)
+        self.assertEqual(pyramid["result"]["stop_loss"], 900.0)
+        self.assertTrue(pyramid["restored"])
 
     async def test_scheduled_pullback_scale_in_reprices_protection_from_final_average(self):
         from api.services import trading_control_service as svc
@@ -561,7 +546,7 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
             await svc._check_auto_trade(dict(direction="LONG", confidence=85, entry_timing={"LONG": timing}))
             order.assert_not_called()
 
-    async def test_confirmed_normal_entry_reaches_order_path(self):
+    async def test_normal_loop_does_not_trade_outside_active_sessions(self):
         from api.services import trading_control_service as svc
         timing = assess_entry_timing(frame_for(), "LONG", {})
         now = timing["timestamp"] + BAR_MS + 1000
@@ -575,7 +560,7 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
              patch.object(svc, "risk_mgr", risk), patch.object(svc, "engine", Mock()), \
              patch.object(svc, "_auto_paper_trade", AsyncMock(return_value=True)) as order:
             await svc._check_auto_trade(dict(direction="LONG", confidence=85, entry_timing={"LONG": timing}))
-            order.assert_awaited_once()
+            order.assert_not_awaited()
 
     async def test_pending_order_cannot_fill_after_structure_breaks(self):
         from api.services import trading_control_service as svc

@@ -134,6 +134,8 @@ def scheduled_timing_check(timing: dict, price: float, force_due: bool,
     allowed, reason = timing_entry_check(timing, price, now_ms, last_exit)
     if allowed:
         return True, "CONFIRMED", reason
+    # 고정 세션은 전략을 실행할 수 있는 시간대일 뿐이다. 마감이
+    # 임박했다는 이유로 미확정 타점을 LONG/SHORT으로 강제 변환하지 않는다.
     if force_due:
-        return True, "DEADLINE_OVERRIDE", f"정시 마감 예외 진입 · 미충족 타점: {reason}"
+        return False, "NO_TRADE", f"세션 마감 · 확정 타점 없음: {reason}"
     return False, "WAIT", reason

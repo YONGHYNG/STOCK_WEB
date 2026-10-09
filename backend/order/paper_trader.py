@@ -81,6 +81,11 @@ class PaperTrader:
             "tp1":       r.get("take_profit_1"),
             "tp2":       r.get("take_profit_2"),
             "size":      r.get("position_size_btc"),
+            "initial_size": r.get("position_size_btc"),
+            "remaining_size": r.get("position_size_btc"),
+            "partial_realized_pnl": 0.0,
+            "tp1_taken": False,
+            "tp2_taken": False,
             "position_size_percent": float(r.get("position_size_percent") or 100),
             "entry_stage": int(r.get("entry_stage") or 2),
             "max_favorable_move": 0.0,
@@ -102,7 +107,14 @@ class PaperTrader:
             return 0, 0.0
         t     = self._open_data
         entry = t["entry"]
-        pnl_pct = _net_pnl_pct(t["direction"], entry, exit_price, exit_fee_rate)
+        leg_pnl_pct = _net_pnl_pct(t["direction"], entry, exit_price, exit_fee_rate)
+        remaining_size = float(t.get("remaining_size") if t.get("remaining_size") is not None else t.get("size") or 0)
+        partial_realized = float(t.get("partial_realized_pnl") or 0)
+        final_leg_amount = remaining_size * entry * (leg_pnl_pct / 100)
+        realized_amount = partial_realized + final_leg_amount
+        initial_size = float(t.get("initial_size") or t.get("size") or 0)
+        initial_notional = initial_size * entry
+        pnl_pct = (realized_amount / initial_notional * 100) if initial_notional > 0 else leg_pnl_pct
         tid = self._open_id
         db.close_trade(
             trade_id      = tid,
@@ -111,10 +123,36 @@ class PaperTrader:
             pnl_pct       = pnl_pct,
             profit_reason = profit_reason,
             loss_reason   = loss_reason,
+            realized_pnl_amount = round(realized_amount, 8),
         )
         self._open_id   = None
         self._open_data = None
         return tid, pnl_pct
+
+    def take_partial(self, exit_price: float, result_code: str, share_of_initial: float = 0.35) -> tuple[int, float, float]:
+        """TP1/TP2에서 최초 체결 수량의 일부를 청산한다."""
+        if not self._open_id or not self._open_data:
+            return 0, 0.0, 0.0
+        t = self._open_data
+        initial_size = float(t.get("initial_size") or t.get("size") or 0)
+        remaining = float(t.get("remaining_size") if t.get("remaining_size") is not None else t.get("size") or 0)
+        quantity = min(remaining, initial_size * max(0.0, float(share_of_initial)))
+        if quantity <= 0:
+            return self._open_id, 0.0, remaining
+        pnl_pct = _net_pnl_pct(t["direction"], float(t["entry"]), float(exit_price))
+        amount = quantity * float(t["entry"]) * (pnl_pct / 100)
+        remaining = max(0.0, remaining - quantity)
+        t["remaining_size"] = remaining
+        t["partial_realized_pnl"] = float(t.get("partial_realized_pnl") or 0) + amount
+        if result_code == "TP1":
+            t["tp1_taken"] = True
+            # 1R 도달 후 남은 물량의 손절을 진입가로 올린다.
+            t["sl"] = float(t["entry"])
+        else:
+            t["tp2_taken"] = True
+            t["sl"] = float(t.get("tp1") or t["entry"])
+        db.record_paper_partial_exit(self._open_id, remaining, amount, result_code, t.get("sl"))
+        return self._open_id, amount, remaining
 
     def check_tp_sl(self, price: float) -> Optional[str]:
         """
@@ -132,19 +170,18 @@ class PaperTrader:
         t["max_favorable_move"] = max(
             float(t.get("max_favorable_move") or 0), favorable_move
         )
-        # 1차 50% 포지션은 TP만 감시한다. 손절은 2차까지 체결된 뒤에만 활성화한다.
-        full_position = (
-            int(t.get("entry_stage") or 1) >= 2
-            and float(t.get("position_size_percent") or 0) >= 100
-        )
-        sl  = t.get("sl") if full_position else None
+        # 구조적 손절은 1차 50% 진입 순간부터 활성화한다.
+        sl  = t.get("sl")
         tp1 = t.get("tp1")
+        tp2 = t.get("tp2")
 
         if direction == "LONG":
-            if tp1 and price >= tp1:   return "TP1"
+            if tp1 and not t.get("tp1_taken") and price >= tp1: return "TP1_PARTIAL"
+            if tp2 and t.get("tp1_taken") and not t.get("tp2_taken") and price >= tp2: return "TP2_PARTIAL"
             if sl  and price <= sl:    return "SL"
         elif direction == "SHORT":
-            if tp1 and price <= tp1:   return "TP1"
+            if tp1 and not t.get("tp1_taken") and price <= tp1: return "TP1_PARTIAL"
+            if tp2 and t.get("tp1_taken") and not t.get("tp2_taken") and price <= tp2: return "TP2_PARTIAL"
             if sl  and price >= sl:    return "SL"
         return None
 
@@ -189,11 +226,15 @@ class PaperTrader:
         db.update_paper_trade_position(
             self._open_id, average, total_size,
             plan.get("stop_loss"), plan.get("take_profit_1"), plan.get("take_profit_2"),
+            float(plan.get("position_size_percent") or 100),
+            int(plan.get("entry_stage") or 2),
         )
         self._open_data.update({
             "entry": average, "size": total_size,
-            "position_size_percent": 100.0,
-            "entry_stage": 2,
+            "initial_size": total_size,
+            "remaining_size": total_size,
+            "position_size_percent": float(plan.get("position_size_percent") or 100),
+            "entry_stage": int(plan.get("entry_stage") or 2),
             "sl": plan.get("stop_loss"), "tp1": plan.get("take_profit_1"),
             "tp2": plan.get("take_profit_2"),
         })
@@ -211,6 +252,11 @@ class PaperTrader:
                 "tp1":       row["take_profit_1"],
                 "tp2":       row["take_profit_2"],
                 "size":      row.get("size_btc"),
+                "initial_size": row.get("initial_size_btc") or row.get("size_btc"),
+                "remaining_size": row.get("remaining_size_btc") if row.get("remaining_size_btc") is not None else row.get("size_btc"),
+                "partial_realized_pnl": float(row.get("partial_realized_pnl_amount") or 0),
+                "tp1_taken": bool(row.get("tp1_taken")),
+                "tp2_taken": bool(row.get("tp2_taken")),
                 "position_size_percent": float(row.get("position_size_percent") or 100),
                 "entry_stage": int(row.get("entry_stage") or 2),
                 "max_favorable_move": 0.0,

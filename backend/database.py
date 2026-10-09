@@ -124,6 +124,11 @@ def init_db() -> None:
                 loss_reason   TEXT,
                 notes         TEXT,
                 size_btc      REAL,
+                initial_size_btc REAL,
+                remaining_size_btc REAL,
+                partial_realized_pnl_amount REAL NOT NULL DEFAULT 0,
+                tp1_taken INTEGER NOT NULL DEFAULT 0,
+                tp2_taken INTEGER NOT NULL DEFAULT 0,
                 position_size_percent REAL NOT NULL DEFAULT 100,
                 entry_stage   INTEGER NOT NULL DEFAULT 2
             )
@@ -152,6 +157,11 @@ def init_db() -> None:
             "ALTER TABLE trades ADD COLUMN synced_at DATETIME",
             "ALTER TABLE trades ADD COLUMN position_size_percent REAL NOT NULL DEFAULT 100",
             "ALTER TABLE trades ADD COLUMN entry_stage INTEGER NOT NULL DEFAULT 2",
+            "ALTER TABLE trades ADD COLUMN initial_size_btc REAL",
+            "ALTER TABLE trades ADD COLUMN remaining_size_btc REAL",
+            "ALTER TABLE trades ADD COLUMN partial_realized_pnl_amount REAL NOT NULL DEFAULT 0",
+            "ALTER TABLE trades ADD COLUMN tp1_taken INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE trades ADD COLUMN tp2_taken INTEGER NOT NULL DEFAULT 0",
         ):
             try:
                 conn.execute(migration)
@@ -239,7 +249,7 @@ def reconcile_paper_account(initial_balance: float = 100.0, leverage: float = 20
         reset_after_trade_id = int(account["reset_after_trade_id"] or 0)
         rows = conn.execute(
             """
-            SELECT id, entry_price, pnl_pct, size_btc FROM trades
+            SELECT id, entry_price, pnl_pct, size_btc, realized_pnl_amount FROM trades
             WHERE trade_type='PAPER' AND result != 'OPEN' AND pnl_pct IS NOT NULL
               AND id > ?
             ORDER BY id ASC
@@ -247,7 +257,9 @@ def reconcile_paper_account(initial_balance: float = 100.0, leverage: float = 20
             (reset_after_trade_id,),
         ).fetchall()
         for row in rows:
-            if row["size_btc"] is not None:
+            if row["realized_pnl_amount"] is not None:
+                pnl_amount = float(row["realized_pnl_amount"])
+            elif row["size_btc"] is not None:
                 pnl_amount = (
                     float(row["size_btc"])
                     * float(row["entry_price"])
@@ -409,14 +421,16 @@ def open_trade(
             INSERT INTO trades
             (symbol, trade_type, direction, entry_price, stop_loss, take_profit_1, take_profit_2,
              risk_reward, confidence, long_prob, short_prob, tf_directions, entry_reason, size_btc,
-             position_size_percent, entry_stage, result)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
+             initial_size_btc, remaining_size_btc, position_size_percent, entry_stage, result)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
             """,
             (
                 symbol, trade_type, direction, entry_price, stop_loss, take_profit_1, take_profit_2,
                 risk_reward, confidence, long_prob, short_prob,
                 json.dumps(tf_directions, ensure_ascii=False),
                 entry_reason,
+                size_btc,
+                size_btc,
                 size_btc,
                 float(position_size_percent),
                 int(entry_stage),
@@ -433,6 +447,7 @@ def close_trade(
     pnl_pct: float,
     profit_reason: str = "",
     loss_reason: str = "",
+    realized_pnl_amount: Optional[float] = None,
 ) -> None:
     """거래를 청산하고 결과를 기록합니다."""
     with get_connection() as conn:
@@ -440,10 +455,12 @@ def close_trade(
             """
             UPDATE trades
             SET exit_price=?, exit_time=CURRENT_TIMESTAMP,
-                result=?, pnl_pct=?, profit_reason=?, loss_reason=?
+                result=?, pnl_pct=?, profit_reason=?, loss_reason=?,
+                realized_pnl_amount=COALESCE(?, realized_pnl_amount), remaining_size_btc=0
             WHERE id=?
             """,
-            (exit_price, result, round(pnl_pct, 4), profit_reason, loss_reason, trade_id),
+            (exit_price, result, round(pnl_pct, 4), profit_reason, loss_reason,
+             realized_pnl_amount, trade_id),
         )
         conn.commit()
 
@@ -538,18 +555,49 @@ def update_paper_trade_position(
     stop_loss: float,
     take_profit_1: float,
     take_profit_2: float,
+    position_size_percent: float = 100.0,
+    entry_stage: int = 2,
 ) -> None:
     """분할 체결 후 PAPER 거래의 평균단가·수량·보호가격을 한 번에 갱신한다."""
     with get_connection() as conn:
         conn.execute(
             """
-            UPDATE trades SET entry_price=?, size_btc=?, stop_loss=?,
-                take_profit_1=?, take_profit_2=?, position_size_percent=100, entry_stage=2
+            UPDATE trades SET entry_price=?, size_btc=?, initial_size_btc=?, remaining_size_btc=?, stop_loss=?,
+                take_profit_1=?, take_profit_2=?, position_size_percent=?, entry_stage=?
             WHERE id=? AND trade_type='PAPER' AND result='OPEN'
             """,
             (
-                float(entry_price), float(size_btc), float(stop_loss),
-                float(take_profit_1), float(take_profit_2), int(trade_id),
+                float(entry_price), float(size_btc), float(size_btc), float(size_btc), float(stop_loss),
+                float(take_profit_1), float(take_profit_2),
+                float(position_size_percent), int(entry_stage), int(trade_id),
+            ),
+        )
+        conn.commit()
+
+
+def record_paper_partial_exit(
+    trade_id: int,
+    remaining_size_btc: float,
+    realized_amount: float,
+    result_code: str,
+    stop_loss: Optional[float] = None,
+) -> None:
+    """분할 익절 수량과 순실현 손익을 오픈 거래에 누적한다."""
+    column = "tp1_taken" if result_code == "TP1" else "tp2_taken"
+    with get_connection() as conn:
+        conn.execute(
+            f"""
+            UPDATE trades
+            SET remaining_size_btc=?, stop_loss=COALESCE(?, stop_loss),
+                partial_realized_pnl_amount=partial_realized_pnl_amount+?,
+                {column}=1,
+                notes=COALESCE(notes || '\n', '') || ?
+            WHERE id=? AND trade_type='PAPER' AND result='OPEN'
+            """,
+            (
+                float(remaining_size_btc), stop_loss, float(realized_amount),
+                f"{result_code} 분할 익절 {realized_amount:+.8f} USDT",
+                int(trade_id),
             ),
         )
         conn.commit()

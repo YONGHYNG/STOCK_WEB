@@ -1,4 +1,4 @@
-"""한국시간 평일 고정 진입 세션과 강제 진입 방향/가격 계획을 계산한다."""
+"""한국시간 일일 2회 고정 진입 세션과 강제 진입 방향/가격 계획을 계산한다."""
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
@@ -7,15 +7,14 @@ from zoneinfo import ZoneInfo
 
 KST = ZoneInfo("Asia/Seoul")
 SCHEDULED_ENTRY_WINDOWS = (
-    ("MORNING", time(8, 58), time(9, 28)),
-    ("EUROPE", time(16, 30), time(17, 0)),
-    ("US", time(23, 40), time(0, 20)),
+    ("MORNING", time(6, 0), time(9, 10)),
+    ("EVENING", time(17, 0), time(23, 30)),
 )
 SCALP_STOP_ATR_MULTIPLIER = 0.8
 SCALP_STOP_GAP_MIN_USDT = 450.0
 SCALP_STOP_GAP_MAX_USDT = 600.0
 SCALP_TP1_RISK_RATIO = 1.0
-SCALP_TP2_RISK_RATIO = 1.5
+SCALP_TP2_RISK_RATIO = 2.0
 SCALP_ADD_ON_RISK_RATIO = 0.35
 
 
@@ -45,7 +44,7 @@ def seconds_until_session_end(
 
 
 def active_scheduled_session(now: Optional[datetime] = None) -> Optional[tuple[str, str]]:
-    """현재 KST 시각의 평일 (세션 기준일, 세션키)를 반환한다."""
+    """현재 KST 시각의 일일 (세션 기준일, 세션키)를 반환한다."""
     current = now.astimezone(KST) if now else datetime.now(KST)
     current_time = current.time().replace(tzinfo=None)
     for key, start, end in SCHEDULED_ENTRY_WINDOWS:
@@ -55,10 +54,8 @@ def active_scheduled_session(now: Optional[datetime] = None) -> Optional[tuple[s
         else:
             active = current_time >= start or current_time <= end
             session_date = current.date() if current_time >= start else current.date() - timedelta(days=1)
-        # 토·일요일은 한국/유럽/미국 고정 세션 강제 진입을 실행하지 않는다.
-        # 자정을 넘는 미국 세션은 시작한 날을 기준으로 판정하여,
-        # 금요일 23:40~토요일 00:20 세션은 금요일 세션으로 유지한다.
-        if active and session_date.weekday() < 5:
+        # BTCUSDT 선물은 주말에도 거래되므로 하루 두 세션을 매일 실행한다.
+        if active:
             return session_date.isoformat(), key
     return None
 
@@ -86,7 +83,7 @@ def choose_forced_direction(result: dict) -> str:
         (long_score := long_score + 1) if slope > 0 else (short_score := short_score + 1)
     timeframe_weights = {
         "1m": 1, "5m": 3, "15m": 4, "30m": 2,
-        "1H": 2, "4H": 1, "6H": 1, "1D": 1,
+        "1H": 5, "4H": 1, "6H": 1, "1D": 1,
     }
     for tf, vote in (result.get("timeframe_directions") or {}).items():
         weight = timeframe_weights.get(tf, 1)
@@ -124,7 +121,7 @@ def direction_bias_score(result: dict) -> float:
     # 가중치를 주고, 4H 이상은 방향을 뒤집지 않는 보조 필터로만 쓴다.
     timeframe_weights = {
         "1m": 1, "5m": 3, "15m": 4, "30m": 2,
-        "1H": 2, "4H": 1, "6H": 1, "1D": 1,
+        "1H": 5, "4H": 1, "6H": 1, "1D": 1,
     }
     for timeframe, vote in (result.get("timeframe_directions") or {}).items():
         weight = timeframe_weights.get(timeframe, 1)
@@ -136,7 +133,7 @@ def direction_bias_score(result: dict) -> float:
 
 
 def choose_consensus_direction(results: list[dict]) -> tuple[str, float]:
-    """여러 분석을 합산하되 단타 방향인 최신 5m·15m 합의를 우선한다."""
+    """1H·15m 합의를 우선하고 충돌 시 5m와 최신 지표로 방향을 정한다."""
     usable = [result for result in results if result]
     if not usable:
         return "LONG", 0.0
@@ -149,13 +146,20 @@ def choose_consensus_direction(results: list[dict]) -> tuple[str, float]:
     directions = latest.get("timeframe_directions") or {}
     five_min = str(directions.get("5m") or "HOLD").upper()
     fifteen_min = str(directions.get("15m") or "HOLD").upper()
-    if five_min == fifteen_min and five_min in ("LONG", "SHORT"):
+    one_hour = str(directions.get("1H") or "HOLD").upper()
+    if one_hour == fifteen_min and one_hour in ("LONG", "SHORT"):
+        return one_hour, total
+    if five_min in ("LONG", "SHORT"):
         return five_min, total
+    if total > 0:
+        return "LONG", total
+    if total < 0:
+        return "SHORT", total
+    if one_hour in ("LONG", "SHORT"):
+        return one_hour, total
     if fifteen_min in ("LONG", "SHORT"):
         return fifteen_min, total
-    if total == 0:
-        return choose_forced_direction(latest), total
-    return ("LONG" if total > 0 else "SHORT"), total
+    return choose_forced_direction(latest), total
 
 
 def _scheduled_atr(result: dict) -> float:

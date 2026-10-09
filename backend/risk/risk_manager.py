@@ -140,6 +140,47 @@ class RiskManager:
 
         return True, ""
 
+    def check_mandatory_session_entry(
+        self,
+        direction: str,
+        mode: TradingMode,
+        cached_positions: list,
+        private_client,
+    ) -> tuple[bool, str]:
+        """의무 세션 진입에서 신호 품질은 건너뛰고 계좌 안전만 검사한다.
+
+        신뢰도·상위봉 합의·일반 재진입 대기는 마감 방향 선택을 막지 않는다.
+        다만 긴급정지, 실거래 미허용, 일일/연속 손실 제한과 기존 실포지션은
+        강제 진입보다 우선한다.
+        """
+        self._maybe_reset_daily()
+        s = self.settings
+        if self._emergency_stop and mode != TradingMode.PAPER_TRADING:
+            return False, "[긴급정지] 자동매매 차단됨"
+        if direction not in ("LONG", "SHORT"):
+            return False, f"방향이 {direction}이므로 진입하지 않음"
+        if mode == TradingMode.SIGNAL_ONLY:
+            return False, "현재 모드가 SIGNAL_ONLY 이므로 주문하지 않음"
+        if mode == TradingMode.LIVE_TRADING:
+            if private_client is None:
+                return False, "API 키가 설정되지 않아 실거래 불가"
+            if not s.live_trading_allowed:
+                return False, "리스크 설정에서 실거래 허용이 비활성화되어 있음"
+        if self._daily_entry_blocked or self._consecutive_losses >= s.consecutive_loss_limit:
+            return False, (
+                f"연속 손실 {self._consecutive_losses}회 → "
+                f"한도({s.consecutive_loss_limit}회) 도달, 자동매매 중단"
+            )
+        if self._daily_pnl_pct <= -abs(s.daily_max_loss_pct):
+            return False, (
+                f"일일 손실 한도 도달 ({self._daily_pnl_pct:.2f}% / "
+                f"-{s.daily_max_loss_pct:.1f}%)"
+            )
+        positions = [p for p in cached_positions if p.get("symbol") == SYMBOL]
+        if positions:
+            return False, "기존 실포지션 청산 확인 전 의무 진입 차단"
+        return True, ""
+
     def record_trade_result(self, pnl_pct: float, result: str | None = None):
         """거래 결과를 기록합니다."""
         self._daily_pnl_pct += pnl_pct

@@ -91,7 +91,8 @@ PENDING_CANCEL_RETRY_SECONDS = 60
 SCHEDULED_ANALYSIS_INTERVAL_SECONDS = 20
 SCHEDULED_STABLE_SIGNAL_SAMPLES = 3
 SCHEDULED_REQUIRED_MATCHING_SAMPLES = 2
-SCHEDULED_FORCE_ENTRY_BEFORE_END_SECONDS = 60
+# 5분봉 하나가 더 열리기 전에 마지막 확정봉으로 의무 진입한다.
+SCHEDULED_FORCE_ENTRY_BEFORE_END_SECONDS = 5 * 60
 SCHEDULED_IMPULSE_VOLUME_RATIO = 1.5
 SCHEDULED_PULLBACK_MIN_RATIO = 0.25
 SCHEDULED_PULLBACK_MAX_RATIO = 0.60
@@ -1466,7 +1467,7 @@ async def _complete_scheduled_paper_scale_in(
 
 
 async def _cancel_scheduled_scale_in_after_exit(trade_id: int, result_code: str) -> None:
-    """1차 50%만 보유한 채 청산되면 미체결 2차 주문과 관련 상태를 전부 제거한다."""
+    """청산/익절이 시작되면 남은 수익 방향 추가 진입 계획을 제거한다."""
     for run_key, analysis_run in list(_scheduled_analysis_runs.items()):
         split = analysis_run.get("pyramid") or analysis_run.get("scale_in") or {}
         if int(split.get("trade_id") or 0) != int(trade_id):
@@ -1476,7 +1477,7 @@ async def _cancel_scheduled_scale_in_after_exit(trade_id: int, result_code: str)
         state.pending_paper_order = None
         detail = (
             f"PAPER 1차 50% #{trade_id} {result_code} 종료 · "
-            "미체결 동적 조정 2차 50% 취소"
+            "미체결 수익 방향 25%+25% 추가 계획 취소"
         )
         record_scheduled_entry_session(
             session_date, session_key, "ENTERED", "PAPER_TRADING", direction, detail
@@ -1612,7 +1613,7 @@ def _restore_open_scheduled_scale_in() -> bool:
     row = get_open_trade(SYMBOL, trade_type="PAPER") or {}
     reason = str(row.get("entry_reason") or "")
     session_key = next(
-        (key for key in ("MORNING", "EUROPE", "US") if f"고정 진입 세션 {key}" in reason),
+        (key for key in ("MORNING", "EVENING") if f"고정 진입 세션 {key}" in reason),
         "RECOVERY",
     )
     try:
@@ -1621,8 +1622,6 @@ def _restore_open_scheduled_scale_in() -> bool:
         ).replace(tzinfo=timezone.utc)
         entered_kst = entered_utc.astimezone(KST)
         session_day = entered_kst.date()
-        if session_key == "US" and entered_kst.hour == 0:
-            session_day -= timedelta(days=1)
         session_date = session_day.isoformat()
     except (TypeError, ValueError):
         session_date = datetime.now(KST).date().isoformat()
@@ -1980,7 +1979,7 @@ async def _execute_legacy_scheduled_entry(session_date: str, session_key: str) -
 
 
 async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
-    """Volume Event가 1~3개 확정봉에서 반전/지속을 확정했을 때만 진입한다."""
+    """하루 두 세션에서 정상 신호를 우선하고 마감에는 반드시 방향을 정한다."""
     run_key = f"{session_date}:{session_key}"
     if get_scheduled_entry_session(session_date, session_key):
         return True
@@ -1992,34 +1991,61 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
 
     run = _scheduled_analysis_runs.setdefault(
         run_key,
-        {"processed_event_ids": set(), "last_analysis_at": 0.0, "attempts": 0},
+        {
+            "processed_event_ids": set(), "last_analysis_at": 0.0,
+            "attempts": 0, "samples": [],
+        },
     )
     # 이미 시작한 50/25/25 피라미딩은 세션 종료 후에도 별도 루프가 추적한다.
     if run.get("pyramid"):
         return False
 
-    has_position = (
-        paper_trader.is_open
-        if mode == "PAPER_TRADING"
-        else bool(state.open_trade_id) or bool(
-            [p for p in getattr(state, "cached_positions", []) if p.get("symbol") == SYMBOL]
+    # 오전·저녁 거래를 서로 독립된 두 번의 거래로 만들기 위해 새 세션의
+    # 첫 분석 전에 이전 PAPER 포지션을 정리한다. LIVE는 거래소 청산 확인
+    # 전에는 새 주문을 내지 않는다.
+    if mode == "PAPER_TRADING" and paper_trader.is_open:
+        if not state.last_price:
+            return False
+        previous = dict(paper_trader.open_data or {})
+        trade_id, pnl = paper_trader.force_close(float(state.last_price))
+        await _cancel_scheduled_scale_in_after_exit(trade_id, "SESSION_ROTATION")
+        risk_mgr.record_trade_result(pnl, "SESSION_ROTATION")
+        msg = state.add_log(
+            f"[고정 세션 {session_key}] 이전 {previous.get('direction', '포지션')} "
+            f"#{trade_id} 세션 교대 청산 · {pnl:+.2f}%"
         )
-    )
-    if has_position:
-        detail = "기존 포지션 보유 · 반대 방향 강제 청산/재진입 없음"
-        record_scheduled_entry_session(
-            session_date, session_key, "CARRIED_POSITION", mode,
-            (paper_trader.open_data or {}).get("direction") if mode == "PAPER_TRADING" else None,
-            detail,
-        )
-        _scheduled_analysis_runs.pop(run_key, None)
-        msg = state.add_log(f"[고정 세션 {session_key}] {detail}")
         await manager.broadcast({"type": "log", "data": {"message": msg}})
-        return True
+        await manager.broadcast({"type": "trade_update"})
+    elif mode == "LIVE_TRADING":
+        positions = [
+            p for p in getattr(state, "cached_positions", [])
+            if p.get("symbol") == SYMBOL
+        ]
+        if positions:
+            if not run.get("rotation_close_requested"):
+                for position in positions:
+                    try:
+                        await asyncio.to_thread(
+                            private_client.close_position,
+                            position.get("holdSide", "long"),
+                        )
+                    except Exception as exc:
+                        msg = state.add_log(f"[고정 세션 {session_key}] 이전 LIVE 청산 실패: {exc}")
+                        await manager.broadcast({"type": "log", "data": {"message": msg}})
+                        return False
+                run["rotation_close_requested"] = True
+                msg = state.add_log(f"[고정 세션 {session_key}] 이전 LIVE 포지션 청산 요청")
+                await manager.broadcast({"type": "log", "data": {"message": msg}})
+            return False
 
     now = time.monotonic()
     remaining_seconds = seconds_until_session_end(session_date, session_key)
-    if run["last_analysis_at"] and now - run["last_analysis_at"] < SCHEDULED_ANALYSIS_INTERVAL_SECONDS:
+    force_entry_due = remaining_seconds <= SCHEDULED_FORCE_ENTRY_BEFORE_END_SECONDS
+    if (
+        not force_entry_due
+        and run["last_analysis_at"]
+        and now - run["last_analysis_at"] < SCHEDULED_ANALYSIS_INTERVAL_SECONDS
+    ):
         return False
     run["last_analysis_at"] = now
     run["attempts"] += 1
@@ -2030,6 +2056,8 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         await manager.broadcast({"type": "log", "data": {"message": msg}})
     if latest:
         state.last_result = latest
+        run["samples"].append(latest)
+        run["samples"] = run["samples"][-120:]
 
     # 가장 마지막 항목은 진행 중인 봉이므로 제외하고 확정봉만 판단한다.
     candles_5m = get_recent_candles(SYMBOL, "5m", 260)
@@ -2041,7 +2069,6 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         candles_1h[:-1] if len(candles_1h) > 1 else [],
     )
     result = decision.to_result(latest)
-    state.last_result = result
     event_id = int(result.get("event_id") or 0)
     session_start, _ = scheduled_session_bounds(session_date, session_key)
     if event_id and event_id < int(session_start.timestamp() * 1000):
@@ -2051,45 +2078,88 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         result["direction"] = "NO_TRADE"
         result["reasons"] = ["이미 판단한 Volume Event · 중복 진입 차단"]
 
-    await manager.broadcast({"type": "signal", "data": result})
     direction = str(result.get("direction") or "NO_TRADE")
+    mandatory_fallback = False
     if direction not in ("LONG", "SHORT"):
-        msg = state.add_log(
-            f"[고정 세션 {session_key}] NO_TRADE · "
-            f"{'; '.join(result.get('reasons') or ['확정 신호 없음'])}"
-        )
-        await manager.broadcast({"type": "log", "data": {"message": msg}})
-        if remaining_seconds <= 0:
-            record_scheduled_entry_session(
-                session_date, session_key, "NO_TRADE", mode,
-                detail="세션 종료 · 반전/추세 지속 미확정",
+        if not force_entry_due:
+            state.last_result = result
+            await manager.broadcast({"type": "signal", "data": result})
+            msg = state.add_log(
+                f"[고정 세션 {session_key}] 정상 신호 대기 · "
+                f"{'; '.join(result.get('reasons') or ['확정 신호 없음'])}"
             )
-            _scheduled_analysis_runs.pop(run_key, None)
-            return True
-        return False
+            await manager.broadcast({"type": "log", "data": {"message": msg}})
+            return False
+        if not latest or not state.last_price:
+            msg = state.add_log(
+                f"[고정 세션 {session_key}] 의무 진입 대기 · 최신 분석/현재가 없음"
+            )
+            await manager.broadcast({"type": "log", "data": {"message": msg}})
+            return False
+        direction, consensus_score = choose_consensus_direction(run["samples"] or [latest])
+        if direction not in ("LONG", "SHORT"):
+            direction = choose_forced_direction(latest)
+        result = build_forced_entry_result(
+            latest, float(state.last_price), direction, session_key, risk_cfg,
+        )
+        result = reprice_scheduled_result(result, float(state.last_price))
+        result.update({
+            "direction": direction,
+            "planned_direction": direction,
+            "risk_reward_ratio": 2.0,
+            "forced_session_entry": True,
+            "event_state": "MANDATORY_FALLBACK",
+            "entry_grade": "SCHEDULED_MANDATORY",
+            "confidence": 100.0,
+        })
+        result["reasons"] = [
+            f"{session_key} 세션 정상 Volume Event 미확정 · 마감 의무 진입",
+            f"누적 1H·15m·5m 방향 점수 {consensus_score:+.2f} → {direction}",
+            *list(result.get("reasons") or []),
+        ]
+        mandatory_fallback = True
+        event_id = 0
+
+    state.last_result = result
+    await manager.broadcast({"type": "signal", "data": result})
 
     if event_id:
         run["processed_event_ids"].add(event_id)
-    if float(result.get("risk_reward_ratio") or 0) < 1.5:
+    if not mandatory_fallback and float(result.get("risk_reward_ratio") or 0) < 1.5:
         return False
 
     tf_directions = result.get("timeframe_directions") or {}
-    allowed, block_reason = risk_mgr.check_entry(
-        direction=direction,
-        confidence=float(result.get("confidence") or 0),
-        mode=TradingMode(mode),
-        cached_positions=getattr(state, "cached_positions", []),
-        private_client=private_client,
-        entry_price=result.get("entry_price"),
-        stop_loss=result.get("stop_loss"),
-        entry_grade=result.get("entry_grade"),
-        risk_warnings=[],
-        strategy_signal=result.get("strategy_signal"),
-        timeframe_directions={key: tf_directions.get(key, "HOLD") for key in ("15m", "1H")},
-    )
+    if mandatory_fallback:
+        allowed, block_reason = risk_mgr.check_mandatory_session_entry(
+            direction=direction,
+            mode=TradingMode(mode),
+            cached_positions=getattr(state, "cached_positions", []),
+            private_client=private_client,
+        )
+    else:
+        allowed, block_reason = risk_mgr.check_entry(
+            direction=direction,
+            confidence=float(result.get("confidence") or 0),
+            mode=TradingMode(mode),
+            cached_positions=getattr(state, "cached_positions", []),
+            private_client=private_client,
+            entry_price=result.get("entry_price"),
+            stop_loss=result.get("stop_loss"),
+            entry_grade=result.get("entry_grade"),
+            risk_warnings=[],
+            strategy_signal=result.get("strategy_signal"),
+            timeframe_directions={key: tf_directions.get(key, "HOLD") for key in ("15m", "1H")},
+        )
     if not allowed:
-        msg = state.add_log(f"[고정 세션 {session_key}] NO_TRADE · {block_reason}")
+        msg = state.add_log(f"[고정 세션 {session_key}] 안전 차단 · {block_reason}")
         await manager.broadcast({"type": "log", "data": {"message": msg}})
+        if remaining_seconds <= 0:
+            record_scheduled_entry_session(
+                session_date, session_key, "SAFETY_BLOCKED", mode,
+                direction, block_reason,
+            )
+            _scheduled_analysis_runs.pop(run_key, None)
+            return True
         return False
 
     if mode == "PAPER_TRADING":
@@ -2104,7 +2174,9 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
             "position_size_percent": 50.0,
             "entry_stage": 1,
         })
-        plan["reasons"] = list(result.get("reasons") or []) + [
+        plan["reasons"] = [
+            f"고정 진입 세션 {session_key}: 하루 2회 중 1회",
+            *list(result.get("reasons") or []),
             "1차 50% 진입 · 손실 방향 추가 진입 금지",
             "+0.5R 논리 유지 시 25%, +1.0R 고점/저점 갱신 시 25% 추가",
         ]
@@ -2161,8 +2233,8 @@ async def scheduled_entry_loop():
             if active:
                 await _execute_scheduled_entry(*active)
             else:
-                # 마지막 틱이 세션 종료 시각을 넘긴 경우에도 미확정 세션을
-                # 정상적인 NO_TRADE로 마감한다. 오픈 포지션의 피라미딩 상태는 유지한다.
+                # 종료 직전 틱을 놓쳤더라도 NO_TRADE로 끝내지 않고 마지막
+                # 분석값으로 의무 진입을 한 번 더 시도한다.
                 now_kst = datetime.now(KST)
                 for run_key, run in list(_scheduled_analysis_runs.items()):
                     if run.get("pyramid") or run.get("scale_in"):
@@ -2171,11 +2243,7 @@ async def scheduled_entry_loop():
                     _, end_at = scheduled_session_bounds(session_date, session_key)
                     if now_kst <= end_at:
                         continue
-                    record_scheduled_entry_session(
-                        session_date, session_key, "NO_TRADE", state.trading_mode,
-                        detail="세션 종료 · 반전/추세 지속 미확정",
-                    )
-                    _scheduled_analysis_runs.pop(run_key, None)
+                    await _execute_scheduled_entry(session_date, session_key)
         except Exception as exc:
             msg = state.add_log(f"[고정 진입 오류] {exc}")
             await manager.broadcast({"type": "log", "data": {"message": msg}})

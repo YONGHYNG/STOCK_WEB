@@ -17,54 +17,39 @@ from backend.scheduled_entries import (
 
 class ScheduledEntryTests(unittest.TestCase):
     def test_windows_and_overnight_session_date(self):
-        self.assertIsNone(active_scheduled_session(datetime(2026, 8, 19, 8, 57, tzinfo=KST)))
-        self.assertEqual(active_scheduled_session(datetime(2026, 8, 19, 8, 58, tzinfo=KST)), ("2026-08-19", "MORNING"))
-        self.assertEqual(active_scheduled_session(datetime(2026, 8, 19, 9, 28, tzinfo=KST)), ("2026-08-19", "MORNING"))
-        self.assertIsNone(active_scheduled_session(datetime(2026, 8, 19, 9, 29, tzinfo=KST)))
-        self.assertIsNone(active_scheduled_session(datetime(2026, 8, 19, 16, 29, tzinfo=KST)))
-        self.assertEqual(active_scheduled_session(datetime(2026, 8, 19, 16, 30, tzinfo=KST)), ("2026-08-19", "EUROPE"))
-        self.assertEqual(active_scheduled_session(datetime(2026, 8, 19, 17, 0, tzinfo=KST)), ("2026-08-19", "EUROPE"))
-        self.assertIsNone(active_scheduled_session(datetime(2026, 8, 19, 17, 1, tzinfo=KST)))
-        self.assertEqual(active_scheduled_session(datetime(2026, 8, 20, 0, 10, tzinfo=KST)), ("2026-08-19", "US"))
+        self.assertIsNone(active_scheduled_session(datetime(2026, 8, 19, 5, 59, tzinfo=KST)))
+        self.assertEqual(active_scheduled_session(datetime(2026, 8, 19, 6, 0, tzinfo=KST)), ("2026-08-19", "MORNING"))
+        self.assertEqual(active_scheduled_session(datetime(2026, 8, 19, 9, 10, tzinfo=KST)), ("2026-08-19", "MORNING"))
+        self.assertIsNone(active_scheduled_session(datetime(2026, 8, 19, 9, 11, tzinfo=KST)))
+        self.assertIsNone(active_scheduled_session(datetime(2026, 8, 19, 16, 59, tzinfo=KST)))
+        self.assertEqual(active_scheduled_session(datetime(2026, 8, 19, 17, 0, tzinfo=KST)), ("2026-08-19", "EVENING"))
+        self.assertEqual(active_scheduled_session(datetime(2026, 8, 19, 23, 30, tzinfo=KST)), ("2026-08-19", "EVENING"))
+        self.assertIsNone(active_scheduled_session(datetime(2026, 8, 19, 23, 31, tzinfo=KST)))
         self.assertIsNone(active_scheduled_session(datetime(2026, 8, 19, 12, 0, tzinfo=KST)))
 
-    def test_weekend_disables_forced_entry_sessions(self):
-        # 금요일 밤에 시작한 미국 세션은 토요일 자정 이후에도 허용한다.
+    def test_weekend_keeps_two_daily_sessions(self):
         self.assertEqual(
-            active_scheduled_session(datetime(2026, 8, 22, 0, 10, tzinfo=KST)),
-            ("2026-08-21", "US"),
+            active_scheduled_session(datetime(2026, 8, 22, 6, 0, tzinfo=KST)),
+            ("2026-08-22", "MORNING"),
         )
-        for current in (
-            datetime(2026, 8, 22, 8, 58, tzinfo=KST),
-            datetime(2026, 8, 22, 16, 30, tzinfo=KST),
-            datetime(2026, 8, 22, 23, 40, tzinfo=KST),
-            datetime(2026, 8, 23, 8, 58, tzinfo=KST),
-            datetime(2026, 8, 23, 16, 30, tzinfo=KST),
-            datetime(2026, 8, 23, 23, 40, tzinfo=KST),
-            # 월요일 자정 이후지만 일요일 밤 세션에 해당한다.
-            datetime(2026, 8, 24, 0, 10, tzinfo=KST),
-        ):
-            with self.subTest(current=current):
-                self.assertIsNone(active_scheduled_session(current))
-
         self.assertEqual(
-            active_scheduled_session(datetime(2026, 8, 24, 8, 58, tzinfo=KST)),
-            ("2026-08-24", "MORNING"),
+            active_scheduled_session(datetime(2026, 8, 23, 23, 0, tzinfo=KST)),
+            ("2026-08-23", "EVENING"),
         )
 
     def test_session_bounds_and_remaining_time(self):
         morning_start, morning_end = scheduled_session_bounds("2026-08-19", "MORNING")
-        self.assertEqual((morning_start.hour, morning_start.minute), (8, 58))
-        self.assertEqual((morning_end.hour, morning_end.minute), (9, 28))
+        self.assertEqual((morning_start.hour, morning_start.minute), (6, 0))
+        self.assertEqual((morning_end.hour, morning_end.minute), (9, 10))
         self.assertEqual(
             seconds_until_session_end(
-                "2026-08-19", "MORNING", datetime(2026, 8, 19, 9, 27, tzinfo=KST)
+                "2026-08-19", "MORNING", datetime(2026, 8, 19, 9, 9, tzinfo=KST)
             ),
             60,
         )
-        us_start, us_end = scheduled_session_bounds("2026-08-19", "US")
-        self.assertEqual(us_start.date().isoformat(), "2026-08-19")
-        self.assertEqual(us_end.date().isoformat(), "2026-08-20")
+        evening_start, evening_end = scheduled_session_bounds("2026-08-19", "EVENING")
+        self.assertEqual((evening_start.hour, evening_start.minute), (17, 0))
+        self.assertEqual((evening_end.hour, evening_end.minute), (23, 30))
 
     def test_hold_uses_indicator_bias(self):
         result = {
@@ -82,7 +67,7 @@ class ScheduledEntryTests(unittest.TestCase):
             atr_stop_multiplier=1.5,
         )
         long = build_forced_entry_result({}, 64000, "LONG", "MORNING", settings)
-        short = build_forced_entry_result({}, 64000, "SHORT", "US", settings)
+        short = build_forced_entry_result({}, 64000, "SHORT", "EVENING", settings)
         self.assertEqual((long["stop_loss"], long["take_profit_1"]), (63475, 64525))
         self.assertEqual((short["stop_loss"], short["take_profit_1"]), (64525, 63475))
         self.assertEqual(long["risk_reward_ratio"], 1.0)
@@ -96,7 +81,7 @@ class ScheduledEntryTests(unittest.TestCase):
             take_profit_2_usdt=800, atr_stop_multiplier=1.5,
         )
         result = {"diagnostics": {"metrics": {"atr14": 400}}}
-        plan = build_forced_entry_result(result, 64000, "LONG", "US", settings)
+        plan = build_forced_entry_result(result, 64000, "LONG", "EVENING", settings)
         self.assertEqual(plan["stop_loss"], 63550)
         self.assertEqual(plan["take_profit_1"], 64450)
 
@@ -110,18 +95,25 @@ class ScheduledEntryTests(unittest.TestCase):
         direction, _ = choose_consensus_direction(results)
         self.assertEqual(direction, "SHORT")
 
+    def test_forced_direction_uses_one_hour_and_fifteen_minute_agreement(self):
+        direction, _ = choose_consensus_direction([{
+            "direction": "HOLD", "long_probability": 80, "short_probability": 20,
+            "timeframe_directions": {"5m": "LONG", "15m": "SHORT", "1H": "SHORT"},
+        }])
+        self.assertEqual(direction, "SHORT")
+
     def test_split_fill_reprices_protection_from_average_entry(self):
         settings = SimpleNamespace(
             stop_gap_min_usdt=400, stop_gap_max_usdt=700,
             take_profit_1_min_usdt=500, take_profit_1_max_usdt=600,
             take_profit_2_usdt=800, atr_stop_multiplier=1.5,
         )
-        initial = build_forced_entry_result({}, 68000, "LONG", "US", settings)
+        initial = build_forced_entry_result({}, 68000, "LONG", "EVENING", settings)
         self.assertEqual(initial["stop_loss"], 67475)
         repriced = reprice_scheduled_result(initial, 67725)
         self.assertEqual(repriced["stop_loss"], 67200)
         self.assertEqual(repriced["take_profit_1"], 68250)
-        self.assertEqual(repriced["take_profit_2"], 68512.5)
+        self.assertEqual(repriced["take_profit_2"], 68775)
 
     def test_consensus_uses_multiple_analyses_and_recent_weight(self):
         results = [

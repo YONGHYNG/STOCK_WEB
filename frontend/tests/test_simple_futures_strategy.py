@@ -561,6 +561,27 @@ class RiskManagerTests(unittest.TestCase):
         self.assertFalse(allowed)
         self.assertIn("1H", reason)
 
+    def test_mandatory_session_ignores_signal_quality_and_reentry_wait(self):
+        self.manager.record_trade_result(1.0, "TP1")
+        allowed, reason = self.manager.check_mandatory_session_entry(
+            direction="SHORT",
+            mode=TradingMode.PAPER_TRADING,
+            cached_positions=[],
+            private_client=None,
+        )
+        self.assertTrue(allowed, reason)
+
+    def test_mandatory_session_still_honors_daily_loss_limit(self):
+        self.manager._daily_pnl_pct = -4.0
+        allowed, reason = self.manager.check_mandatory_session_entry(
+            direction="LONG",
+            mode=TradingMode.PAPER_TRADING,
+            cached_positions=[],
+            private_client=None,
+        )
+        self.assertFalse(allowed)
+        self.assertIn("일일 손실", reason)
+
 
 class SignalDiagnosticsDatabaseTests(unittest.TestCase):
     def test_signal_diagnostics_are_persisted(self):

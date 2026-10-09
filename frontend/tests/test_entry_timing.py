@@ -184,7 +184,7 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
              patch.object(svc, "risk_mgr", risk), \
              patch.object(svc, "_status_payload", return_value={}), \
              patch.object(svc, "manager", SimpleNamespace(broadcast=AsyncMock())), \
-             patch.object(svc, "_send_filled_position_email", AsyncMock()):
+             patch.object(svc, "_send_trade_event_notification", AsyncMock()):
             await svc._execute_scheduled_entry("2026-09-14", "EVENING")
             trader.open_trade.assert_not_called()
             analysis_runs["2026-09-14:EVENING"]["last_analysis_at"] = 0
@@ -231,7 +231,7 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
              patch.object(svc, "record_scheduled_entry_session") as record, \
              patch.object(svc, "_status_payload", return_value={}), \
              patch.object(svc, "manager", SimpleNamespace(broadcast=AsyncMock())), \
-             patch.object(svc, "_send_filled_position_email", AsyncMock()):
+             patch.object(svc, "_send_trade_event_notification", AsyncMock()):
             entered = await svc._execute_scheduled_entry("2026-09-14", "EVENING")
 
         self.assertTrue(entered)
@@ -484,7 +484,7 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
              patch.object(svc, "record_scheduled_entry_session"), \
              patch.object(svc, "_status_payload", return_value={}), \
              patch.object(svc, "manager", SimpleNamespace(broadcast=AsyncMock())), \
-             patch.object(svc, "_send_filled_position_email", AsyncMock()):
+             patch.object(svc, "_send_trade_event_notification", AsyncMock()):
             completed = await svc._complete_scheduled_paper_scale_in(
                 "2026-09-14", "EVENING", "2026-09-14:EVENING", analysis_run,
             )
@@ -536,7 +536,7 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
              patch.object(svc, "record_scheduled_entry_session"), \
              patch.object(svc, "_status_payload", return_value={}), \
              patch.object(svc, "manager", SimpleNamespace(broadcast=AsyncMock())), \
-             patch.object(svc, "_send_filled_position_email", AsyncMock()):
+             patch.object(svc, "_send_trade_event_notification", AsyncMock()):
             completed = await svc._complete_scheduled_paper_scale_in(
                 "2026-09-14", "EVENING", "2026-09-14:EVENING", analysis_run,
             )

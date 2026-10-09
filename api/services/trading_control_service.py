@@ -673,6 +673,23 @@ async def _check_paper_tp_sl(price: float):
         await manager.broadcast({"type": "log", "data": {"message": msg}})
         await manager.broadcast({"type": "trade_update"})
         await manager.broadcast({"type": "status", "data": _status_payload()})
+        await _send_trade_event_notification(
+            partial_code,
+            {
+                "direction": direction,
+                "entry_price": entry,
+                "stop_loss": t.get("sl"),
+                "take_profit_1": t.get("tp1"),
+                "take_profit_2": t.get("tp2"),
+                "exit_price": target,
+                "pnl_pct": _pnl_pct(direction, entry, target),
+                "realized_pnl_amount": amount,
+                "remaining_size_btc": remaining,
+                "position_size_btc": t.get("initial_size") or t.get("size"),
+                "position_size_percent": t.get("position_size_percent", 100),
+            },
+            "PAPER",
+        )
         return
     limit_exit_price = (
         float(price) if result_code == "TRAILING_EXIT"
@@ -997,9 +1014,13 @@ async def _send_trade_event_notification(event: str, result: dict, mode: Optiona
     event_labels = {
         "PENDING": "예상 진입가",
         "ENTRY": "진입 체결",
+        "ADD": "추가 진입",
         "TP1": "1차 익절",
         "TP2": "2차 익절",
         "SL": "손절",
+        "TRAILING_EXIT": "추적 청산",
+        "SESSION_EXIT": "세션 교대 청산",
+        "EXIT": "청산",
     }
     label = event_labels.get(event, event)
     try:
@@ -1448,6 +1469,8 @@ async def _complete_scheduled_paper_scale_in(
     completed["position_size_percent"] = 100.0
     completed["entry_stage"] = 2
     completed["second_entry_price"] = fill_price
+    completed["added_entry_price"] = fill_price
+    completed["added_size_btc"] = added_size
     completed["average_entry_price"] = average
     # 평단을 개선하더라도 기존 손절가를 더 멀리 늘리지 않는다.
     trade_id, average = paper_trader.scale_in(fill_price, added_size, completed)
@@ -1462,7 +1485,7 @@ async def _complete_scheduled_paper_scale_in(
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "trade_update"})
     await manager.broadcast({"type": "status", "data": _status_payload()})
-    await _send_filled_position_email(completed, "PAPER")
+    await _send_trade_event_notification("ADD", completed, "PAPER")
     return True
 
 
@@ -1555,6 +1578,9 @@ async def _complete_scheduled_profit_add(
         "stop_loss": protected_stop,
         "position_size_percent": new_percent,
         "entry_stage": stage,
+        "position_size_btc": new_total,
+        "added_size_btc": added_size,
+        "added_entry_price": price,
         "second_entry_price" if stage == 2 else "third_entry_price": price,
         "average_entry_price": average,
     })
@@ -1578,7 +1604,7 @@ async def _complete_scheduled_profit_add(
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "trade_update"})
     await manager.broadcast({"type": "status", "data": _status_payload()})
-    await _send_filled_position_email(plan, "PAPER")
+    await _send_trade_event_notification("ADD", plan, "PAPER")
     return True
 
 
@@ -2016,6 +2042,21 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         )
         await manager.broadcast({"type": "log", "data": {"message": msg}})
         await manager.broadcast({"type": "trade_update"})
+        await _send_trade_event_notification(
+            "SESSION_EXIT",
+            {
+                "direction": previous.get("direction"),
+                "entry_price": previous.get("entry"),
+                "stop_loss": previous.get("sl"),
+                "take_profit_1": previous.get("tp1"),
+                "take_profit_2": previous.get("tp2"),
+                "exit_price": float(state.last_price),
+                "pnl_pct": pnl,
+                "position_size_btc": previous.get("remaining_size") or previous.get("size"),
+                "position_size_percent": previous.get("position_size_percent", 100),
+            },
+            "PAPER",
+        )
     elif mode == "LIVE_TRADING":
         positions = [
             p for p in getattr(state, "cached_positions", [])
@@ -2028,6 +2069,23 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
                         await asyncio.to_thread(
                             private_client.close_position,
                             position.get("holdSide", "long"),
+                        )
+                        hold_side = str(position.get("holdSide") or "long").lower()
+                        previous_direction = "LONG" if "long" in hold_side else "SHORT"
+                        previous_entry = float(position.get("openPriceAvg") or position.get("averageOpenPrice") or 0)
+                        exit_price = float(state.last_price or position.get("markPrice") or 0)
+                        await _send_trade_event_notification(
+                            "SESSION_EXIT",
+                            {
+                                "direction": previous_direction,
+                                "entry_price": previous_entry,
+                                "exit_price": exit_price,
+                                "pnl_pct": _pnl_pct(previous_direction, previous_entry, exit_price, TAKER_FEE_RATE)
+                                if previous_entry and exit_price else None,
+                                "position_size_btc": position.get("total"),
+                                "position_size_percent": 100,
+                            },
+                            "LIVE",
                         )
                     except Exception as exc:
                         msg = state.add_log(f"[고정 세션 {session_key}] 이전 LIVE 청산 실패: {exc}")
@@ -2223,6 +2281,13 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         session_date, session_key, "ENTERED", mode, direction,
         f"LIVE 1차 50% 시장가 주문 {response.get('orderId') or 'submitted'}",
     )
+    live_plan = dict(result)
+    live_plan.update({
+        "position_size_btc": first_size,
+        "position_size_percent": 50.0,
+        "entry_stage": 1,
+    })
+    await _send_filled_position_email(live_plan, "LIVE")
     return True
 
 
@@ -2338,6 +2403,21 @@ async def _reconcile_missed_exits() -> None:
             await _cancel_scheduled_scale_in_after_exit(tid, result_code)
             risk_mgr.record_trade_result(pnl, result_code)
             state.add_log(f"[자동 복구] 모의매매 #{tid} {result_code} {pnl:+.2f}%")
+            await _send_trade_event_notification(
+                result_code,
+                {
+                    "direction": paper_row["direction"],
+                    "entry_price": paper_row["entry_price"],
+                    "stop_loss": paper_row.get("stop_loss"),
+                    "take_profit_1": paper_row.get("take_profit_1"),
+                    "take_profit_2": paper_row.get("take_profit_2"),
+                    "exit_price": exit_price,
+                    "pnl_pct": pnl,
+                    "position_size_btc": paper_row.get("size_btc"),
+                    "position_size_percent": paper_row.get("position_size_percent", 100),
+                },
+                "PAPER",
+            )
 
     plan_row = get_open_trade(SYMBOL, trade_type="PLAN")
     if plan_row:

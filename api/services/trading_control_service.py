@@ -2608,7 +2608,7 @@ async def save_risk_settings(payload: RiskSettingsPayload):
     s.stop_reentry_wait_seconds = 600
     s.take_profit_reentry_wait_seconds = 180
     s.two_loss_pause_seconds = 1800
-    s.atr_stop_multiplier = 1.5
+    s.atr_stop_multiplier = 1.0
     s.max_ma_distance_atr = 2.5
     risk_settings_store.save(s)
     risk_cfg = s

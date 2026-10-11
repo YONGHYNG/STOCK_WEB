@@ -61,29 +61,29 @@ class ScheduledEntryTests(unittest.TestCase):
 
     def test_forced_plan_has_directional_stops(self):
         settings = SimpleNamespace(
-            stop_gap_min_usdt=400, stop_gap_max_usdt=700,
-            take_profit_1_min_usdt=500, take_profit_1_max_usdt=600,
-            take_profit_2_usdt=800,
-            atr_stop_multiplier=1.5,
+            stop_gap_min_usdt=400, stop_gap_max_usdt=600,
+            take_profit_1_min_usdt=600, take_profit_1_max_usdt=900,
+            take_profit_2_usdt=1200,
+            atr_stop_multiplier=1.0,
         )
         long = build_forced_entry_result({}, 64000, "LONG", "MORNING", settings)
         short = build_forced_entry_result({}, 64000, "SHORT", "EVENING", settings)
-        self.assertEqual((long["stop_loss"], long["take_profit_1"]), (63475, 64525))
-        self.assertEqual((short["stop_loss"], short["take_profit_1"]), (64525, 63475))
-        self.assertEqual(long["risk_reward_ratio"], 1.0)
+        self.assertEqual((long["stop_loss"], long["take_profit_1"]), (63500, 64750))
+        self.assertEqual((short["stop_loss"], short["take_profit_1"]), (64500, 63250))
+        self.assertEqual(long["risk_reward_ratio"], 1.5)
         self.assertNotIn("scalp_max_hold_seconds", long)
         self.assertNotIn("scalp_no_progress_seconds", long)
 
     def test_atr_controls_stop_distance_with_configured_bounds(self):
         settings = SimpleNamespace(
-            stop_gap_min_usdt=400, stop_gap_max_usdt=700,
-            take_profit_1_min_usdt=500, take_profit_1_max_usdt=600,
-            take_profit_2_usdt=800, atr_stop_multiplier=1.5,
+            stop_gap_min_usdt=400, stop_gap_max_usdt=600,
+            take_profit_1_min_usdt=600, take_profit_1_max_usdt=900,
+            take_profit_2_usdt=1200, atr_stop_multiplier=1.0,
         )
         result = {"diagnostics": {"metrics": {"atr14": 400}}}
         plan = build_forced_entry_result(result, 64000, "LONG", "EVENING", settings)
-        self.assertEqual(plan["stop_loss"], 63550)
-        self.assertEqual(plan["take_profit_1"], 64450)
+        self.assertEqual(plan["stop_loss"], 63600)
+        self.assertEqual(plan["take_profit_1"], 64600)
 
     def test_scalp_direction_prioritizes_five_and_fifteen_minute_frames(self):
         results = [{
@@ -104,16 +104,16 @@ class ScheduledEntryTests(unittest.TestCase):
 
     def test_split_fill_reprices_protection_from_average_entry(self):
         settings = SimpleNamespace(
-            stop_gap_min_usdt=400, stop_gap_max_usdt=700,
-            take_profit_1_min_usdt=500, take_profit_1_max_usdt=600,
-            take_profit_2_usdt=800, atr_stop_multiplier=1.5,
+            stop_gap_min_usdt=400, stop_gap_max_usdt=600,
+            take_profit_1_min_usdt=600, take_profit_1_max_usdt=900,
+            take_profit_2_usdt=1200, atr_stop_multiplier=1.0,
         )
         initial = build_forced_entry_result({}, 68000, "LONG", "EVENING", settings)
-        self.assertEqual(initial["stop_loss"], 67475)
+        self.assertEqual(initial["stop_loss"], 67500)
         repriced = reprice_scheduled_result(initial, 67725)
-        self.assertEqual(repriced["stop_loss"], 67200)
-        self.assertEqual(repriced["take_profit_1"], 68250)
-        self.assertEqual(repriced["take_profit_2"], 68775)
+        self.assertEqual(repriced["stop_loss"], 67225)
+        self.assertEqual(repriced["take_profit_1"], 68475)
+        self.assertEqual(repriced["take_profit_2"], 68975)
 
     def test_consensus_uses_multiple_analyses_and_recent_weight(self):
         results = [

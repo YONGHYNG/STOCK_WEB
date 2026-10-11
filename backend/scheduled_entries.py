@@ -10,11 +10,11 @@ SCHEDULED_ENTRY_WINDOWS = (
     ("MORNING", time(6, 0), time(9, 10)),
     ("EVENING", time(17, 0), time(23, 30)),
 )
-SCALP_STOP_ATR_MULTIPLIER = 0.8
-SCALP_STOP_GAP_MIN_USDT = 450.0
+SCALP_STOP_ATR_MULTIPLIER = 1.0
+SCALP_STOP_GAP_MIN_USDT = 400.0
 SCALP_STOP_GAP_MAX_USDT = 600.0
-SCALP_TP1_RISK_RATIO = 1.0
-SCALP_TP2_RISK_RATIO = 2.0
+SCALP_TP1_RISK_RATIO = 1.5
+SCALP_TP2_RISK_RATIO = 2.5
 SCALP_ADD_ON_RISK_RATIO = 0.35
 
 
@@ -220,17 +220,25 @@ def scheduled_volume_ratio(result: dict) -> float:
 
 
 def build_forced_entry_result(result: dict, price: float, direction: str, session_key: str, settings) -> dict:
-    """고정 세션 단타용 5분 ATR 손절·익절 계획을 만든다."""
+    """고정 세션용 ATR 손절·익절 계획을 설정 범위 안에서 만든다."""
     atr = _scheduled_atr(result)
     volume_ratio = scheduled_volume_ratio(result)
     entry, entry_basis = _scheduled_entry_price(result, price, direction, atr)
-    fallback_gap = (SCALP_STOP_GAP_MIN_USDT + SCALP_STOP_GAP_MAX_USDT) / 2
+    stop_min = float(getattr(settings, "stop_gap_min_usdt", SCALP_STOP_GAP_MIN_USDT))
+    stop_max = max(stop_min, float(getattr(settings, "stop_gap_max_usdt", SCALP_STOP_GAP_MAX_USDT)))
+    atr_multiplier = float(getattr(settings, "atr_stop_multiplier", SCALP_STOP_ATR_MULTIPLIER))
+    tp1_min = float(getattr(settings, "take_profit_1_min_usdt", stop_min * SCALP_TP1_RISK_RATIO))
+    tp1_max = max(tp1_min, float(getattr(settings, "take_profit_1_max_usdt", stop_max * SCALP_TP1_RISK_RATIO)))
+    configured_tp2 = float(getattr(settings, "take_profit_2_usdt", stop_max * SCALP_TP2_RISK_RATIO))
+    fallback_gap = (stop_min + stop_max) / 2
     stop_gap = (
-        min(max(atr * SCALP_STOP_ATR_MULTIPLIER, SCALP_STOP_GAP_MIN_USDT), SCALP_STOP_GAP_MAX_USDT)
+        min(max(atr * atr_multiplier, stop_min), stop_max)
         if atr else fallback_gap
     )
-    tp1_gap = stop_gap * SCALP_TP1_RISK_RATIO
-    tp2_gap = stop_gap * SCALP_TP2_RISK_RATIO
+    tp1_gap = min(max(stop_gap * SCALP_TP1_RISK_RATIO, tp1_min), tp1_max)
+    tp2_gap = max(configured_tp2, stop_gap * SCALP_TP2_RISK_RATIO)
+    tp1_ratio = tp1_gap / stop_gap
+    tp2_ratio = tp2_gap / stop_gap
     forced = dict(result)
     forced.update({
         "direction": direction,
@@ -238,10 +246,10 @@ def build_forced_entry_result(result: dict, price: float, direction: str, sessio
         "stop_loss": entry - stop_gap if direction == "LONG" else entry + stop_gap,
         "take_profit_1": entry + tp1_gap if direction == "LONG" else entry - tp1_gap,
         "take_profit_2": entry + tp2_gap if direction == "LONG" else entry - tp2_gap,
-        "risk_reward_ratio": round(tp1_gap / stop_gap, 3),
+        "risk_reward_ratio": round(tp1_ratio, 3),
         "scheduled_stop_gap": stop_gap,
-        "scheduled_tp1_ratio": SCALP_TP1_RISK_RATIO,
-        "scheduled_tp2_ratio": SCALP_TP2_RISK_RATIO,
+        "scheduled_tp1_ratio": tp1_ratio,
+        "scheduled_tp2_ratio": tp2_ratio,
         "scheduled_volume_ratio": volume_ratio,
         "scheduled_volume_quality": (
             "STRONG" if volume_ratio >= 1.0 else "WEAK" if volume_ratio >= 0.65 else "THIN"
@@ -257,7 +265,7 @@ def build_forced_entry_result(result: dict, price: float, direction: str, sessio
             f"거래량 비율 {volume_ratio:.2f} · "
             f"{'정상' if volume_ratio >= 1.0 else '약세 · 분할 진입' if volume_ratio >= 0.65 else '매우 약세 · 종료 직전 강제 체결'}",
             f"최신 지표·시간봉 방향 선택: {direction}",
-            f"5분 ATR 단타 손절 ${stop_gap:,.2f}, 목표 손익비 1:{tp1_gap / stop_gap:.1f}",
+            f"ATR 손절 ${stop_gap:,.2f}, 목표 손익비 1:{tp1_ratio:.1f}",
         ],
     })
     return forced

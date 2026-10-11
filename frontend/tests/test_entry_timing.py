@@ -496,7 +496,7 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan["entry_stage"], 2)
         self.assertEqual(plan["position_size_percent"], 100.0)
         self.assertEqual(plan["stop_loss"], 895.0)
-        self.assertEqual(plan["take_profit_1"], 1095.0)
+        self.assertEqual(plan["take_profit_1"], 1145.0)
         self.assertNotIn("2026-09-14:EVENING", runs)
 
     async def test_scheduled_scale_in_sets_stop_only_after_second_fill(self):
@@ -545,7 +545,7 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
         plan = trader.scale_in.call_args.args[2]
         self.assertEqual(plan["average_entry_price"], 947.5)
         self.assertEqual(plan["stop_loss"], 847.5)
-        self.assertEqual(plan["take_profit_1"], 1047.5)
+        self.assertEqual(plan["take_profit_1"], 1097.5)
 
     async def test_normal_entry_blocked_before_order_when_setup_predates_profit(self):
         from api.services import trading_control_service as svc

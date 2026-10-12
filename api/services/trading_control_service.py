@@ -1048,7 +1048,8 @@ async def _check_pending_paper_entry(price: float):
     latest = state.last_result or {}
     latest_directions = latest.get("timeframe_directions") or {}
     opposite = "SHORT" if direction == "LONG" else "LONG"
-    still_valid = (
+    manual_limit = str(result.get("strategy_signal") or "").startswith("MANUAL_")
+    still_valid = manual_limit or (
         latest.get("direction") == direction
         and _is_order_eligible(latest)
         and _entry_timing_check(latest, direction, price)[0]

@@ -159,6 +159,48 @@ class EngineTimingTests(unittest.TestCase):
 
 
 class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_profit_add_reprices_stop_and_take_profit_from_final_average(self):
+        from api.services import trading_control_service as svc
+
+        plan = {
+            "direction": "LONG", "entry_price": 1000.0,
+            "stop_loss": 500.0, "take_profit_1": 1600.0, "take_profit_2": 2200.0,
+        }
+        analysis_run = {"pyramid": {
+            "trade_id": 77, "direction": "LONG", "first_entry_price": 1000.0,
+            "original_stop": 500.0, "risk_per_btc": 500.0,
+            "add_size_btc": 1.0, "target_size_btc": 4.0,
+            "next_stage": 2, "last_add_price": 1000.0,
+            "last_candle_timestamp": 1, "result": plan,
+        }}
+        trader = Mock(
+            is_open=True, open_id=77,
+            open_data={"direction": "LONG", "entry": 1000.0, "size": 2.0, "sl": 500.0},
+        )
+        trader.scale_in.return_value = (77, 1083.3333333333333)
+        fake_state = SimpleNamespace(
+            last_price=1250.0,
+            last_result={"diagnostics": {"metrics": {
+                "timestamp": 2, "close": 1250.0, "ema20": 1100.0, "volume_ratio": 1.0,
+            }}},
+            add_log=lambda message: message,
+        )
+        with patch.object(svc, "state", fake_state), patch.object(svc, "paper_trader", trader), \
+             patch.object(svc, "record_scheduled_entry_session"), \
+             patch.object(svc, "_status_payload", return_value={}), \
+             patch.object(svc, "manager", SimpleNamespace(broadcast=AsyncMock())), \
+             patch.object(svc, "_send_trade_event_notification", AsyncMock()):
+            completed = await svc._complete_scheduled_profit_add(
+                "2026-10-12", "MORNING", "2026-10-12:MORNING", analysis_run,
+            )
+
+        self.assertTrue(completed)
+        repriced = trader.scale_in.call_args.args[2]
+        average = repriced["average_entry_price"]
+        self.assertAlmostEqual(average - repriced["stop_loss"], 500.0)
+        self.assertAlmostEqual(repriced["take_profit_1"] - average, 600.0)
+        self.assertAlmostEqual(repriced["take_profit_2"] - average, 1200.0)
+
     async def test_scheduled_deadline_forces_one_entry_without_volume_confirmation(self):
         from api.services import trading_control_service as svc
         result = dict(direction="HOLD", confidence=0, entry_price=104,

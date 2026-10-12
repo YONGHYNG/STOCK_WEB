@@ -26,8 +26,8 @@ class RiskSettingsPayload(BaseModel):
     two_loss_pause_seconds: int = 3600
     stop_gap_min_usdt: float = 400.0
     stop_gap_max_usdt: float = 600.0
-    take_profit_1_min_usdt: float = 600.0
-    take_profit_1_max_usdt: float = 900.0
+    take_profit_1_min_usdt: float = 500.0
+    take_profit_1_max_usdt: float = 800.0
     take_profit_2_usdt: float = 1200.0
     atr_stop_multiplier: float = 1.0
     max_ma_distance_atr: float = 2.0

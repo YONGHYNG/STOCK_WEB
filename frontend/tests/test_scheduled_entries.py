@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from backend.scheduled_entries import (
     KST,
     active_scheduled_session,
+    apply_scheduled_entry_offset,
     build_forced_entry_result,
     choose_consensus_direction,
     choose_forced_direction,
@@ -16,6 +17,24 @@ from backend.scheduled_entries import (
 
 
 class ScheduledEntryTests(unittest.TestCase):
+    def test_entry_offset_and_take_profit_bounds(self):
+        settings = SimpleNamespace(
+            take_profit_1_min_usdt=500,
+            take_profit_1_max_usdt=800,
+            take_profit_2_usdt=1200,
+        )
+        long = apply_scheduled_entry_offset({
+            "direction": "LONG", "entry_price": 64000,
+            "stop_loss": 63600, "take_profit_1": 64900, "take_profit_2": 65200,
+        }, settings)
+        short = apply_scheduled_entry_offset({
+            "direction": "SHORT", "entry_price": 64000,
+            "stop_loss": 64400, "take_profit_1": 63100, "take_profit_2": 62800,
+        }, settings)
+        self.assertEqual((long["entry_price"], long["stop_loss"], long["take_profit_1"]), (63850, 63450, 64650))
+        self.assertEqual((short["entry_price"], short["stop_loss"], short["take_profit_1"]), (64150, 64550, 63350))
+        self.assertEqual((long["take_profit_2"], short["take_profit_2"]), (65050, 62950))
+
     def test_windows_and_overnight_session_date(self):
         self.assertIsNone(active_scheduled_session(datetime(2026, 8, 19, 5, 59, tzinfo=KST)))
         self.assertEqual(active_scheduled_session(datetime(2026, 8, 19, 6, 0, tzinfo=KST)), ("2026-08-19", "MORNING"))
@@ -62,7 +81,7 @@ class ScheduledEntryTests(unittest.TestCase):
     def test_forced_plan_has_directional_stops(self):
         settings = SimpleNamespace(
             stop_gap_min_usdt=400, stop_gap_max_usdt=600,
-            take_profit_1_min_usdt=600, take_profit_1_max_usdt=900,
+            take_profit_1_min_usdt=500, take_profit_1_max_usdt=800,
             take_profit_2_usdt=1200,
             atr_stop_multiplier=1.0,
         )
@@ -77,7 +96,7 @@ class ScheduledEntryTests(unittest.TestCase):
     def test_atr_controls_stop_distance_with_configured_bounds(self):
         settings = SimpleNamespace(
             stop_gap_min_usdt=400, stop_gap_max_usdt=600,
-            take_profit_1_min_usdt=600, take_profit_1_max_usdt=900,
+            take_profit_1_min_usdt=500, take_profit_1_max_usdt=800,
             take_profit_2_usdt=1200, atr_stop_multiplier=1.0,
         )
         result = {"diagnostics": {"metrics": {"atr14": 400}}}
@@ -105,7 +124,7 @@ class ScheduledEntryTests(unittest.TestCase):
     def test_split_fill_reprices_protection_from_average_entry(self):
         settings = SimpleNamespace(
             stop_gap_min_usdt=400, stop_gap_max_usdt=600,
-            take_profit_1_min_usdt=600, take_profit_1_max_usdt=900,
+            take_profit_1_min_usdt=500, take_profit_1_max_usdt=800,
             take_profit_2_usdt=1200, atr_stop_multiplier=1.0,
         )
         initial = build_forced_entry_result({}, 68000, "LONG", "EVENING", settings)

@@ -55,6 +55,7 @@ from backend.database import (
 )
 from backend.scheduled_entries import (
     active_scheduled_session,
+    apply_scheduled_entry_offset,
     build_forced_entry_result,
     choose_consensus_direction,
     choose_forced_direction,
@@ -1568,14 +1569,30 @@ async def _complete_scheduled_profit_add(
     new_percent = 75.0 if stage == 2 else 100.0
     average = (float(current["entry"]) * current_size + price * added_size) / new_total
     plan = dict(pyramid.get("result") or {})
-    # 수익 확인 후 추가하므로 보호가를 더 멀리 늘리지 않는다.
-    old_stop = float(current.get("sl") or pyramid.get("original_stop") or 0)
+    # 추가 체결 뒤에는 첫 진입가를 손절가로 쓰지 않고 최종 평단 기준으로
+    # 설정된 손절·익절 간격을 다시 계산한다.
+    stop_min = float(risk_cfg.stop_gap_min_usdt)
+    stop_max = max(stop_min, float(risk_cfg.stop_gap_max_usdt))
+    stop_gap = min(max(float(pyramid.get("risk_per_btc") or stop_min), stop_min), stop_max)
+    tp1_min = float(risk_cfg.take_profit_1_min_usdt)
+    tp1_max = max(tp1_min, float(risk_cfg.take_profit_1_max_usdt))
+    original_plan_entry = float(plan.get("entry_price") or first_entry)
+    original_tp1_gap = abs(float(plan.get("take_profit_1") or 0) - original_plan_entry)
+    tp1_gap = min(max(original_tp1_gap or tp1_min, tp1_min), tp1_max)
+    tp2_gap = max(float(risk_cfg.take_profit_2_usdt), tp1_gap)
     if direction == "LONG":
-        protected_stop = max(old_stop, first_entry if stage == 2 else float(current["entry"]))
+        protected_stop = average - stop_gap
+        take_profit_1 = average + tp1_gap
+        take_profit_2 = average + tp2_gap
     else:
-        protected_stop = min(old_stop, first_entry if stage == 2 else float(current["entry"]))
+        protected_stop = average + stop_gap
+        take_profit_1 = average - tp1_gap
+        take_profit_2 = average - tp2_gap
     plan.update({
         "stop_loss": protected_stop,
+        "take_profit_1": take_profit_1,
+        "take_profit_2": take_profit_2,
+        "risk_reward_ratio": round(tp2_gap / stop_gap, 3),
         "position_size_percent": new_percent,
         "entry_stage": stage,
         "position_size_btc": new_total,
@@ -1924,6 +1941,7 @@ async def _execute_legacy_scheduled_entry(session_date: str, session_key: str) -
             else "적격 신호 미확정: 누적 우세 방향으로 1차 50% 진입 후 가격 기준 2차 대기"
         ),
     ]
+    forced = apply_scheduled_entry_offset(forced, risk_cfg)
     if mode == "PAPER_TRADING":
         full_size = _paper_full_leverage_size(forced["entry_price"])
         if force_entry_due:
@@ -1978,19 +1996,22 @@ async def _execute_legacy_scheduled_entry(session_date: str, session_key: str) -
         size_value = float(risk_cfg.order_size_btc)
         size = f"{size_value:.8f}".rstrip("0").rstrip(".")
         side = "buy" if direction == "LONG" else "sell"
+        limit_price = f"{float(forced['entry_price']):.1f}"
         try:
-            response = await asyncio.to_thread(private_client.place_market_order, side, size, "open")
+            response = await asyncio.to_thread(
+                private_client.place_limit_order, side, size, limit_price, "open"
+            )
         except Exception as exc:
-            msg = state.add_log(f"[고정 진입 {session_key}] LIVE 시장가 주문 실패: {exc}")
+            msg = state.add_log(f"[고정 진입 {session_key}] LIVE 지정가 주문 실패: {exc}")
             await manager.broadcast({"type": "log", "data": {"message": msg}})
             return False
-        order_id = str(response.get("orderId") or "market-pending")
+        order_id = str(response.get("orderId") or "pending")
         state.pending_live_order_id = order_id
         state.pending_live_order = {
             "direction": direction, "entry_price": forced["entry_price"],
             "order_id": order_id, "result": forced, **_pending_order_timestamps(result=forced),
         }
-        detail = f"LIVE 시장가 주문 {order_id}"
+        detail = f"LIVE 지정가 ${limit_price} 주문 {order_id}"
     else:
         return False
 
@@ -2178,6 +2199,7 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         mandatory_fallback = True
         event_id = 0
 
+    result = apply_scheduled_entry_offset(result, risk_cfg)
     state.last_result = result
     await manager.broadcast({"type": "signal", "data": result})
 
@@ -2271,23 +2293,34 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         return False
     side = "buy" if direction == "LONG" else "sell"
     size = f"{first_size:.8f}".rstrip("0").rstrip(".")
+    limit_price = f"{float(result['entry_price']):.1f}"
     try:
-        response = await asyncio.to_thread(private_client.place_market_order, side, size, "open")
+        response = await asyncio.to_thread(
+            private_client.place_limit_order, side, size, limit_price, "open"
+        )
     except Exception as exc:
         msg = state.add_log(f"[고정 세션 {session_key}] LIVE 1차 주문 실패: {exc}")
         await manager.broadcast({"type": "log", "data": {"message": msg}})
         return False
     record_scheduled_entry_session(
         session_date, session_key, "ENTERED", mode, direction,
-        f"LIVE 1차 50% 시장가 주문 {response.get('orderId') or 'submitted'}",
+        f"LIVE 1차 50% 지정가 ${limit_price} 주문 {response.get('orderId') or 'submitted'}",
     )
+    state.pending_live_order_id = str(response.get("orderId") or "pending")
+    state.pending_live_order = {
+        "direction": direction,
+        "entry_price": float(limit_price),
+        "order_id": state.pending_live_order_id,
+        "result": dict(result),
+        **_pending_order_timestamps(result=result),
+    }
     live_plan = dict(result)
     live_plan.update({
         "position_size_btc": first_size,
         "position_size_percent": 50.0,
         "entry_stage": 1,
     })
-    await _send_filled_position_email(live_plan, "LIVE")
+    await _send_trade_event_notification("PENDING", live_plan, "LIVE")
     return True
 
 

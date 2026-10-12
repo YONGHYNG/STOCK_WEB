@@ -16,6 +16,54 @@ SCALP_STOP_GAP_MAX_USDT = 600.0
 SCALP_TP1_RISK_RATIO = 1.5
 SCALP_TP2_RISK_RATIO = 2.5
 SCALP_ADD_ON_RISK_RATIO = 0.35
+SCHEDULED_ENTRY_OFFSET_USDT = 150.0
+
+
+def apply_scheduled_entry_offset(result: dict, settings) -> dict:
+    """계산된 계획을 유리한 지정가로 옮기고 설정된 보호 간격을 유지한다."""
+    adjusted = dict(result)
+    direction = str(adjusted.get("direction") or "HOLD").upper()
+    entry = float(adjusted.get("entry_price") or 0)
+    if direction not in ("LONG", "SHORT") or entry <= 0:
+        return adjusted
+    if adjusted.get("scheduled_entry_offset_applied"):
+        return adjusted
+
+    stop = float(adjusted.get("stop_loss") or 0)
+    tp1 = float(adjusted.get("take_profit_1") or 0)
+    tp2 = float(adjusted.get("take_profit_2") or 0)
+    stop_gap = abs(entry - stop) if stop != 0 else 0.0
+    original_tp1_gap = abs(tp1 - entry) if tp1 > 0 else 0.0
+    original_tp2_gap = abs(tp2 - entry) if tp2 > 0 else 0.0
+    tp1_min = float(getattr(settings, "take_profit_1_min_usdt", 500.0))
+    tp1_max = max(tp1_min, float(getattr(settings, "take_profit_1_max_usdt", 800.0)))
+    tp1_gap = min(max(original_tp1_gap or tp1_min, tp1_min), tp1_max)
+    tp2_gap = max(float(getattr(settings, "take_profit_2_usdt", 1200.0)), original_tp2_gap)
+    offset = SCHEDULED_ENTRY_OFFSET_USDT * (-1 if direction == "LONG" else 1)
+    target_entry = entry + offset
+    # BTCUSDT 전용 금액 오프셋이지만 작은 합성 테스트/비정상 가격에서는
+    # 음수 지정가를 만들지 않는다.
+    if target_entry <= 0:
+        target_entry = entry
+
+    adjusted.update({
+        "calculated_entry_price": entry,
+        "entry_price": target_entry,
+        "stop_loss": (
+            target_entry - stop_gap if direction == "LONG" else target_entry + stop_gap
+        ) if stop_gap > 0 else None,
+        "take_profit_1": target_entry + tp1_gap if direction == "LONG" else target_entry - tp1_gap,
+        "take_profit_2": target_entry + tp2_gap if direction == "LONG" else target_entry - tp2_gap,
+        # 이 전략의 손익비는 기존 Volume Event와 동일하게 2차 목표 기준이다.
+        "risk_reward_ratio": round(tp2_gap / stop_gap, 3) if stop_gap > 0 else None,
+        "scheduled_entry_offset_usdt": SCHEDULED_ENTRY_OFFSET_USDT,
+        "scheduled_entry_offset_applied": True,
+    })
+    adjusted["reasons"] = list(adjusted.get("reasons") or []) + [
+        f"계산가 ${entry:,.2f} 기준 {'롱 -' if direction == 'LONG' else '숏 +'}"
+        f"${SCHEDULED_ENTRY_OFFSET_USDT:,.0f} 지정가 ${target_entry:,.2f}"
+    ]
+    return adjusted
 
 
 def scheduled_session_bounds(session_date: str, session_key: str) -> tuple[datetime, datetime]:

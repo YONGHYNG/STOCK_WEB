@@ -88,6 +88,7 @@ class PaperTrader:
             "tp2_taken": False,
             "position_size_percent": float(r.get("position_size_percent") or 100),
             "entry_stage": int(r.get("entry_stage") or 2),
+            "manual_position": bool(r.get("manual_scale_in_plan")),
             "max_favorable_move": 0.0,
         }
         return trade_id
@@ -259,5 +260,6 @@ class PaperTrader:
                 "tp2_taken": bool(row.get("tp2_taken")),
                 "position_size_percent": float(row.get("position_size_percent") or 100),
                 "entry_stage": int(row.get("entry_stage") or 2),
+                "manual_position": "사용자가 지정한 모의 3단계 진입 계획" in str(row.get("entry_reason") or ""),
                 "max_favorable_move": 0.0,
             }

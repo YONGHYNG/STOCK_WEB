@@ -1898,6 +1898,8 @@ async def _execute_legacy_scheduled_entry(session_date: str, session_key: str) -
     current_price = float(state.last_price or 0)
     if mode == "PAPER_TRADING" and paper_trader.is_open and paper_trader.open_data:
         current_position = dict(paper_trader.open_data)
+        if current_position.get("manual_position"):
+            return False
         current_direction = str(current_position.get("direction") or "HOLD").upper()
         if current_direction == direction:
             detail = (
@@ -2083,6 +2085,8 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     # 첫 분석 전에 이전 PAPER 포지션을 정리한다. LIVE는 거래소 청산 확인
     # 전에는 새 주문을 내지 않는다.
     if mode == "PAPER_TRADING" and paper_trader.is_open:
+        if (paper_trader.open_data or {}).get("manual_position"):
+            return False
         if not state.last_price:
             return False
         previous = dict(paper_trader.open_data or {})

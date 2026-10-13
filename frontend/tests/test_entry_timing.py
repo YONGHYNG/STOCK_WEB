@@ -281,6 +281,27 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
         trader.open_trade.assert_called_once()
         self.assertEqual(record.call_args.args[2], "ENTERED")
 
+    async def test_new_session_does_not_close_manual_three_stage_position(self):
+        from api.services import trading_control_service as svc
+        fake_state = SimpleNamespace(
+            trading_mode="PAPER_TRADING", auto_trade_enabled=True,
+            emergency_stopped=False, last_price=104,
+        )
+        trader = Mock(
+            is_open=True,
+            open_data={
+                "direction": "SHORT", "entry": 100, "size": .01,
+                "manual_position": True,
+            },
+        )
+        with patch.object(svc, "state", fake_state), patch.object(svc, "paper_trader", trader), \
+             patch.object(svc, "_scheduled_analysis_runs", {}), \
+             patch.object(svc, "get_scheduled_entry_session", return_value=None):
+            entered = await svc._execute_scheduled_entry("2026-09-14", "EVENING")
+
+        self.assertFalse(entered)
+        trader.force_close.assert_not_called()
+
     async def test_session_rotation_can_still_be_blocked_by_account_safety(self):
         from api.services import trading_control_service as svc
         result = dict(

@@ -2081,76 +2081,10 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     if run.get("pyramid"):
         return False
 
-    # 오전·저녁 거래를 서로 독립된 두 번의 거래로 만들기 위해 새 세션의
-    # 첫 분석 전에 이전 PAPER 포지션을 정리한다. LIVE는 거래소 청산 확인
-    # 전에는 새 주문을 내지 않는다.
+    # 사용자가 직접 잡은 포지션은 세션 로직이 교체하지 않는다. 자동 포지션도
+    # 새 분석 방향을 정하기 전에는 닫지 않으며, 같은 방향이면 그대로 이어간다.
     if mode == "PAPER_TRADING" and paper_trader.is_open:
         if (paper_trader.open_data or {}).get("manual_position"):
-            return False
-        if not state.last_price:
-            return False
-        previous = dict(paper_trader.open_data or {})
-        trade_id, pnl = paper_trader.force_close(float(state.last_price))
-        await _cancel_scheduled_scale_in_after_exit(trade_id, "SESSION_ROTATION")
-        risk_mgr.record_trade_result(pnl, "SESSION_ROTATION")
-        msg = state.add_log(
-            f"[고정 세션 {session_key}] 이전 {previous.get('direction', '포지션')} "
-            f"#{trade_id} 세션 교대 청산 · {pnl:+.2f}%"
-        )
-        await manager.broadcast({"type": "log", "data": {"message": msg}})
-        await manager.broadcast({"type": "trade_update"})
-        await _send_trade_event_notification(
-            "SESSION_EXIT",
-            {
-                "direction": previous.get("direction"),
-                "entry_price": previous.get("entry"),
-                "stop_loss": previous.get("sl"),
-                "take_profit_1": previous.get("tp1"),
-                "take_profit_2": previous.get("tp2"),
-                "exit_price": float(state.last_price),
-                "pnl_pct": pnl,
-                "position_size_btc": previous.get("remaining_size") or previous.get("size"),
-                "position_size_percent": previous.get("position_size_percent", 100),
-            },
-            "PAPER",
-        )
-    elif mode == "LIVE_TRADING":
-        positions = [
-            p for p in getattr(state, "cached_positions", [])
-            if p.get("symbol") == SYMBOL
-        ]
-        if positions:
-            if not run.get("rotation_close_requested"):
-                for position in positions:
-                    try:
-                        await asyncio.to_thread(
-                            private_client.close_position,
-                            position.get("holdSide", "long"),
-                        )
-                        hold_side = str(position.get("holdSide") or "long").lower()
-                        previous_direction = "LONG" if "long" in hold_side else "SHORT"
-                        previous_entry = float(position.get("openPriceAvg") or position.get("averageOpenPrice") or 0)
-                        exit_price = float(state.last_price or position.get("markPrice") or 0)
-                        await _send_trade_event_notification(
-                            "SESSION_EXIT",
-                            {
-                                "direction": previous_direction,
-                                "entry_price": previous_entry,
-                                "exit_price": exit_price,
-                                "pnl_pct": _pnl_pct(previous_direction, previous_entry, exit_price, TAKER_FEE_RATE)
-                                if previous_entry and exit_price else None,
-                                "position_size_btc": position.get("total"),
-                                "position_size_percent": 100,
-                            },
-                            "LIVE",
-                        )
-                    except Exception as exc:
-                        msg = state.add_log(f"[고정 세션 {session_key}] 이전 LIVE 청산 실패: {exc}")
-                        await manager.broadcast({"type": "log", "data": {"message": msg}})
-                        return False
-                run["rotation_close_requested"] = True
-                msg = state.add_log(f"[고정 세션 {session_key}] 이전 LIVE 포지션 청산 요청")
-                await manager.broadcast({"type": "log", "data": {"message": msg}})
             return False
 
     now = time.monotonic()
@@ -2234,6 +2168,80 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         ]
         mandatory_fallback = True
         event_id = 0
+
+    if mode == "PAPER_TRADING" and paper_trader.is_open:
+        previous = dict(paper_trader.open_data or {})
+        previous_direction = str(previous.get("direction") or "HOLD").upper()
+        if previous_direction == direction:
+            detail = f"기존 {direction} 포지션과 새 분석 방향 일치 · 계속 보유"
+            record_scheduled_entry_session(
+                session_date, session_key, "CARRIED_POSITION", mode, direction, detail,
+            )
+            _scheduled_analysis_runs.pop(run_key, None)
+            msg = state.add_log(f"[고정 세션 {session_key}] {detail}")
+            await manager.broadcast({"type": "log", "data": {"message": msg}})
+            await manager.broadcast({"type": "status", "data": _status_payload()})
+            return True
+        if not state.last_price:
+            return False
+        trade_id, pnl = paper_trader.force_close(float(state.last_price))
+        await _cancel_scheduled_scale_in_after_exit(trade_id, "SESSION_DIRECTION_CHANGE")
+        risk_mgr.record_trade_result(pnl, "SESSION_DIRECTION_CHANGE")
+        msg = state.add_log(
+            f"[고정 세션 {session_key}] {previous_direction}→{direction} 방향 전환 · "
+            f"기존 #{trade_id} {pnl:+.2f}% 청산"
+        )
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        await manager.broadcast({"type": "trade_update"})
+        await _send_trade_event_notification(
+            "SESSION_DIRECTION_CHANGE",
+            {
+                "direction": previous_direction,
+                "entry_price": previous.get("entry"),
+                "stop_loss": previous.get("sl"),
+                "take_profit_1": previous.get("tp1"),
+                "take_profit_2": previous.get("tp2"),
+                "exit_price": float(state.last_price),
+                "pnl_pct": pnl,
+                "position_size_btc": previous.get("remaining_size") or previous.get("size"),
+                "position_size_percent": previous.get("position_size_percent", 100),
+            },
+            "PAPER",
+        )
+    elif mode == "LIVE_TRADING":
+        positions = [
+            p for p in getattr(state, "cached_positions", [])
+            if p.get("symbol") == SYMBOL
+        ]
+        if positions:
+            existing_directions = {
+                "LONG" if "long" in str(p.get("holdSide") or "long").lower() else "SHORT"
+                for p in positions
+            }
+            if existing_directions == {direction}:
+                detail = f"기존 LIVE {direction} 포지션과 새 분석 방향 일치 · 계속 보유"
+                record_scheduled_entry_session(
+                    session_date, session_key, "CARRIED_POSITION", mode, direction, detail,
+                )
+                _scheduled_analysis_runs.pop(run_key, None)
+                msg = state.add_log(f"[고정 세션 {session_key}] {detail}")
+                await manager.broadcast({"type": "log", "data": {"message": msg}})
+                return True
+            if not run.get("rotation_close_requested"):
+                for position in positions:
+                    try:
+                        await asyncio.to_thread(
+                            private_client.close_position,
+                            position.get("holdSide", "long"),
+                        )
+                    except Exception as exc:
+                        msg = state.add_log(f"[고정 세션 {session_key}] 이전 LIVE 청산 실패: {exc}")
+                        await manager.broadcast({"type": "log", "data": {"message": msg}})
+                        return False
+                run["rotation_close_requested"] = True
+                msg = state.add_log(f"[고정 세션 {session_key}] 반대 방향 LIVE 포지션 청산 요청")
+                await manager.broadcast({"type": "log", "data": {"message": msg}})
+            return False
 
     result = apply_scheduled_entry_offset(result, risk_cfg)
     state.last_result = result

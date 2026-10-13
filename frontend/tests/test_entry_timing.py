@@ -239,7 +239,7 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan["position_size_percent"], 50)
         self.assertIsNotNone(plan["stop_loss"])
 
-    async def test_new_session_closes_previous_position_then_enters(self):
+    async def test_new_session_keeps_previous_position_when_direction_matches(self):
         from api.services import trading_control_service as svc
         result = dict(
             direction="HOLD", confidence=0, entry_price=104,
@@ -277,9 +277,9 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
             entered = await svc._execute_scheduled_entry("2026-09-14", "EVENING")
 
         self.assertTrue(entered)
-        trader.force_close.assert_called_once_with(104.0)
-        trader.open_trade.assert_called_once()
-        self.assertEqual(record.call_args.args[2], "ENTERED")
+        trader.force_close.assert_not_called()
+        trader.open_trade.assert_not_called()
+        self.assertEqual(record.call_args.args[2], "CARRIED_POSITION")
 
     async def test_new_session_does_not_close_manual_three_stage_position(self):
         from api.services import trading_control_service as svc

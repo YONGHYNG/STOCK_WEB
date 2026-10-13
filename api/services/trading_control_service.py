@@ -1069,6 +1069,30 @@ async def _check_pending_paper_entry(price: float):
     state.pending_paper_order = None
     if state.paper_account_start_trade_id is None:
         state.paper_account_start_trade_id = trade_id
+    if result.get("manual_scale_in_plan"):
+        full_size = float(result.get("planned_full_size_btc") or 0)
+        first_size = float(result.get("position_size_btc") or 0)
+        add_size = max(0.0, (full_size - first_size) / 2)
+        if add_size > 0:
+            run_key = f"{datetime.now(KST).date().isoformat()}:MANUAL_{trade_id}"
+            _scheduled_analysis_runs[run_key] = {
+                "samples": [],
+                "attempts": 0,
+                "last_analysis_at": 0.0,
+                "pyramid": {
+                    "trade_id": trade_id,
+                    "direction": direction,
+                    "first_entry_price": limit_price,
+                    "original_stop": float(result.get("stop_loss") or 0),
+                    "risk_per_btc": abs(limit_price - float(result.get("stop_loss") or 0)),
+                    "add_size_btc": add_size,
+                    "target_size_btc": full_size,
+                    "next_stage": 2,
+                    "last_add_price": limit_price,
+                    "result": result,
+                    "last_candle_timestamp": 0,
+                },
+            }
     msg = state.add_log(f"[모의 지정가 체결] {direction} #{trade_id}  ${limit_price:,.2f}")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await _send_filled_position_email(result, "PAPER")
@@ -1084,6 +1108,9 @@ async def _expire_pending_order_if_needed(now: Optional[float] = None) -> bool:
         return False
 
     pending_result = _pending_result(pending)
+    if str(pending_result.get("strategy_signal") or "").startswith("MANUAL_"):
+        return False
+
     if pending_result.get("entry_timing") and not str(pending_result.get("strategy_signal", "")).startswith("SCHEDULED_"):
         valid, reason = _entry_timing_check(pending_result, str(pending.get("direction")))
         if not valid:
@@ -1542,7 +1569,11 @@ async def _complete_scheduled_profit_add(
     first_entry = float(pyramid.get("first_entry_price") or 0)
     risk = float(pyramid.get("risk_per_btc") or 0)
     stage = int(pyramid.get("next_stage") or 2)
-    threshold = first_entry + risk * (0.5 if stage == 2 else 1.0) * (1 if direction == "LONG" else -1)
+    planned_key = "second_entry_price" if stage == 2 else "third_entry_price"
+    planned_threshold = float((pyramid.get("result") or {}).get(planned_key) or 0)
+    threshold = planned_threshold or (
+        first_entry + risk * (0.5 if stage == 2 else 1.0) * (1 if direction == "LONG" else -1)
+    )
     favorable = price >= threshold if direction == "LONG" else price <= threshold
     trend_held = (
         close > ema20 if direction == "LONG" and ema20 > 0
@@ -2855,21 +2886,33 @@ async def place_paper_pending_order(payload: PaperPendingOrderPayload):
         return {"ok": False, "error": "방향은 LONG 또는 SHORT만 가능합니다"}
     if paper_trader.is_open:
         return {"ok": False, "error": "이미 진행 중인 모의 포지션이 있습니다"}
+    entry_price = float(payload.entry_price)
+    stop_loss = float(payload.stop_loss)
+    risk_gap = abs(entry_price - stop_loss)
+    scale_direction = 1 if direction == "LONG" else -1
+    full_size = _paper_full_leverage_size(entry_price)
     result = {
         "direction": direction,
-        "entry_price": payload.entry_price,
-        "stop_loss": payload.stop_loss,
+        "entry_price": entry_price,
+        "stop_loss": stop_loss,
         "take_profit_1": payload.take_profit_1,
         "take_profit_2": payload.take_profit_2,
         "strategy_signal": f"MANUAL_{direction}_LIMIT",
         "entry_grade": "A",
-        "reasons": ["사용자가 복원한 모의 지정가 대기 주문"],
-        "position_size_btc": _paper_full_leverage_size(payload.entry_price),
+        "reasons": ["사용자가 지정한 모의 3단계 진입 계획"],
+        "position_size_btc": round(full_size * 0.50, 8),
+        "planned_full_size_btc": full_size,
+        "position_size_percent": 50.0,
+        "entry_stage": 1,
+        "second_entry_price": entry_price + scale_direction * risk_gap * 0.50,
+        "third_entry_price": entry_price + scale_direction * risk_gap,
+        "manual_scale_in_plan": True,
     }
     state.pending_paper_order = {
         "direction": direction,
         "result": result,
-        **_pending_order_timestamps(),
+        "created_at": time.time(),
+        "expires_at": None,
     }
     risk_mgr.record_order_placed()
     msg = state.add_log(

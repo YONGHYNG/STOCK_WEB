@@ -640,6 +640,21 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(state.pending_paper_order)
             trader.open_trade.assert_not_called()
 
+    async def test_manual_paper_limit_order_does_not_expire(self):
+        from api.services import trading_control_service as svc
+        pending = {
+            "direction": "SHORT",
+            "result": {"strategy_signal": "MANUAL_SHORT_LIMIT", "entry_price": 100},
+            "created_at": 1,
+            "expires_at": 2,
+        }
+        state = SimpleNamespace(pending_paper_order=pending, pending_live_order=None)
+        with patch.object(svc, "state", state):
+            expired = await svc._expire_pending_order_if_needed(now=999)
+
+        self.assertFalse(expired)
+        self.assertIs(state.pending_paper_order, pending)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -115,7 +115,9 @@ def send_trade_event_email(event: str, result: dict) -> tuple[bool, str]:
         f"방향: {direction}\n"
         f"진입 비중: {position_share:g}%\n"
         + (f"진입 수량: {size_btc:.8f} BTC\n" if size_btc else "") +
-        f"진입 지정가: {entry:,.2f} USDT\n"
+        f"1차 진입가: {entry:,.2f} USDT\n"
+        + (f"2차 진입가: {second_entry:,.2f} USDT\n" if second_entry else "")
+        + (f"3차 진입가: {third_entry:,.2f} USDT\n" if third_entry else "")
         + (f"손절가: {stop:,.2f} USDT\n" if stop else "손절가: 미설정 (2차 진입 후 활성화)\n") +
         f"1차 익절가: {tp1:,.2f} USDT\n"
         f"참고 목표가(주문 아님): {tp2:,.2f} USDT\n"

@@ -8,9 +8,23 @@
 
 from __future__ import annotations
 
+import math
 from typing import Optional
 import backend.database as db
 from backend.config import MAKER_FEE_RATE, SYMBOL, TAKER_FEE_RATE
+
+
+def is_better_scale_in_price(direction: str, candidate_price: float, average_entry: float) -> bool:
+    """Return whether an add-on fill strictly improves the current average entry."""
+    try:
+        candidate = float(candidate_price)
+        average = float(average_entry)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(candidate) or not math.isfinite(average) or candidate <= 0 or average <= 0:
+        return False
+    side = str(direction or "").upper()
+    return candidate < average if side == "LONG" else candidate > average if side == "SHORT" else False
 
 
 def _net_pnl_pct(direction: str, entry: float, exit_price: float, exit_fee_rate: float = MAKER_FEE_RATE) -> float:
@@ -220,6 +234,13 @@ class PaperTrader:
         added = float(added_size or 0)
         if current_size <= 0 or added <= 0:
             return self._open_id, float(self._open_data.get("entry") or 0)
+        direction = str(self._open_data.get("direction") or "").upper()
+        current_average = float(self._open_data.get("entry") or 0)
+        if not is_better_scale_in_price(direction, fill_price, current_average):
+            raise ValueError(
+                f"{direction or 'UNKNOWN'} 추가 진입가는 현재 평단보다 유리해야 합니다 "
+                f"(평단={current_average}, 후보={fill_price})"
+            )
         total_size = current_size + added
         average = (
             float(self._open_data["entry"]) * current_size + float(fill_price) * added

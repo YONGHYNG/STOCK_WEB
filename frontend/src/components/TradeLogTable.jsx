@@ -44,6 +44,9 @@ export function TradeLogTable({ trades, pendingEntry, currentPrice }) {
   const start = (currentPage - 1) * PAGE_SIZE
   const visibleTrades = sortedTrades.slice(start, start + PAGE_SIZE)
   const showPagination = sortedTrades.length > PAGE_SIZE
+  const pendingStageLabel = pendingEntry?.pending_stage
+    ? `${pendingEntry.pending_stage}차 ${pendingEntry.pending_add_percent ?? 50}%`
+    : '예상 진입가'
   const pagination = showPagination && (
     <div className="pagination">
       <span className="pagination__total">총 {sortedTrades.length}건</span>
@@ -60,13 +63,15 @@ export function TradeLogTable({ trades, pendingEntry, currentPrice }) {
       {pendingEntry && (
         <div className="pending-entry-notice" role="status">
           <span className="pending-entry-notice__badge">
-            {pendingEntry.pending_stage === 2 ? '2차 50% 진입 · 대기중' : '예상 진입가 · 대기중'}
+            {pendingStageLabel} 진입 · 대기중
           </span>
           <strong className={pendingEntry.direction === 'LONG' ? 'tone-long' : 'tone-short'}>
             {pendingEntry.direction}
           </strong>
           <span>
-            지정가 {money(pendingEntry.entry_price)} 체결을 기다리고 있습니다.
+            {pendingEntry.better_than_average
+              ? `${pendingEntry.direction === 'LONG' ? '평단 미만' : '평단 초과'} (${money(pendingEntry.better_than_average)})에서만 추가 진입합니다.`
+              : `지정가 ${money(pendingEntry.entry_price)} 체결을 기다리고 있습니다.`}
             {pendingEntry.expected_average_entry != null && ` · 체결 시 평균단가 ${money(pendingEntry.expected_average_entry)}`}
           </span>
           <span className="pending-entry-notice__price">현재가 {money(currentPrice)}</span>
@@ -105,14 +110,14 @@ export function TradeLogTable({ trades, pendingEntry, currentPrice }) {
             {pendingEntry && (
               <tr className="pending-entry-row">
                 <td>{pendingEntry.mode}</td>
-                <td>{pendingEntry.pending_stage === 2 ? '2차 50% 대기' : '대기중..'}</td>
+                <td>{pendingEntry.pending_stage ? `${pendingStageLabel} 대기` : '대기중..'}</td>
                 <td className={pendingEntry.direction === 'LONG' ? 'tone-long' : 'tone-short'}>{pendingEntry.direction}</td>
                 <td>{money(pendingEntry.entry_price)}</td>
                 <td className="tone-short">{money(pendingEntry.stop_loss)}</td>
                 <td className="tone-long">{money(pendingEntry.take_profit_1)}</td>
                 <td>-</td>
                 <td>-</td>
-                <td className="tone-wait">{pendingEntry.pending_stage === 2 ? '50% 체결대기' : '대기중..'}</td>
+                <td className="tone-wait">{pendingEntry.pending_stage ? `${pendingEntry.pending_add_percent ?? 50}% 체결대기` : '대기중..'}</td>
                 <td>-</td>
               </tr>
             )}

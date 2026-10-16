@@ -38,6 +38,22 @@ def frame_for(side="LONG", structural=False):
 
 
 class EntryTimingTests(unittest.TestCase):
+    def test_scale_in_price_must_strictly_improve_the_current_average(self):
+        from backend.order.paper_trader import PaperTrader, is_better_scale_in_price
+
+        self.assertTrue(is_better_scale_in_price("LONG", 99, 100))
+        self.assertFalse(is_better_scale_in_price("LONG", 100, 100))
+        self.assertFalse(is_better_scale_in_price("LONG", 101, 100))
+        self.assertTrue(is_better_scale_in_price("SHORT", 101, 100))
+        self.assertFalse(is_better_scale_in_price("SHORT", 100, 100))
+        self.assertFalse(is_better_scale_in_price("SHORT", 99, 100))
+
+        trader = PaperTrader()
+        trader._open_id = 77
+        trader._open_data = {"direction": "LONG", "entry": 100.0, "size": 1.0}
+        with self.assertRaises(ValueError):
+            trader.scale_in(100.0, 0.5, {})
+
     def test_entry_timing_uses_sixty_completed_five_minute_bars(self):
         frame = frame_for()
         self.assertEqual(ENTRY_TIMING_LOOKBACK_BARS, 60)
@@ -159,7 +175,7 @@ class EngineTimingTests(unittest.TestCase):
 
 
 class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
-    async def test_profit_add_reprices_stop_and_take_profit_from_final_average(self):
+    async def test_better_price_add_reprices_stop_and_take_profit_from_final_average(self):
         from api.services import trading_control_service as svc
 
         plan = {
@@ -177,11 +193,11 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
             is_open=True, open_id=77,
             open_data={"direction": "LONG", "entry": 1000.0, "size": 2.0, "sl": 500.0},
         )
-        trader.scale_in.return_value = (77, 1083.3333333333333)
+        trader.scale_in.return_value = (77, 966.6666666666666)
         fake_state = SimpleNamespace(
-            last_price=1250.0,
+            last_price=900.0,
             last_result={"diagnostics": {"metrics": {
-                "timestamp": 2, "close": 1250.0, "ema20": 1100.0, "volume_ratio": 1.0,
+                "timestamp": 2, "close": 900.0, "ema20": 850.0, "volume_ratio": 1.0,
             }}},
             add_log=lambda message: message,
         )
@@ -200,6 +216,78 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(average - repriced["stop_loss"], 500.0)
         self.assertAlmostEqual(repriced["take_profit_1"] - average, 600.0)
         self.assertAlmostEqual(repriced["take_profit_2"] - average, 1200.0)
+
+    async def test_add_is_blocked_unless_price_strictly_improves_current_average(self):
+        from api.services import trading_control_service as svc
+
+        for direction, blocked_price, ema20 in (
+            ("LONG", 1000.0, 900.0),
+            ("LONG", 1100.0, 900.0),
+            ("SHORT", 1000.0, 1100.0),
+            ("SHORT", 900.0, 1100.0),
+        ):
+            plan = {
+                "direction": direction, "entry_price": 1000.0,
+                "stop_loss": 500.0 if direction == "LONG" else 1500.0,
+                "take_profit_1": 1600.0 if direction == "LONG" else 400.0,
+                "take_profit_2": 2200.0 if direction == "LONG" else 1.0,
+            }
+            pyramid = {
+                "trade_id": 77, "direction": direction, "first_entry_price": 1000.0,
+                "original_stop": plan["stop_loss"], "risk_per_btc": 500.0,
+                "add_size_btc": 1.0, "target_size_btc": 4.0,
+                "next_stage": 2, "last_add_price": 1000.0,
+                "last_candle_timestamp": 1, "result": plan,
+            }
+            trader = Mock(
+                is_open=True, open_id=77,
+                open_data={"direction": direction, "entry": 1000.0, "size": 2.0},
+            )
+            fake_state = SimpleNamespace(
+                last_price=blocked_price,
+                last_result={"diagnostics": {"metrics": {
+                    "timestamp": 2, "close": blocked_price,
+                    "ema20": ema20, "volume_ratio": 1.0,
+                }}},
+            )
+            with patch.object(svc, "state", fake_state), patch.object(svc, "paper_trader", trader):
+                completed = await svc._complete_scheduled_profit_add(
+                    "2026-10-12", "MORNING", "2026-10-12:MORNING", {"pyramid": pyramid},
+                )
+            self.assertFalse(completed)
+            trader.scale_in.assert_not_called()
+            self.assertEqual(pyramid["last_candle_timestamp"], 1)
+
+    async def test_manual_three_stage_targets_are_better_than_the_first_entry(self):
+        from api.services import trading_control_service as svc
+
+        for direction, stop, expected in (
+            ("LONG", 900.0, (975.0, 950.0)),
+            ("SHORT", 1100.0, (1025.0, 1050.0)),
+        ):
+            fake_state = SimpleNamespace(
+                pending_paper_order=None,
+                add_log=lambda message: message,
+            )
+            payload = SimpleNamespace(
+                direction=direction, entry_price=1000.0, stop_loss=stop,
+                take_profit_1=1200.0 if direction == "LONG" else 800.0,
+                take_profit_2=1400.0 if direction == "LONG" else 600.0,
+            )
+            with patch.object(svc, "state", fake_state), \
+                 patch.object(svc, "paper_trader", Mock(is_open=False)), \
+                 patch.object(svc, "_paper_full_leverage_size", return_value=4.0), \
+                 patch.object(svc, "risk_mgr", Mock()), \
+                 patch.object(svc, "_status_payload", return_value={"pending_entry": {}}), \
+                 patch.object(svc, "manager", SimpleNamespace(broadcast=AsyncMock())), \
+                 patch.object(svc, "_send_trade_event_notification", AsyncMock()):
+                response = await svc.place_paper_pending_order(payload)
+
+            self.assertTrue(response["ok"])
+            plan = fake_state.pending_paper_order["result"]
+            self.assertEqual(
+                (plan["second_entry_price"], plan["third_entry_price"]), expected,
+            )
 
     async def test_scheduled_deadline_forces_one_entry_without_volume_confirmation(self):
         from api.services import trading_control_service as svc

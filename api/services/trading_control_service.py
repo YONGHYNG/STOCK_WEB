@@ -16,7 +16,7 @@ from backend.strategy.backtester import Backtester, BacktestConfig
 from backend.bitget.market_api import BitgetClient
 from backend.bitget.client import BitgetPrivateClient
 import backend.credentials as creds_store
-from backend.order.paper_trader import PaperTrader
+from backend.order.paper_trader import PaperTrader, is_better_scale_in_price
 from backend.notifications import gmail_is_configured, send_trade_event_email
 from backend.power_keepawake import keep_awake
 from backend.risk.risk_manager import RiskManager
@@ -1478,6 +1478,9 @@ async def _complete_scheduled_paper_scale_in(
 
     current = paper_trader.open_data
     fill_price = price
+    current_average = float(current.get("entry") or 0)
+    if not is_better_scale_in_price(direction, fill_price, current_average):
+        return False
     added_size = float(split.get("second_size_btc") or 0)
     current_size = float(current.get("size") or 0)
     total_size = current_size + added_size
@@ -1519,7 +1522,7 @@ async def _complete_scheduled_paper_scale_in(
 
 
 async def _cancel_scheduled_scale_in_after_exit(trade_id: int, result_code: str) -> None:
-    """청산/익절이 시작되면 남은 수익 방향 추가 진입 계획을 제거한다."""
+    """청산/익절이 시작되면 남은 평단 개선 추가 진입 계획을 제거한다."""
     for run_key, analysis_run in list(_scheduled_analysis_runs.items()):
         split = analysis_run.get("pyramid") or analysis_run.get("scale_in") or {}
         if int(split.get("trade_id") or 0) != int(trade_id):
@@ -1529,7 +1532,7 @@ async def _cancel_scheduled_scale_in_after_exit(trade_id: int, result_code: str)
         state.pending_paper_order = None
         detail = (
             f"PAPER 1차 50% #{trade_id} {result_code} 종료 · "
-            "미체결 수익 방향 25%+25% 추가 계획 취소"
+            "미체결 평단 개선 25%+25% 추가 계획 취소"
         )
         record_scheduled_entry_session(
             session_date, session_key, "ENTERED", "PAPER_TRADING", direction, detail
@@ -1546,7 +1549,7 @@ async def _complete_scheduled_profit_add(
     run_key: str,
     analysis_run: dict,
 ) -> bool:
-    """1차 진입이 수익 방향으로 진행했을 때만 25%씩 최대 두 번 추가한다."""
+    """현재 평단보다 유리한 가격에서만 25%씩 최대 두 번 추가한다."""
     pyramid = analysis_run.get("pyramid") or {}
     if not pyramid or not paper_trader.is_open or not paper_trader.open_data:
         return False
@@ -1559,7 +1562,6 @@ async def _complete_scheduled_profit_add(
     timestamp = int(metrics.get("timestamp") or 0)
     if timestamp <= int(pyramid.get("last_candle_timestamp") or 0):
         return False
-    pyramid["last_candle_timestamp"] = timestamp
 
     price = float(state.last_price or metrics.get("close") or 0)
     close = float(metrics.get("close") or price)
@@ -1569,24 +1571,21 @@ async def _complete_scheduled_profit_add(
     first_entry = float(pyramid.get("first_entry_price") or 0)
     risk = float(pyramid.get("risk_per_btc") or 0)
     stage = int(pyramid.get("next_stage") or 2)
+    current_average = float(current.get("entry") or 0)
+    if not is_better_scale_in_price(direction, price, current_average):
+        return False
     planned_key = "second_entry_price" if stage == 2 else "third_entry_price"
     planned_threshold = float((pyramid.get("result") or {}).get(planned_key) or 0)
-    threshold = planned_threshold or (
-        first_entry + risk * (0.5 if stage == 2 else 1.0) * (1 if direction == "LONG" else -1)
-    )
-    favorable = price >= threshold if direction == "LONG" else price <= threshold
+    target_reached = (
+        price <= planned_threshold if direction == "LONG"
+        else price >= planned_threshold
+    ) if planned_threshold > 0 else True
     trend_held = (
         close > ema20 if direction == "LONG" and ema20 > 0
         else close < ema20 if direction == "SHORT" and ema20 > 0
         else False
     )
-    last_add = float(pyramid.get("last_add_price") or first_entry)
-    renewed_extreme = (
-        price >= last_add + risk * 0.25
-        if direction == "LONG"
-        else price <= last_add - risk * 0.25
-    )
-    if not (favorable and trend_held and renewed_extreme and volume_ratio >= 0.65):
+    if not (target_reached and trend_held and volume_ratio >= 0.65):
         return False
 
     added_size = min(
@@ -1633,19 +1632,20 @@ async def _complete_scheduled_profit_add(
         "second_entry_price" if stage == 2 else "third_entry_price": price,
         "average_entry_price": average,
     })
+    pyramid["last_candle_timestamp"] = timestamp
     trade_id, actual_average = paper_trader.scale_in(price, added_size, plan)
     pyramid["last_add_price"] = price
     pyramid["result"] = plan
     if stage == 2:
         pyramid["next_stage"] = 3
         detail = (
-            f"PAPER 수익 확인 2차 25% #{trade_id} · 총 75% · "
+            f"PAPER 평단 개선 2차 25% #{trade_id} · 총 75% · "
             f"평단 ${actual_average:,.2f} · SL ${protected_stop:,.2f}"
         )
     else:
         analysis_run.pop("pyramid", None)
         detail = (
-            f"PAPER 추세 지속 3차 25% #{trade_id} · 총 100% · "
+            f"PAPER 평단 개선 3차 25% #{trade_id} · 총 100% · "
             f"평단 ${actual_average:,.2f} · SL ${protected_stop:,.2f}"
         )
     record_scheduled_entry_session(session_date, session_key, "ENTERED", "PAPER_TRADING", direction, detail)
@@ -1658,7 +1658,7 @@ async def _complete_scheduled_profit_add(
 
 
 async def _check_active_scheduled_scale_in() -> None:
-    """가격 루프에서 수익 방향 50/25/25 추가 진입을 갱신한다."""
+    """가격 루프에서 현재 평단보다 유리한 50/25/25 추가 진입을 갱신한다."""
     for run_key, analysis_run in list(_scheduled_analysis_runs.items()):
         if analysis_run.get("pyramid"):
             session_date, session_key = run_key.split(":", 1)
@@ -1676,7 +1676,7 @@ async def _check_active_scheduled_scale_in() -> None:
 
 
 def _restore_open_scheduled_scale_in() -> bool:
-    """재시작 후에도 수익 방향 50/25/25 추가 진입 계획을 복구한다."""
+    """재시작 후에도 평단 개선 50/25/25 추가 진입 계획을 복구한다."""
     if not paper_trader.is_open or not paper_trader.open_data:
         return False
     current = paper_trader.open_data
@@ -2077,7 +2077,7 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
             "attempts": 0, "samples": [],
         },
     )
-    # 이미 시작한 50/25/25 피라미딩은 세션 종료 후에도 별도 루프가 추적한다.
+    # 이미 시작한 50/25/25 평단 개선 계획은 세션 종료 후에도 별도 루프가 추적한다.
     if run.get("pyramid"):
         return False
 
@@ -2301,8 +2301,8 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         plan["reasons"] = [
             f"고정 진입 세션 {session_key}: 하루 2회 중 1회",
             *list(result.get("reasons") or []),
-            "1차 50% 진입 · 손실 방향 추가 진입 금지",
-            "+0.5R 논리 유지 시 25%, +1.0R 고점/저점 갱신 시 25% 추가",
+            "1차 50% 진입 · 롱은 현재 평단 미만, 숏은 현재 평단 초과에서만 추가",
+            "추세·거래량 조건 유지 시 더 좋은 가격에서 25%씩 최대 두 번 추가",
         ]
         trade_id = paper_trader.open_trade(direction, plan)
         if state.paper_account_start_trade_id is None:
@@ -2525,7 +2525,7 @@ async def startup_event():
         state.plan_trade_data = _trade_data_from_row(existing_plan)
     paper_trader.restore_from_db()
     if _restore_open_scheduled_scale_in():
-        state.add_log("[자동 복구] 기존 잔여 50% 계획 유지 · 더 좋은 가격 조건 계속 추적")
+        state.add_log("[자동 복구] 기존 추가 진입 계획 유지 · 현재 평단보다 좋은 가격만 추적")
     await _reconcile_missed_exits()
     # 복구한 포지션의 실제 체결 수량을 유지한다. 재시작이 50%를 100%로 늘리면 안 된다.
     restored_losses = _recent_consecutive_paper_losses()
@@ -2589,6 +2589,45 @@ def _status_payload() -> dict:
 def _pending_entry_payload() -> Optional[dict]:
     now = time.time()
     for analysis_run in _scheduled_analysis_runs.values():
+        pyramid = analysis_run.get("pyramid") or {}
+        if (
+            pyramid
+            and paper_trader.open_data
+            and int(pyramid.get("trade_id") or 0) == int(paper_trader.open_id or 0)
+        ):
+            current = paper_trader.open_data
+            direction = str(pyramid.get("direction") or current.get("direction") or "HOLD")
+            current_average = float(current.get("entry") or 0)
+            stage = int(pyramid.get("next_stage") or 2)
+            result = pyramid.get("result") or {}
+            planned_key = "second_entry_price" if stage == 2 else "third_entry_price"
+            planned_threshold = float(result.get(planned_key) or 0)
+            threshold = planned_threshold or current_average
+            current_size = float(current.get("size") or 0)
+            added_size = min(
+                float(pyramid.get("add_size_btc") or 0),
+                max(0.0, float(pyramid.get("target_size_btc") or 0) - current_size),
+            )
+            expected_average = None
+            if planned_threshold > 0 and current_size + added_size > 0:
+                expected_average = (
+                    current_average * current_size + planned_threshold * added_size
+                ) / (current_size + added_size)
+            return {
+                "mode": "PAPER · 평단 개선 대기",
+                "direction": direction,
+                "entry_price": threshold or None,
+                "stop_loss": current.get("sl") or result.get("stop_loss"),
+                "take_profit_1": current.get("tp1") or result.get("take_profit_1"),
+                "take_profit_2": current.get("tp2") or result.get("take_profit_2"),
+                "position_size_percent": current.get("position_size_percent"),
+                "filled_percent": current.get("position_size_percent"),
+                "pending_stage": stage,
+                "pending_add_percent": 25,
+                "better_than_average": current_average,
+                "expected_average_entry": expected_average,
+                "remaining_seconds": None,
+            }
         split = analysis_run.get("scale_in") or {}
         if not split:
             continue
@@ -2623,6 +2662,8 @@ def _pending_entry_payload() -> Optional[dict]:
             "position_size_percent": 50,
             "filled_percent": 50,
             "pending_stage": 2,
+            "pending_add_percent": 50,
+            "better_than_average": float(current.get("entry") or 0) or None,
             "expected_average_entry": average,
             "remaining_seconds": None,
         }
@@ -2916,8 +2957,8 @@ async def place_paper_pending_order(payload: PaperPendingOrderPayload):
         "planned_full_size_btc": full_size,
         "position_size_percent": 50.0,
         "entry_stage": 1,
-        "second_entry_price": entry_price + scale_direction * risk_gap * 0.50,
-        "third_entry_price": entry_price + scale_direction * risk_gap,
+        "second_entry_price": entry_price - scale_direction * risk_gap * 0.25,
+        "third_entry_price": entry_price - scale_direction * risk_gap * 0.50,
         "manual_scale_in_plan": True,
     }
     state.pending_paper_order = {

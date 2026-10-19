@@ -152,7 +152,8 @@ export function StrategySetting({ settings, onSaved }) {
       <div className="settings-summary">
         <div className="settings-summary__title">지금 설정을 말로 풀면</div>
         <ul className="settings-summary__list">
-          <li>확정 진입 신호가 나온 뒤 리스크 검사를 통과할 때만, 최대 <b>{form.max_leverage}배</b> 레버리지로 <b>{form.order_size_btc} BTC</b>씩 자동 진입해요</li>
+          <li>모의매매는 <b>20배</b> 레버리지로 계좌 증거금의 <b>50%</b>를 1차 진입하고, 더 좋은 가격에서 <b>25%씩 두 번</b> 추가해요</li>
+          <li>실거래는 리스크 검사를 통과할 때 최대 <b>{form.max_leverage}배</b>, <b>{form.order_size_btc} BTC</b> 기준으로 진입해요</li>
           <li>한 번에 <b>{form.max_loss_pct}%</b> 넘게 잃거나 하루 합계로 <b>{form.daily_max_loss_pct}%</b> 잃으면 그날은 더 이상 진입하지 않아요</li>
           <li>손실이 <b>{form.consecutive_loss_limit}번</b> 연속되면 잠시 멈추고, 다음 진입까지는 <b>{minutesLabel(form.reentry_wait_seconds)}</b> 기다려요</li>
           <li>손절 후 자동 마감·누락 복구·원인 분석은 <b>{form.auto_stop_loss_analysis ? '켜짐' : '꺼짐'}</b> 상태예요</li>

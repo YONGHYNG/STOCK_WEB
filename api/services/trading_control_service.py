@@ -153,21 +153,29 @@ def _paper_full_leverage_size(entry_price: float) -> float:
     return round(notional / entry, 8)
 
 
-def _paper_risk_position_size(entry_price: float, stop_loss: float) -> float:
-    """20배 레버리지는 유지하되 설정된 계좌 위험액으로 총 수량을 계산한다."""
-    entry = float(entry_price or 0)
-    stop = float(stop_loss or 0)
-    risk_per_btc = abs(entry - stop)
-    if entry <= 0 or stop <= 0 or risk_per_btc <= 0:
-        return 0.0
-    account = get_paper_account(PAPER_ACCOUNT_INITIAL_BALANCE, PAPER_ACCOUNT_LEVERAGE)
-    balance = max(0.0, float(account["balance"]))
-    risk_amount = balance * max(0.0, float(risk_cfg.risk_per_trade_pct)) / 100
-    # 손절은 시장가 체결될 수 있으므로 진입 maker + 청산 taker 수수료를 최악값으로 반영한다.
-    fee_per_btc = entry * (float(MAKER_FEE_RATE) + float(TAKER_FEE_RATE))
-    size = risk_amount / (risk_per_btc + fee_per_btc)
-    leverage_cap = balance * PAPER_ACCOUNT_LEVERAGE / entry
-    return round(max(0.0, min(size, leverage_cap)), 8)
+def _paper_three_stage_plan(result: dict) -> dict:
+    """PAPER 신규 진입을 계좌 증거금 50%/25%/25%의 세 단계로 고정한다."""
+    plan = dict(result)
+    entry = float(plan.get("entry_price") or 0)
+    full_size = _paper_full_leverage_size(entry)
+    total_notional = full_size * entry
+    direction = str(plan.get("direction") or "").upper()
+    stop = float(plan.get("stop_loss") or 0)
+    risk_gap = abs(entry - stop) if entry > 0 and stop > 0 else 0.0
+    scale_direction = 1 if direction == "LONG" else -1
+    plan.update({
+        "position_size_btc": round(full_size * 0.50, 8),
+        "planned_full_size_btc": full_size,
+        "planned_total_notional_usdt": total_notional,
+        "planned_add_notional_usdt": total_notional * 0.25,
+        "position_size_percent": 50.0,
+        "entry_stage": 1,
+        "paper_scale_in_plan": True,
+    })
+    if risk_gap > 0 and direction in ("LONG", "SHORT"):
+        plan.setdefault("second_entry_price", entry - scale_direction * risk_gap * 0.25)
+        plan.setdefault("third_entry_price", entry - scale_direction * risk_gap * 0.50)
+    return plan
 
 
 def _is_range_result(result: Optional[dict]) -> bool:
@@ -883,8 +891,7 @@ async def _refresh_pending_paper_order(direction: str, result: dict):
     new_entry = float(result.get("entry_price") or 0)
     if old_entry == new_entry:
         return
-    paper_result = dict(result)
-    paper_result["position_size_btc"] = _paper_full_leverage_size(new_entry)
+    paper_result = _paper_three_stage_plan(result)
     state.pending_paper_order = {
         "direction": direction,
         "result": paper_result,
@@ -945,10 +952,7 @@ async def _auto_paper_trade(direction: str, r: dict):
     if paper_trader.is_open or state.pending_paper_order:
         return False
 
-    paper_result = dict(r)
-    paper_result["position_size_btc"] = _paper_full_leverage_size(
-        float(paper_result.get("entry_price") or 0)
-    )
+    paper_result = _paper_three_stage_plan(r)
     state.pending_paper_order = {
         "direction": direction,
         "result": paper_result,
@@ -1034,12 +1038,14 @@ async def _check_pending_paper_entry(price: float):
     state.pending_paper_order = None
     if state.paper_account_start_trade_id is None:
         state.paper_account_start_trade_id = trade_id
-    if result.get("manual_scale_in_plan"):
+    if result.get("paper_scale_in_plan") or result.get("manual_scale_in_plan"):
         full_size = float(result.get("planned_full_size_btc") or 0)
         first_size = float(result.get("position_size_btc") or 0)
+        add_notional = float(result.get("planned_add_notional_usdt") or 0)
         add_size = max(0.0, (full_size - first_size) / 2)
-        if add_size > 0:
-            run_key = f"{datetime.now(KST).date().isoformat()}:MANUAL_{trade_id}"
+        if add_notional > 0 or add_size > 0:
+            source = "MANUAL" if result.get("manual_scale_in_plan") else "AUTO"
+            run_key = f"{datetime.now(KST).date().isoformat()}:{source}_{trade_id}"
             _scheduled_analysis_runs[run_key] = {
                 "samples": [],
                 "attempts": 0,
@@ -1051,6 +1057,7 @@ async def _check_pending_paper_entry(price: float):
                     "original_stop": float(result.get("stop_loss") or 0),
                     "risk_per_btc": abs(limit_price - float(result.get("stop_loss") or 0)),
                     "add_size_btc": add_size,
+                    "add_notional_usdt": add_notional,
                     "target_size_btc": full_size,
                     "next_stage": 2,
                     "last_add_price": limit_price,
@@ -1553,10 +1560,17 @@ async def _complete_scheduled_profit_add(
     if not (target_reached and trend_held and volume_ratio >= 0.65):
         return False
 
-    added_size = min(
-        float(pyramid.get("add_size_btc") or 0),
-        max(0.0, float(pyramid.get("target_size_btc") or 0) - float(current.get("size") or 0)),
-    )
+    add_notional = float(pyramid.get("add_notional_usdt") or 0)
+    if add_notional > 0 and price > 0:
+        # 2·3차는 BTC 수량이 아니라 최초 계좌의 25% 명목금액을 고정한다.
+        # 따라서 체결 가격이 달라도 실제 증거금 비중은 정확히 25%다.
+        added_size = round(add_notional / price, 8)
+    else:
+        # 재시작 전 생성된 구형 계획과의 호환 경로.
+        added_size = min(
+            float(pyramid.get("add_size_btc") or 0),
+            max(0.0, float(pyramid.get("target_size_btc") or 0) - float(current.get("size") or 0)),
+        )
     if added_size <= 0:
         analysis_run.pop("pyramid", None)
         return False
@@ -1706,8 +1720,11 @@ def _restore_open_scheduled_scale_in() -> bool:
     current_size = float(current.get("size") or row.get("size_btc") or 0)
     if current_size <= 0 or position_percent <= 0:
         return False
+    current_notional = current_size * entry
+    total_notional = current_notional / (position_percent / 100)
+    add_notional = total_notional * 0.25
     target_size = current_size / (position_percent / 100)
-    add_size = target_size * 0.25
+    add_size = add_notional / entry
     analysis_run["pyramid"] = {
         "trade_id": int(paper_trader.open_id or row.get("id") or 0),
         "direction": direction,
@@ -1715,6 +1732,7 @@ def _restore_open_scheduled_scale_in() -> bool:
         "original_stop": planned_stop,
         "risk_per_btc": abs(entry - planned_stop),
         "add_size_btc": add_size,
+        "add_notional_usdt": add_notional,
         "target_size_btc": target_size,
         "next_stage": 2 if position_percent <= 50 else 3,
         "last_add_price": entry,
@@ -1932,65 +1950,43 @@ async def _execute_legacy_scheduled_entry(session_date: str, session_key: str) -
         f"고정 진입 세션 {session_key}: 최신 분석 {len(consensus_inputs)}회 후 의무 진입",
         f"타점 판정: {timing_status} · {timing_reason}",
         f"다중 시간봉·확률·추세 합산 점수 {consensus_score:+.2f} → {direction}",
-        "총 주문계획 100% (애매한 신호는 가격 기준 50%+50% 분할)",
+        "총 주문계획 100% (계좌 증거금 기준 50%+25%+25% 분할)",
         f"ATR 기반 손절, 목표 손익비 1:{float(forced.get('risk_reward_ratio') or 0):.1f}",
         (
             f"최근 {SCHEDULED_STABLE_SIGNAL_SAMPLES}회 중 {SCHEDULED_REQUIRED_MATCHING_SAMPLES}회 적격 신호가 {confirmed_direction}으로 일치해 단타 진입"
             if confirmed
-            else "적격 신호 미확정: 누적 우세 방향으로 1차 50% 진입 후 가격 기준 2차 대기"
+            else "적격 신호 미확정: 누적 우세 방향으로 1차 50% 진입 후 25%씩 추가 대기"
         ),
     ]
     forced = apply_scheduled_entry_offset(forced, risk_cfg)
     if mode == "PAPER_TRADING":
-        full_size = _paper_full_leverage_size(forced["entry_price"])
-        if force_entry_due:
-            # 마감 시 50%만 진입하고, 완성 5분봉에서 거래량 급증 후
-            # 25~60% 조정·거래량 축소·재출발이 확인될 때 잔여 50%를 추가한다.
-            first_size = round(full_size * 0.5, 8)
-            second_size = round(full_size - first_size, 8)
-            first_plan = dict(forced)
-            first_plan.update({
-                "entry_price": float(forced["entry_price"]),
-                "stop_loss": None,
-                "position_size_btc": first_size,
-                "position_size_percent": 50.0,
-                "entry_stage": 1,
-            })
-            first_plan["reasons"] = list(forced["reasons"]) + [
-                "마감 1차 50% 진입, 거래량 급증 후 25~60% 조정·재출발 시 2차 50%",
-                "1차 50%는 손절 없이 익절가만 활성화, 2차 체결 후 최초 손절가 활성화",
-            ]
-            trade_id = paper_trader.open_trade(direction, first_plan)
-            if state.paper_account_start_trade_id is None:
-                state.paper_account_start_trade_id = trade_id
-            impulse, last_candle_timestamp = _initial_scheduled_impulse(consensus_inputs, direction)
-            analysis_run["scale_in"] = {
-                "trade_id": trade_id,
-                "direction": direction,
-                "first_entry_price": float(forced["entry_price"]),
-                "second_size_btc": second_size,
-                "result": forced,
-                "impulse": impulse,
-                "pullback": None,
-                "last_candle_timestamp": last_candle_timestamp,
-            }
-            risk_mgr.record_order_placed()
-            msg = state.add_log(
-                f"[고정 진입 {session_key}] {direction} 1차 50% #{trade_id} "
-                f"${forced['entry_price']:,.2f} · 2차 동적 조정·재출발 대기 · "
-                f"1차는 손절 없음 · TP1만 활성화"
-            )
-            await manager.broadcast({"type": "log", "data": {"message": msg}})
-            await _send_filled_position_email(first_plan, "PAPER")
-            await manager.broadcast({"type": "trade_update"})
-            await manager.broadcast({"type": "status", "data": _status_payload()})
-            return False
-        forced["position_size_btc"] = round(full_size, 8)
-        trade_id = paper_trader.open_trade(direction, forced)
+        plan = _paper_three_stage_plan(forced)
+        trade_id = paper_trader.open_trade(direction, plan)
         if state.paper_account_start_trade_id is None:
             state.paper_account_start_trade_id = trade_id
-        detail = f"PAPER 현재가 체결 #{trade_id} @ ${forced['entry_price']:,.2f}"
-        await _send_filled_position_email(forced, "PAPER")
+        analysis_run["pyramid"] = {
+            "trade_id": trade_id,
+            "direction": direction,
+            "first_entry_price": float(plan["entry_price"]),
+            "original_stop": float(plan["stop_loss"]),
+            "risk_per_btc": abs(float(plan["entry_price"]) - float(plan["stop_loss"])),
+            "add_size_btc": float(plan["planned_full_size_btc"]) * 0.25,
+            "add_notional_usdt": float(plan["planned_add_notional_usdt"]),
+            "target_size_btc": float(plan["planned_full_size_btc"]),
+            "next_stage": 2,
+            "last_add_price": float(plan["entry_price"]),
+            "last_candle_timestamp": 0,
+            "result": plan,
+        }
+        detail = f"PAPER 1차 50% #{trade_id} @ ${plan['entry_price']:,.2f} · 25%+25% 대기"
+        risk_mgr.record_order_placed()
+        record_scheduled_entry_session(session_date, session_key, "ENTERED", mode, direction, detail)
+        msg = state.add_log(f"[고정 진입 {session_key}] {direction} {detail}")
+        await manager.broadcast({"type": "log", "data": {"message": msg}})
+        await _send_filled_position_email(plan, "PAPER")
+        await manager.broadcast({"type": "trade_update"})
+        await manager.broadcast({"type": "status", "data": _status_payload()})
+        return True
     elif mode == "LIVE_TRADING":
         size_value = float(risk_cfg.order_size_btc)
         size = f"{size_value:.8f}".rstrip("0").rstrip(".")
@@ -2252,17 +2248,15 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         return False
 
     if mode == "PAPER_TRADING":
-        full_size = _paper_risk_position_size(result["entry_price"], result["stop_loss"])
-        first_size = round(full_size * 0.50, 8)
+        # 비중은 계좌 증거금 기준이다. 잔액 $100, 20배라면 전체 계획은
+        # $2,000 명목가치이고 1차 50%는 증거금 $50 = $1,000 명목가치다.
+        plan = _paper_three_stage_plan(result)
+        full_size = float(plan["planned_full_size_btc"])
+        first_size = float(plan["position_size_btc"])
         add_size = round(full_size * 0.25, 8)
+        add_notional = float(plan["planned_add_notional_usdt"])
         if first_size <= 0 or add_size <= 0:
             return False
-        plan = dict(result)
-        plan.update({
-            "position_size_btc": first_size,
-            "position_size_percent": 50.0,
-            "entry_stage": 1,
-        })
         plan["reasons"] = [
             f"고정 진입 세션 {session_key}: 하루 2회 중 1회",
             *list(result.get("reasons") or []),
@@ -2279,6 +2273,7 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
             "original_stop": float(plan["stop_loss"]),
             "risk_per_btc": abs(float(plan["entry_price"]) - float(plan["stop_loss"])),
             "add_size_btc": add_size,
+            "add_notional_usdt": add_notional,
             "target_size_btc": full_size,
             "next_stage": 2,
             "last_add_price": float(plan["entry_price"]),
@@ -2569,10 +2564,14 @@ def _pending_entry_payload() -> Optional[dict]:
             planned_threshold = float(result.get(planned_key) or 0)
             threshold = planned_threshold or current_average
             current_size = float(current.get("size") or 0)
-            added_size = min(
-                float(pyramid.get("add_size_btc") or 0),
-                max(0.0, float(pyramid.get("target_size_btc") or 0) - current_size),
-            )
+            add_notional = float(pyramid.get("add_notional_usdt") or 0)
+            if add_notional > 0 and threshold > 0:
+                added_size = add_notional / threshold
+            else:
+                added_size = min(
+                    float(pyramid.get("add_size_btc") or 0),
+                    max(0.0, float(pyramid.get("target_size_btc") or 0) - current_size),
+                )
             expected_average = None
             if planned_threshold > 0 and current_size + added_size > 0:
                 expected_average = (
@@ -2906,10 +2905,7 @@ async def place_paper_pending_order(payload: PaperPendingOrderPayload):
         return {"ok": False, "error": "이미 진행 중인 모의 포지션이 있습니다"}
     entry_price = float(payload.entry_price)
     stop_loss = float(payload.stop_loss)
-    risk_gap = abs(entry_price - stop_loss)
-    scale_direction = 1 if direction == "LONG" else -1
-    full_size = _paper_full_leverage_size(entry_price)
-    result = {
+    result = _paper_three_stage_plan({
         "direction": direction,
         "entry_price": entry_price,
         "stop_loss": stop_loss,
@@ -2918,14 +2914,8 @@ async def place_paper_pending_order(payload: PaperPendingOrderPayload):
         "strategy_signal": f"MANUAL_{direction}_LIMIT",
         "entry_grade": "A",
         "reasons": ["사용자가 지정한 모의 3단계 진입 계획"],
-        "position_size_btc": round(full_size * 0.50, 8),
-        "planned_full_size_btc": full_size,
-        "position_size_percent": 50.0,
-        "entry_stage": 1,
-        "second_entry_price": entry_price - scale_direction * risk_gap * 0.25,
-        "third_entry_price": entry_price - scale_direction * risk_gap * 0.50,
         "manual_scale_in_plan": True,
-    }
+    })
     state.pending_paper_order = {
         "direction": direction,
         "result": result,

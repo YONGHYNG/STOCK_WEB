@@ -175,6 +175,69 @@ class EngineTimingTests(unittest.TestCase):
 
 
 class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
+    def test_paper_full_size_uses_the_entire_margin_at_twenty_times_leverage(self):
+        from api.services import trading_control_service as svc
+
+        with patch.object(svc, "get_paper_account", return_value={"balance": 100.0}):
+            full_size = svc._paper_full_leverage_size(80_000.0)
+
+        self.assertEqual(full_size, 0.025)
+        self.assertEqual(round(full_size * 0.50, 8), 0.0125)
+        self.assertEqual(80_000.0 * full_size * 0.50 / 20, 50.0)
+
+    def test_every_paper_entry_starts_with_fifty_then_reserves_two_twenty_fives(self):
+        from api.services import trading_control_service as svc
+
+        with patch.object(svc, "_paper_full_leverage_size", return_value=0.025):
+            plan = svc._paper_three_stage_plan({
+                "direction": "LONG", "entry_price": 80_000.0, "stop_loss": 79_600.0,
+            })
+
+        self.assertEqual(plan["position_size_percent"], 50.0)
+        self.assertEqual(plan["position_size_btc"], 0.0125)
+        self.assertEqual(plan["planned_total_notional_usdt"], 2_000.0)
+        self.assertEqual(plan["planned_add_notional_usdt"], 500.0)
+        self.assertTrue(plan["paper_scale_in_plan"])
+
+    async def test_additional_entry_keeps_exact_twenty_five_percent_notional(self):
+        from api.services import trading_control_service as svc
+
+        plan = {
+            "direction": "LONG", "entry_price": 80_000.0,
+            "stop_loss": 79_600.0, "take_profit_1": 80_500.0,
+            "second_entry_price": 79_900.0,
+        }
+        analysis_run = {"pyramid": {
+            "trade_id": 77, "direction": "LONG", "first_entry_price": 80_000.0,
+            "risk_per_btc": 400.0, "add_notional_usdt": 500.0,
+            "next_stage": 2, "last_candle_timestamp": 1, "result": plan,
+        }}
+        trader = Mock(
+            is_open=True, open_id=77,
+            open_data={"direction": "LONG", "entry": 80_000.0, "size": 0.0125},
+        )
+        trader.scale_in.return_value = (77, 79_966.6389)
+        fake_state = SimpleNamespace(
+            last_price=79_900.0,
+            last_result={"diagnostics": {"metrics": {
+                "timestamp": 2, "close": 79_900.0, "ema20": 79_800.0, "volume_ratio": 1.0,
+            }}},
+            add_log=lambda message: message,
+        )
+        with patch.object(svc, "state", fake_state), patch.object(svc, "paper_trader", trader), \
+             patch.object(svc, "record_scheduled_entry_session"), \
+             patch.object(svc, "_status_payload", return_value={}), \
+             patch.object(svc, "manager", SimpleNamespace(broadcast=AsyncMock())), \
+             patch.object(svc, "_send_trade_event_notification", AsyncMock()):
+            completed = await svc._complete_scheduled_profit_add(
+                "2026-10-20", "AUTO_77", "2026-10-20:AUTO_77", analysis_run,
+            )
+
+        self.assertTrue(completed)
+        fill_price, added_size, _ = trader.scale_in.call_args.args
+        self.assertEqual(fill_price, 79_900.0)
+        self.assertAlmostEqual(fill_price * added_size, 500.0, places=3)
+
     async def test_paper_tp1_closes_the_entire_position_at_the_target(self):
         from api.services import trading_control_service as svc
 
@@ -339,7 +402,7 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
              patch.object(svc, "_worker_analyze", return_value=(result, [])), \
              patch.object(svc, "seconds_until_session_end", return_value=590) as remaining, \
              patch.object(svc, "get_recent_candles", return_value=[]), \
-             patch.object(svc, "_paper_risk_position_size", return_value=.02), \
+             patch.object(svc, "_paper_full_leverage_size", return_value=.02), \
              patch.object(svc, "record_scheduled_entry_session"), \
              patch.object(svc, "risk_mgr", risk), \
              patch.object(svc, "_status_payload", return_value={}), \
@@ -355,6 +418,7 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
         direction, plan = trader.open_trade.call_args.args
         self.assertEqual(direction, "LONG")
         self.assertEqual(plan["position_size_percent"], 50)
+        self.assertEqual(plan["position_size_btc"], .01)
         self.assertIsNotNone(plan["stop_loss"])
 
     async def test_new_session_keeps_previous_position_when_direction_matches(self):
@@ -385,7 +449,7 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
              patch.object(svc, "_worker_analyze", return_value=(result, [])), \
              patch.object(svc, "seconds_until_session_end", return_value=30), \
              patch.object(svc, "get_recent_candles", return_value=[]), \
-             patch.object(svc, "_paper_risk_position_size", return_value=.02), \
+             patch.object(svc, "_paper_full_leverage_size", return_value=.02), \
              patch.object(svc, "_cancel_scheduled_scale_in_after_exit", AsyncMock()), \
              patch.object(svc, "risk_mgr", risk), \
              patch.object(svc, "record_scheduled_entry_session") as record, \

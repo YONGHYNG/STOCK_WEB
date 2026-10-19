@@ -600,8 +600,8 @@ class TradingMainWindow(QMainWindow):
         specs = [
             ("entry", "진입가"),
             ("stop",  "손절가"),
-            ("tp1",   "1차 익절가"),
-            ("tp2",   "참고 목표가"),
+            ("tp1",   "익절가 · 전량청산"),
+            ("tp2",   "미사용 목표가"),
             ("rr",    "손익비"),
         ]
         for key, title in specs:
@@ -987,7 +987,7 @@ class TradingMainWindow(QMainWindow):
     def _make_trade_table(self) -> QTableWidget:
         cols = [
             "구분", "진입시각", "방향", "진입가", "손절가",
-            "전량 익절", "참고 목표", "청산가", "결과",
+            "익절 · 전량청산", "미사용 목표", "청산가", "결과",
             "수익률(%)", "진입이유", "수익이유", "손실이유",
         ]
         tbl = QTableWidget(0, len(cols))

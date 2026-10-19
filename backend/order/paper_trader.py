@@ -188,15 +188,11 @@ class PaperTrader:
         # 구조적 손절은 1차 50% 진입 순간부터 활성화한다.
         sl  = t.get("sl")
         tp1 = t.get("tp1")
-        tp2 = t.get("tp2")
-
         if direction == "LONG":
-            if tp1 and not t.get("tp1_taken") and price >= tp1: return "TP1_PARTIAL"
-            if tp2 and t.get("tp1_taken") and not t.get("tp2_taken") and price >= tp2: return "TP2_PARTIAL"
+            if tp1 and price >= tp1: return "TP1"
             if sl  and price <= sl:    return "SL"
         elif direction == "SHORT":
-            if tp1 and not t.get("tp1_taken") and price <= tp1: return "TP1_PARTIAL"
-            if tp2 and t.get("tp1_taken") and not t.get("tp2_taken") and price <= tp2: return "TP2_PARTIAL"
+            if tp1 and price <= tp1: return "TP1"
             if sl  and price >= sl:    return "SL"
         return None
 

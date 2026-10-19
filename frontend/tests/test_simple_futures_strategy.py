@@ -378,7 +378,7 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual((stop, tp1, tp2), (89.0, 100.0, 110.0))
         self.assertGreater(rr, 1.0)
 
-    def test_reference_target_never_replaces_full_exit_target(self):
+    def test_tp1_is_the_only_full_exit_target(self):
         trader = PaperTrader()
         trader._open_id = 1
         trader._open_data = {
@@ -388,7 +388,7 @@ class StrategyTests(unittest.TestCase):
             "tp1": 110.0,
             "tp2": 120.0,
         }
-        self.assertEqual(trader.check_tp_sl(125.0), "TP1_PARTIAL")
+        self.assertEqual(trader.check_tp_sl(125.0), "TP1")
 
     def test_first_half_position_is_protected_immediately(self):
         trader = PaperTrader()
@@ -401,12 +401,12 @@ class StrategyTests(unittest.TestCase):
 
         self.assertEqual(trader.check_tp_sl(85.0), "SL")
         trader._open_data["tp1_taken"] = False
-        self.assertEqual(trader.check_tp_sl(110.0), "TP1_PARTIAL")
+        self.assertEqual(trader.check_tp_sl(110.0), "TP1")
 
         trader._open_data.update(position_size_percent=100.0, entry_stage=2)
         self.assertEqual(trader.check_tp_sl(85.0), "SL")
 
-    def test_partial_targets_leave_a_trailing_remainder(self):
+    def test_tp1_signal_ignores_second_target_and_closes_in_one_step(self):
         trader = PaperTrader()
         trader._open_id = 1
         trader._open_data = {
@@ -416,15 +416,9 @@ class StrategyTests(unittest.TestCase):
             "partial_realized_pnl": 0.0, "tp1_taken": False, "tp2_taken": False,
             "position_size_percent": 100.0, "entry_stage": 3,
         }
-        with patch("backend.order.paper_trader.db.record_paper_partial_exit"):
-            self.assertEqual(trader.check_tp_sl(110.0), "TP1_PARTIAL")
-            trader.take_partial(110.0, "TP1")
-            self.assertAlmostEqual(trader.open_data["remaining_size"], 0.65)
-            self.assertEqual(trader.open_data["sl"], 100.0)
-            self.assertEqual(trader.check_tp_sl(120.0), "TP2_PARTIAL")
-            trader.take_partial(120.0, "TP2")
-            self.assertAlmostEqual(trader.open_data["remaining_size"], 0.30)
-            self.assertEqual(trader.open_data["sl"], 110.0)
+        self.assertEqual(trader.check_tp_sl(110.0), "TP1")
+        self.assertEqual(trader.check_tp_sl(120.0), "TP1")
+        self.assertEqual(trader.open_data["remaining_size"], 1.0)
 
     def test_entry_grade_uses_real_score_bands(self):
         self.assertEqual(TradingAIEngine._entry_grade(80.0), "A")

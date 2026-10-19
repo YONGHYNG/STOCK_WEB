@@ -156,7 +156,7 @@ export function StrategySetting({ settings, onSaved }) {
           <li>한 번에 <b>{form.max_loss_pct}%</b> 넘게 잃거나 하루 합계로 <b>{form.daily_max_loss_pct}%</b> 잃으면 그날은 더 이상 진입하지 않아요</li>
           <li>손실이 <b>{form.consecutive_loss_limit}번</b> 연속되면 잠시 멈추고, 다음 진입까지는 <b>{minutesLabel(form.reentry_wait_seconds)}</b> 기다려요</li>
           <li>손절 후 자동 마감·누락 복구·원인 분석은 <b>{form.auto_stop_loss_analysis ? '켜짐' : '꺼짐'}</b> 상태예요</li>
-          <li>진입가 기준 손절 간격은 <b>{form.stop_gap_min_usdt}~{form.stop_gap_max_usdt} USDT</b>, 전량 매도 간격은 <b>{form.take_profit_1_min_usdt}~{form.take_profit_1_max_usdt} USDT</b>, 추가 참고 목표는 <b>{form.take_profit_2_usdt} USDT</b>예요</li>
+          <li>진입가 기준 손절 간격은 <b>{form.stop_gap_min_usdt}~{form.stop_gap_max_usdt} USDT</b>, 익절 전량청산 간격은 <b>{form.take_profit_1_min_usdt}~{form.take_profit_1_max_usdt} USDT</b>예요</li>
           <li>실거래 주문은 지금 <b className={form.live_trading_allowed ? 'tone-short' : 'tone-long'}>{form.live_trading_allowed ? '허용됨 (실제 돈이 움직여요)' : '차단됨 (신호만 보여줘요)'}</b></li>
         </ul>
       </div>

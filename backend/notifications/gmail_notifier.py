@@ -93,7 +93,6 @@ def send_trade_event_email(event: str, result: dict) -> tuple[bool, str]:
     entry = float(result.get("entry_price") or 0)
     stop = float(result.get("stop_loss") or 0)
     tp1 = float(result.get("take_profit_1") or 0)
-    tp2 = float(result.get("take_profit_2") or 0)
     exit_price = float(result.get("exit_price") or 0)
     pnl_pct = result.get("pnl_pct")
     mode = str(result.get("mode") or result.get("trade_type") or "").upper()
@@ -107,7 +106,7 @@ def send_trade_event_email(event: str, result: dict) -> tuple[bool, str]:
     average_entry = float(result.get("average_entry_price") or entry)
     if direction not in ("LONG", "SHORT") or not entry:
         return False, "포지션 방향 또는 진입 가격이 완성되지 않음"
-    if event in ("PENDING", "ENTRY") and (not tp1 or not tp2 or (entry_stage >= 2 and not stop)):
+    if event in ("PENDING", "ENTRY") and (not tp1 or (entry_stage >= 2 and not stop)):
         return False, "포지션 또는 진입·손절·익절 가격이 완성되지 않음"
 
     mode_label = f"{mode} " if mode else ""
@@ -119,8 +118,7 @@ def send_trade_event_email(event: str, result: dict) -> tuple[bool, str]:
         + (f"2차 진입가: {second_entry:,.2f} USDT\n" if second_entry else "")
         + (f"3차 진입가: {third_entry:,.2f} USDT\n" if third_entry else "")
         + (f"손절가: {stop:,.2f} USDT\n" if stop else "손절가: 미설정 (2차 진입 후 활성화)\n") +
-        f"1차 익절가: {tp1:,.2f} USDT\n"
-        f"참고 목표가(주문 아님): {tp2:,.2f} USDT\n"
+        f"익절가(도달 시 전량 청산): {tp1:,.2f} USDT\n"
     )
     if event == "PENDING":
         title = f"[BTCUSDT] {mode_label}{direction} 예상 진입가 확정"
@@ -147,7 +145,7 @@ def send_trade_event_email(event: str, result: dict) -> tuple[bool, str]:
         if not exit_price:
             return False, "청산 가격이 완성되지 않음"
         event_label = {
-            "TP1": "1차 분할익절", "TP2": "2차 분할익절", "SL": "손절",
+            "TP1": "익절 전량청산", "TP2": "2차 익절", "SL": "손절",
             "TRAILING_EXIT": "추적 청산", "SESSION_EXIT": "다음 세션 전 청산",
             "EXIT": "포지션 청산",
         }[event]

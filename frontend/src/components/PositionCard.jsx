@@ -174,12 +174,8 @@ export function PositionCard({ account, positions, status, price, signal, trades
               <strong className="tone-short">{money(paper?.stop_loss)}</strong>
             </div>
             <div>
-              <span className="eyebrow">1차 익절</span>
+              <span className="eyebrow">익절 · 전량청산</span>
               <strong className="tone-long">{money(paper?.take_profit_1)}</strong>
-            </div>
-            <div>
-              <span className="eyebrow">참고 목표가</span>
-              <strong className="tone-long">{money(paper?.take_profit_2)}</strong>
             </div>
           </div>
         </div>
@@ -197,7 +193,7 @@ export function PositionCard({ account, positions, status, price, signal, trades
               <strong className="tone-short">{money(previewStop)}</strong>
             </div>
             <div>
-              <span className="eyebrow">1차 익절가</span>
+              <span className="eyebrow">익절가 · 전량청산</span>
               <strong className="tone-long">{money(previewTakeProfit1)}</strong>
             </div>
           </div>

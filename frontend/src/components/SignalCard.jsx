@@ -110,8 +110,7 @@ export function SignalCard({ signal, price, status, positions = [], trades = [] 
     { label: '실시간 수익 / 고정 수수료', value: `${signedUsdt(activeGrossUsdt)} / $${fixedFeeUsdt.toFixed(2)}`, tone: activeGrossUsdt > 0 ? 'tone-long' : activeGrossUsdt < 0 ? 'tone-short' : 'tone-muted' },
     { label: '수수료 차감 실제수익', value: signedUsdt(activeNetUsdt), tone: activeNetUsdt > 0 ? 'tone-long' : activeNetUsdt < 0 ? 'tone-short' : 'tone-muted' },
     { label: '현재 손절가', value: money(paper?.stop_loss), tone: 'tone-short' },
-    { label: '현재 1차 익절가', value: money(paper?.take_profit_1), tone: 'tone-long' },
-    { label: '참고 목표가 · 주문 아님', value: money(paper?.take_profit_2), tone: 'tone-long' },
+    { label: '익절가 · 전량청산', value: money(paper?.take_profit_1), tone: 'tone-long' },
   ] : []
 
   const livePositionMetrics = hasLive ? [
@@ -123,18 +122,17 @@ export function SignalCard({ signal, price, status, positions = [], trades = [] 
     { label: '실시간 수익 / 현재 수수료', value: `${signedUsdt(liveGrossUsdt)} / $${liveFeeUsdt.toFixed(2)}`, tone: liveGrossUsdt >= 0 ? 'tone-long' : 'tone-short' },
     { label: '수수료 차감 실제수익', value: signedUsdt(liveNetUsdt), tone: liveNetUsdt >= 0 ? 'tone-long' : 'tone-short' },
     { label: '현재 손절가', value: money(livePosition?.stopLoss || openLiveTrade?.stop_loss), tone: 'tone-short' },
-    { label: '현재 1차 익절가', value: money(livePosition?.takeProfit || openLiveTrade?.take_profit_1), tone: 'tone-long' },
-    { label: '참고 목표가 · 주문 아님', value: money(openLiveTrade?.take_profit_2), tone: 'tone-long' },
+    { label: '익절가 · 전량청산', value: money(livePosition?.takeProfit || openLiveTrade?.take_profit_1), tone: 'tone-long' },
   ] : []
 
   const orderMetrics = pendingEntry ? [
     { label: '주문 진입가 · 체결 대기', value: money(pendingEntry.entry_price), tone: toneClass(pendingEntry.direction) },
     { label: '손절가', value: money(pendingEntry.stop_loss), tone: 'tone-short' },
-    { label: '1차 익절가', value: money(pendingEntry.take_profit_1), tone: 'tone-long' },
+    { label: '익절가 · 전량청산', value: money(pendingEntry.take_profit_1), tone: 'tone-long' },
   ] : !hasPosition ? [
     { label: '진입가', value: money(previewEntry || signal?.entry_price), tone: toneClass(plannedDirection) },
     { label: '손절가', value: money(signal?.stop_loss ?? previewStop), tone: 'tone-short' },
-    { label: '1차 익절가', value: money(signal?.take_profit_1 ?? previewTakeProfit1), tone: 'tone-long' },
+    { label: '익절가 · 전량청산', value: money(signal?.take_profit_1 ?? previewTakeProfit1), tone: 'tone-long' },
   ] : []
 
   const signalMetrics = hasPosition ? [] : [

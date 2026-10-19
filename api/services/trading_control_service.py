@@ -386,7 +386,7 @@ def _paper_position_payload() -> Optional[dict]:
         "current_price": current,
         "stop_loss": data.get("sl"),
         "take_profit_1": data.get("tp1"),
-        "take_profit_2": data.get("tp2"),
+        "take_profit_2": None,
         "gross_pnl_pct": gross_pnl_pct,
         "fee_pct": fee_pct,
         "pnl_pct": net_pnl_pct,
@@ -654,51 +654,16 @@ async def _check_tp_sl(price: float):
 async def _check_paper_tp_sl(price: float):
     result_code = paper_trader.check_tp_sl(price)
     t = paper_trader.open_data
-    if not result_code and t and t.get("tp2_taken"):
-        ema20 = float(((state.last_result or {}).get("diagnostics") or {}).get("metrics", {}).get("ema20") or 0)
-        if ema20 > 0:
-            if (t["direction"] == "LONG" and price < ema20) or (t["direction"] == "SHORT" and price > ema20):
-                result_code = "TRAILING_EXIT"
     if not result_code:
         return
     entry, direction = t["entry"], t["direction"]
-    if result_code in ("TP1_PARTIAL", "TP2_PARTIAL"):
-        partial_code = "TP1" if result_code == "TP1_PARTIAL" else "TP2"
-        target = float(t.get("tp1") if partial_code == "TP1" else t.get("tp2"))
-        tid, amount, remaining = paper_trader.take_partial(target, partial_code, 0.35)
-        await _cancel_scheduled_scale_in_after_exit(tid, result_code)
-        msg = state.add_log(
-            f"[모의매매 분할익절] #{tid} {partial_code} · "
-            f"+${amount:,.4f} · 잔여 {remaining:.8f} BTC"
-        )
-        await manager.broadcast({"type": "log", "data": {"message": msg}})
-        await manager.broadcast({"type": "trade_update"})
-        await manager.broadcast({"type": "status", "data": _status_payload()})
-        await _send_trade_event_notification(
-            partial_code,
-            {
-                "direction": direction,
-                "entry_price": entry,
-                "stop_loss": t.get("sl"),
-                "take_profit_1": t.get("tp1"),
-                "take_profit_2": t.get("tp2"),
-                "exit_price": target,
-                "pnl_pct": _pnl_pct(direction, entry, target),
-                "realized_pnl_amount": amount,
-                "remaining_size_btc": remaining,
-                "position_size_btc": t.get("initial_size") or t.get("size"),
-                "position_size_percent": t.get("position_size_percent", 100),
-            },
-            "PAPER",
-        )
-        return
     limit_exit_price = (
-        float(price) if result_code == "TRAILING_EXIT"
+        float(t.get("tp1")) if result_code == "TP1"
         else float(t.get("sl"))
     )
     pnl_pct = _pnl_pct(direction, entry, limit_exit_price)
     sign = "+" if pnl_pct >= 0 else ""
-    profit_reason = f"[모의 지정가] {result_code} 체결: ${entry:,.2f} → ${limit_exit_price:,.2f}  ({sign}{pnl_pct:.2f}%)" if result_code == "TRAILING_EXIT" else ""
+    profit_reason = f"[모의 지정가] TP1 전량 청산: ${entry:,.2f} → ${limit_exit_price:,.2f}  ({sign}{pnl_pct:.2f}%)" if result_code == "TP1" else ""
     loss_reason = f"[모의 지정가] 손절 체결: ${entry:,.2f} → ${limit_exit_price:,.2f}  ({sign}{pnl_pct:.2f}%)" if result_code == "SL" else ""
     if result_code == "SL":
         row = get_trade(paper_trader.open_id) or {}
@@ -712,7 +677,7 @@ async def _check_paper_tp_sl(price: float):
         and risk_mgr.consecutive_losses >= risk_cfg.consecutive_loss_limit
     ):
         await _activate_consecutive_loss_stop()
-    emoji = "익절" if result_code.startswith("TP") or result_code == "TRAILING_EXIT" else "손절"
+    emoji = "익절 전량청산" if result_code == "TP1" else "손절"
     msg = state.add_log(f"[모의매매 {emoji}] #{tid}  {result_code}  {sign}{pnl:.2f}%")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await manager.broadcast({"type": "trade_update"})
@@ -1016,8 +981,8 @@ async def _send_trade_event_notification(event: str, result: dict, mode: Optiona
         "PENDING": "예상 진입가",
         "ENTRY": "진입 체결",
         "ADD": "추가 진입",
-        "TP1": "1차 익절",
-        "TP2": "2차 익절",
+        "TP1": "익절 전량청산",
+        "TP2": "2차 익절(이전 기록)",
         "SL": "손절",
         "TRAILING_EXIT": "추적 청산",
         "SESSION_EXIT": "세션 교대 청산",
@@ -2404,7 +2369,7 @@ async def _place_live_limit_protection(positions: list, result: dict):
     hold_side = "long" if "long" in hold_side else "short"
     orders = (
         ("loss_plan", result.get("stop_loss"), "손절"),
-        ("profit_plan", result.get("take_profit_1"), "1차 익절"),
+        ("profit_plan", result.get("take_profit_1"), "익절 전량청산"),
     )
     for plan_type, target, label in orders:
         if not target:

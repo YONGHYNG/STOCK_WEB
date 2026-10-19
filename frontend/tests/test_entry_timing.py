@@ -175,6 +175,36 @@ class EngineTimingTests(unittest.TestCase):
 
 
 class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_paper_tp1_closes_the_entire_position_at_the_target(self):
+        from api.services import trading_control_service as svc
+
+        trader = Mock(
+            open_id=77,
+            open_data={
+                "direction": "LONG", "entry": 100.0, "size": 2.0,
+                "sl": 90.0, "tp1": 110.0, "tp2": 120.0,
+                "position_size_percent": 100.0,
+            },
+        )
+        trader.check_tp_sl.return_value = "TP1"
+        trader.close_trade.return_value = (77, 9.94)
+        fake_state = SimpleNamespace(
+            trading_mode="PAPER_TRADING",
+            add_log=lambda message: message,
+        )
+        with patch.object(svc, "state", fake_state), patch.object(svc, "paper_trader", trader), \
+             patch.object(svc, "_cancel_scheduled_scale_in_after_exit", AsyncMock()), \
+             patch.object(svc, "_status_payload", return_value={}), \
+             patch.object(svc, "manager", SimpleNamespace(broadcast=AsyncMock())), \
+             patch.object(svc, "_send_trade_event_notification", AsyncMock()), \
+             patch.object(svc, "risk_mgr", Mock()):
+            await svc._check_paper_tp_sl(111.0)
+
+        trader.close_trade.assert_called_once()
+        self.assertEqual(trader.close_trade.call_args.kwargs["exit_price"], 110.0)
+        self.assertEqual(trader.close_trade.call_args.kwargs["result"], "TP1")
+        trader.take_partial.assert_not_called()
+
     async def test_better_price_add_reprices_stop_and_take_profit_from_final_average(self):
         from api.services import trading_control_service as svc
 

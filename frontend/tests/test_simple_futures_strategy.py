@@ -406,6 +406,28 @@ class StrategyTests(unittest.TestCase):
         trader._open_data.update(position_size_percent=100.0, entry_stage=2)
         self.assertEqual(trader.check_tp_sl(85.0), "SL")
 
+    def test_take_profit_and_stop_wait_for_exact_price_touch(self):
+        for direction, before_tp, at_tp, before_sl, at_sl in (
+            ("LONG", 109.99, 110.0, 90.01, 90.0),
+            ("SHORT", 90.01, 90.0, 109.99, 110.0),
+        ):
+            trader = PaperTrader()
+            trader._open_id = 1
+            trader._open_data = {
+                "direction": direction,
+                "entry": 100.0,
+                "sl": at_sl,
+                "tp1": at_tp,
+                "tp2": None,
+                "position_size_percent": 50.0,
+                "entry_stage": 1,
+            }
+
+            self.assertIsNone(trader.check_tp_sl(before_tp))
+            self.assertIsNone(trader.check_tp_sl(before_sl))
+            self.assertEqual(trader.check_tp_sl(at_tp), "TP1")
+            self.assertEqual(trader.check_tp_sl(at_sl), "SL")
+
     def test_tp1_signal_ignores_second_target_and_closes_in_one_step(self):
         trader = PaperTrader()
         trader._open_id = 1

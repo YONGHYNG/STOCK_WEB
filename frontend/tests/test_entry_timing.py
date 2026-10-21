@@ -414,12 +414,44 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
             remaining.return_value = 240
             await svc._execute_scheduled_entry("2026-09-14", "EVENING")
 
-        trader.open_trade.assert_called_once()
-        direction, plan = trader.open_trade.call_args.args
-        self.assertEqual(direction, "LONG")
+        trader.open_trade.assert_not_called()
+        self.assertIsNotNone(fake_state.pending_paper_order)
+        plan = fake_state.pending_paper_order["result"]
+        self.assertEqual(fake_state.pending_paper_order["direction"], "LONG")
         self.assertEqual(plan["position_size_percent"], 50)
         self.assertEqual(plan["position_size_btc"], .01)
         self.assertIsNotNone(plan["stop_loss"])
+        limit_price = plan["entry_price"]
+
+        with patch.object(svc, "state", fake_state), patch.object(svc, "paper_trader", trader), \
+             patch.object(svc, "_scheduled_analysis_runs", analysis_runs), \
+             patch.object(svc, "record_scheduled_entry_session"), \
+             patch.object(svc, "_status_payload", return_value={}), \
+             patch.object(svc, "manager", SimpleNamespace(broadcast=AsyncMock())), \
+             patch.object(svc, "_send_filled_position_email", AsyncMock()):
+            await svc._check_pending_paper_entry(limit_price + 0.01)
+            trader.open_trade.assert_not_called()
+            await svc._check_pending_paper_entry(limit_price)
+
+        trader.open_trade.assert_called_once_with("LONG", plan)
+        self.assertIsNone(fake_state.pending_paper_order)
+
+    async def test_scheduled_paper_limit_waits_without_expiring(self):
+        from api.services import trading_control_service as svc
+
+        pending = {
+            "direction": "LONG",
+            "result": {"strategy_signal": "SCHEDULED_EVENING_LONG", "entry_price": 100},
+            "created_at": 1,
+            "expires_at": None,
+            "price_triggered_only": True,
+        }
+        fake_state = SimpleNamespace(pending_paper_order=pending, pending_live_order=None)
+        with patch.object(svc, "state", fake_state):
+            expired = await svc._expire_pending_order_if_needed(now=999999)
+
+        self.assertFalse(expired)
+        self.assertIs(fake_state.pending_paper_order, pending)
 
     async def test_new_session_keeps_previous_position_when_direction_matches(self):
         from api.services import trading_control_service as svc
@@ -665,14 +697,14 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
             open_id=77,
             open_data={
                 "direction": "LONG", "entry": 1000.0, "size": 1.0,
-                "sl": None, "tp1": 1100.0, "tp2": 1150.0,
+                "sl": 900.0, "tp1": 1200.0, "tp2": 1300.0,
                 "position_size_percent": 50.0, "entry_stage": 1,
             },
         )
         row = {
             "id": 77, "direction": "LONG", "entry_price": 1000.0,
-            "entry_time": "2026-09-29 00:27:07", "stop_loss": None,
-            "take_profit_1": 1100.0, "take_profit_2": 1150.0,
+            "entry_time": "2026-09-29 00:27:07", "stop_loss": 900.0,
+            "take_profit_1": 1200.0, "take_profit_2": 1300.0,
             "size_btc": 1.0, "entry_stage": 1, "position_size_percent": 50.0,
             "risk_reward": 1.0, "confidence": 0, "long_prob": 50,
             "short_prob": 50, "tf_directions": "{}",
@@ -689,6 +721,8 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pyramid["add_size_btc"], 0.5)
         self.assertEqual(pyramid["target_size_btc"], 2.0)
         self.assertEqual(pyramid["result"]["stop_loss"], 900.0)
+        self.assertEqual(pyramid["result"]["second_entry_price"], 975.0)
+        self.assertEqual(pyramid["result"]["third_entry_price"], 950.0)
         self.assertTrue(pyramid["restored"])
 
     async def test_scheduled_pullback_scale_in_reprices_protection_from_final_average(self):

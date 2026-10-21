@@ -973,6 +973,43 @@ async def _auto_paper_trade(direction: str, r: dict):
     return True
 
 
+async def _queue_scheduled_paper_order(
+    session_date: str,
+    session_key: str,
+    run_key: str,
+    direction: str,
+    plan: dict,
+) -> bool:
+    """고정 세션 PAPER 지정가를 실제 가격 도달 전까지 미체결로 유지한다."""
+    if paper_trader.is_open or state.pending_paper_order:
+        return False
+    limit_price = float(plan.get("entry_price") or 0)
+    if limit_price <= 0:
+        return False
+    state.pending_paper_order = {
+        "direction": direction,
+        "result": plan,
+        "created_at": time.time(),
+        "expires_at": None,
+        # 세션이 끝나거나 최신 신호가 달라져도 지정가에 실제로 닿기 전에는
+        # 체결하지 않고, 시간 만료로 시장가처럼 처리하지도 않는다.
+        "price_triggered_only": True,
+        "scheduled_session_date": session_date,
+        "scheduled_session_key": session_key,
+        "scheduled_run_key": run_key,
+    }
+    risk_mgr.record_order_placed()
+    detail = f"PAPER {direction} 1차 50% 지정가 ${limit_price:,.2f} 체결 대기"
+    record_scheduled_entry_session(
+        session_date, session_key, "PENDING", "PAPER_TRADING", direction, detail,
+    )
+    msg = state.add_log(f"[고정 세션 {session_key}] {detail}")
+    await manager.broadcast({"type": "log", "data": {"message": msg}})
+    await _send_trade_event_notification("PENDING", plan, "PAPER")
+    await manager.broadcast({"type": "status", "data": _status_payload()})
+    return True
+
+
 async def _send_trade_event_notification(event: str, result: dict, mode: Optional[str] = None):
     if not gmail_is_configured():
         email_log = state.add_log("[Gmail 알림 실패] Gmail 설정이 없어 자동 연동할 수 없습니다")
@@ -1018,7 +1055,8 @@ async def _check_pending_paper_entry(price: float):
     latest_directions = latest.get("timeframe_directions") or {}
     opposite = "SHORT" if direction == "LONG" else "LONG"
     manual_limit = str(result.get("strategy_signal") or "").startswith("MANUAL_")
-    still_valid = manual_limit or (
+    price_triggered_only = bool(pending.get("price_triggered_only"))
+    still_valid = manual_limit or price_triggered_only or (
         latest.get("direction") == direction
         and _is_order_eligible(latest)
         and _entry_timing_check(latest, direction, price)[0]
@@ -1045,27 +1083,44 @@ async def _check_pending_paper_entry(price: float):
         add_size = max(0.0, (full_size - first_size) / 2)
         if add_notional > 0 or add_size > 0:
             source = "MANUAL" if result.get("manual_scale_in_plan") else "AUTO"
-            run_key = f"{datetime.now(KST).date().isoformat()}:{source}_{trade_id}"
-            _scheduled_analysis_runs[run_key] = {
-                "samples": [],
-                "attempts": 0,
-                "last_analysis_at": 0.0,
-                "pyramid": {
-                    "trade_id": trade_id,
-                    "direction": direction,
-                    "first_entry_price": limit_price,
-                    "original_stop": float(result.get("stop_loss") or 0),
-                    "risk_per_btc": abs(limit_price - float(result.get("stop_loss") or 0)),
-                    "add_size_btc": add_size,
-                    "add_notional_usdt": add_notional,
-                    "target_size_btc": full_size,
-                    "next_stage": 2,
-                    "last_add_price": limit_price,
-                    "result": result,
-                    "last_candle_timestamp": 0,
-                },
+            run_key = str(
+                pending.get("scheduled_run_key")
+                or f"{datetime.now(KST).date().isoformat()}:{source}_{trade_id}"
+            )
+            analysis_run = _scheduled_analysis_runs.setdefault(
+                run_key,
+                {"samples": [], "attempts": 0, "last_analysis_at": 0.0},
+            )
+            analysis_run["pyramid"] = {
+                "trade_id": trade_id,
+                "direction": direction,
+                "first_entry_price": limit_price,
+                "original_stop": float(result.get("stop_loss") or 0),
+                "risk_per_btc": abs(limit_price - float(result.get("stop_loss") or 0)),
+                "add_size_btc": add_size,
+                "add_notional_usdt": add_notional,
+                "target_size_btc": full_size,
+                "next_stage": 2,
+                "last_add_price": limit_price,
+                "result": result,
+                "last_candle_timestamp": int(
+                    (result.get("diagnostics") or {}).get("metrics", {}).get("timestamp") or 0
+                ),
             }
-    msg = state.add_log(f"[모의 지정가 체결] {direction} #{trade_id}  ${limit_price:,.2f}")
+    scheduled_date = pending.get("scheduled_session_date")
+    scheduled_key = pending.get("scheduled_session_key")
+    if scheduled_date and scheduled_key:
+        detail = f"PAPER {direction} 1차 50% #{trade_id} @ ${limit_price:,.2f}"
+        record_scheduled_entry_session(
+            str(scheduled_date), str(scheduled_key), "ENTERED",
+            "PAPER_TRADING", direction, detail,
+        )
+        msg = state.add_log(
+            f"[고정 세션 {scheduled_key} 지정가 체결] {direction} #{trade_id}  "
+            f"${limit_price:,.2f}"
+        )
+    else:
+        msg = state.add_log(f"[모의 지정가 체결] {direction} #{trade_id}  ${limit_price:,.2f}")
     await manager.broadcast({"type": "log", "data": {"message": msg}})
     await _send_filled_position_email(result, "PAPER")
     await manager.broadcast({"type": "trade_update"})
@@ -1080,7 +1135,10 @@ async def _expire_pending_order_if_needed(now: Optional[float] = None) -> bool:
         return False
 
     pending_result = _pending_result(pending)
-    if str(pending_result.get("strategy_signal") or "").startswith("MANUAL_"):
+    if (
+        str(pending_result.get("strategy_signal") or "").startswith("MANUAL_")
+        or pending.get("price_triggered_only")
+    ):
         return False
 
     if pending_result.get("entry_timing") and not str(pending_result.get("strategy_signal", "")).startswith("SCHEDULED_"):
@@ -1683,8 +1741,14 @@ def _restore_open_scheduled_scale_in() -> bool:
     direction = str(current.get("direction") or row.get("direction") or "HOLD").upper()
     entry = float(current.get("entry") or row.get("entry_price") or 0)
     tp1 = float(current.get("tp1") or row.get("take_profit_1") or 0)
-    risk_gap = abs(tp1 - entry) if tp1 > 0 and entry > 0 else 0.0
     planned_stop = float(current.get("sl") or row.get("stop_loss") or 0)
+    risk_gap = (
+        abs(entry - planned_stop)
+        if planned_stop > 0 and entry > 0
+        else abs(tp1 - entry)
+        if tp1 > 0 and entry > 0
+        else 0.0
+    )
     if planned_stop <= 0 and risk_gap > 0:
         planned_stop = entry - risk_gap if direction == "LONG" else entry + risk_gap
     if direction not in ("LONG", "SHORT") or entry <= 0 or planned_stop <= 0:
@@ -1711,6 +1775,10 @@ def _restore_open_scheduled_scale_in() -> bool:
         "strategy_signal": f"SCHEDULED_{session_key}_{direction}",
         "reasons": ["재시작 후 기존 잔여 50% 계획 복구"],
     }
+    if risk_gap > 0:
+        scale_direction = 1 if direction == "LONG" else -1
+        result["second_entry_price"] = entry - scale_direction * risk_gap * 0.25
+        result["third_entry_price"] = entry - scale_direction * risk_gap * 0.50
     run_key = f"{session_date}:{session_key}"
     analysis_run = _scheduled_analysis_runs.setdefault(
         run_key, {"samples": [], "attempts": 0, "last_analysis_at": 0.0}
@@ -1961,32 +2029,9 @@ async def _execute_legacy_scheduled_entry(session_date: str, session_key: str) -
     forced = apply_scheduled_entry_offset(forced, risk_cfg)
     if mode == "PAPER_TRADING":
         plan = _paper_three_stage_plan(forced)
-        trade_id = paper_trader.open_trade(direction, plan)
-        if state.paper_account_start_trade_id is None:
-            state.paper_account_start_trade_id = trade_id
-        analysis_run["pyramid"] = {
-            "trade_id": trade_id,
-            "direction": direction,
-            "first_entry_price": float(plan["entry_price"]),
-            "original_stop": float(plan["stop_loss"]),
-            "risk_per_btc": abs(float(plan["entry_price"]) - float(plan["stop_loss"])),
-            "add_size_btc": float(plan["planned_full_size_btc"]) * 0.25,
-            "add_notional_usdt": float(plan["planned_add_notional_usdt"]),
-            "target_size_btc": float(plan["planned_full_size_btc"]),
-            "next_stage": 2,
-            "last_add_price": float(plan["entry_price"]),
-            "last_candle_timestamp": 0,
-            "result": plan,
-        }
-        detail = f"PAPER 1차 50% #{trade_id} @ ${plan['entry_price']:,.2f} · 25%+25% 대기"
-        risk_mgr.record_order_placed()
-        record_scheduled_entry_session(session_date, session_key, "ENTERED", mode, direction, detail)
-        msg = state.add_log(f"[고정 진입 {session_key}] {direction} {detail}")
-        await manager.broadcast({"type": "log", "data": {"message": msg}})
-        await _send_filled_position_email(plan, "PAPER")
-        await manager.broadcast({"type": "trade_update"})
-        await manager.broadcast({"type": "status", "data": _status_payload()})
-        return True
+        return await _queue_scheduled_paper_order(
+            session_date, session_key, run_key, direction, plan,
+        )
     elif mode == "LIVE_TRADING":
         size_value = float(risk_cfg.order_size_btc)
         size = f"{size_value:.8f}".rstrip("0").rstrip(".")
@@ -2254,7 +2299,6 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         full_size = float(plan["planned_full_size_btc"])
         first_size = float(plan["position_size_btc"])
         add_size = round(full_size * 0.25, 8)
-        add_notional = float(plan["planned_add_notional_usdt"])
         if first_size <= 0 or add_size <= 0:
             return False
         plan["reasons"] = [
@@ -2263,32 +2307,9 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
             "1차 50% 진입 · 롱은 현재 평단 미만, 숏은 현재 평단 초과에서만 추가",
             "추세·거래량 조건 유지 시 더 좋은 가격에서 25%씩 최대 두 번 추가",
         ]
-        trade_id = paper_trader.open_trade(direction, plan)
-        if state.paper_account_start_trade_id is None:
-            state.paper_account_start_trade_id = trade_id
-        run["pyramid"] = {
-            "trade_id": trade_id,
-            "direction": direction,
-            "first_entry_price": float(plan["entry_price"]),
-            "original_stop": float(plan["stop_loss"]),
-            "risk_per_btc": abs(float(plan["entry_price"]) - float(plan["stop_loss"])),
-            "add_size_btc": add_size,
-            "add_notional_usdt": add_notional,
-            "target_size_btc": full_size,
-            "next_stage": 2,
-            "last_add_price": float(plan["entry_price"]),
-            "last_candle_timestamp": int((result.get("diagnostics") or {}).get("metrics", {}).get("timestamp") or 0),
-            "result": plan,
-        }
-        risk_mgr.record_order_placed()
-        detail = f"PAPER {direction} 1차 50% #{trade_id} @ ${float(plan['entry_price']):,.2f}"
-        record_scheduled_entry_session(session_date, session_key, "ENTERED", mode, direction, detail)
-        msg = state.add_log(f"[고정 세션 {session_key}] {detail}")
-        await manager.broadcast({"type": "log", "data": {"message": msg}})
-        await manager.broadcast({"type": "trade_update"})
-        await manager.broadcast({"type": "status", "data": _status_payload()})
-        await _send_filled_position_email(plan, "PAPER")
-        return True
+        return await _queue_scheduled_paper_order(
+            session_date, session_key, run_key, direction, plan,
+        )
 
     # LIVE는 실거래 허용이 명시적으로 켜진 경우에도 위험기반 전체 수량의 50%만 첫 주문한다.
     full_size = max(0.0, float(result.get("position_size_btc") or risk_cfg.order_size_btc))

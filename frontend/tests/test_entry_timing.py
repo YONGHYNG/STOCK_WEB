@@ -197,6 +197,9 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan["position_size_btc"], 0.0125)
         self.assertEqual(plan["planned_total_notional_usdt"], 2_000.0)
         self.assertEqual(plan["planned_add_notional_usdt"], 500.0)
+        self.assertEqual(plan["second_entry_price"], 79_750.0)
+        self.assertEqual(plan["third_entry_price"], 79_500.0)
+        self.assertEqual(plan["stop_loss"], 79_250.0)
         self.assertTrue(plan["paper_scale_in_plan"])
 
     async def test_additional_entry_keeps_exact_twenty_five_percent_notional(self):
@@ -355,8 +358,8 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
         from api.services import trading_control_service as svc
 
         for direction, stop, expected in (
-            ("LONG", 900.0, (975.0, 950.0)),
-            ("SHORT", 1100.0, (1025.0, 1050.0)),
+            ("LONG", 900.0, (750.0, 500.0)),
+            ("SHORT", 1100.0, (1250.0, 1500.0)),
         ):
             fake_state = SimpleNamespace(
                 pending_paper_order=None,
@@ -720,9 +723,9 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
         pyramid = runs["2026-09-29:MORNING"]["pyramid"]
         self.assertEqual(pyramid["add_size_btc"], 0.5)
         self.assertEqual(pyramid["target_size_btc"], 2.0)
-        self.assertEqual(pyramid["result"]["stop_loss"], 900.0)
-        self.assertEqual(pyramid["result"]["second_entry_price"], 975.0)
-        self.assertEqual(pyramid["result"]["third_entry_price"], 950.0)
+        self.assertEqual(pyramid["result"]["stop_loss"], 250.0)
+        self.assertEqual(pyramid["result"]["second_entry_price"], 750.0)
+        self.assertEqual(pyramid["result"]["third_entry_price"], 500.0)
         self.assertTrue(pyramid["restored"])
 
     async def test_scheduled_pullback_scale_in_reprices_protection_from_final_average(self):

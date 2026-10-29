@@ -86,6 +86,11 @@ risk_cfg = risk_settings_store.load()
 risk_mgr = RiskManager(risk_cfg)
 PAPER_ACCOUNT_INITIAL_BALANCE = 100.0
 PAPER_ACCOUNT_LEVERAGE = 20
+PAPER_SCALE_IN_STEP_USDT = 250.0
+PAPER_SCALE_IN_STOP_BUFFER_USDT = 250.0
+PAPER_SCALE_IN_MIN_STOP_GAP_USDT = (
+    PAPER_SCALE_IN_STEP_USDT * 2 + PAPER_SCALE_IN_STOP_BUFFER_USDT
+)
 PENDING_ORDER_TTL_SECONDS = 10 * 60
 RANGE_PENDING_ORDER_TTL_SECONDS = 10 * 60
 PENDING_CANCEL_RETRY_SECONDS = 60
@@ -154,14 +159,13 @@ def _paper_full_leverage_size(entry_price: float) -> float:
 
 
 def _paper_three_stage_plan(result: dict) -> dict:
-    """PAPER 신규 진입을 계좌 증거금 50%/25%/25%의 세 단계로 고정한다."""
+    """PAPER 신규 진입을 50%/25%/25%, 각 250 USDT 간격으로 고정한다."""
     plan = dict(result)
     entry = float(plan.get("entry_price") or 0)
     full_size = _paper_full_leverage_size(entry)
     total_notional = full_size * entry
     direction = str(plan.get("direction") or "").upper()
     stop = float(plan.get("stop_loss") or 0)
-    risk_gap = abs(entry - stop) if entry > 0 and stop > 0 else 0.0
     scale_direction = 1 if direction == "LONG" else -1
     plan.update({
         "position_size_btc": round(full_size * 0.50, 8),
@@ -172,9 +176,14 @@ def _paper_three_stage_plan(result: dict) -> dict:
         "entry_stage": 1,
         "paper_scale_in_plan": True,
     })
-    if risk_gap > 0 and direction in ("LONG", "SHORT"):
-        plan.setdefault("second_entry_price", entry - scale_direction * risk_gap * 0.25)
-        plan.setdefault("third_entry_price", entry - scale_direction * risk_gap * 0.50)
+    if entry > 0 and direction in ("LONG", "SHORT"):
+        risk_gap = abs(entry - stop) if stop > 0 else 0.0
+        protected_gap = max(risk_gap, PAPER_SCALE_IN_MIN_STOP_GAP_USDT)
+        plan["stop_loss"] = entry - scale_direction * protected_gap
+        plan["second_entry_price"] = entry - scale_direction * PAPER_SCALE_IN_STEP_USDT
+        plan["third_entry_price"] = entry - scale_direction * PAPER_SCALE_IN_STEP_USDT * 2
+        plan["paper_scale_in_step_usdt"] = PAPER_SCALE_IN_STEP_USDT
+        plan["paper_scale_in_stop_buffer_usdt"] = PAPER_SCALE_IN_STOP_BUFFER_USDT
     return plan
 
 
@@ -1642,6 +1651,8 @@ async def _complete_scheduled_profit_add(
     stop_min = float(risk_cfg.stop_gap_min_usdt)
     stop_max = max(stop_min, float(risk_cfg.stop_gap_max_usdt))
     stop_gap = min(max(float(pyramid.get("risk_per_btc") or stop_min), stop_min), stop_max)
+    if plan.get("paper_scale_in_plan") or plan.get("manual_scale_in_plan"):
+        stop_gap = max(stop_gap, PAPER_SCALE_IN_MIN_STOP_GAP_USDT)
     tp1_min = float(risk_cfg.take_profit_1_min_usdt)
     tp1_max = max(tp1_min, float(risk_cfg.take_profit_1_max_usdt))
     original_plan_entry = float(plan.get("entry_price") or first_entry)
@@ -1777,8 +1788,14 @@ def _restore_open_scheduled_scale_in() -> bool:
     }
     if risk_gap > 0:
         scale_direction = 1 if direction == "LONG" else -1
-        result["second_entry_price"] = entry - scale_direction * risk_gap * 0.25
-        result["third_entry_price"] = entry - scale_direction * risk_gap * 0.50
+        risk_gap = max(risk_gap, PAPER_SCALE_IN_MIN_STOP_GAP_USDT)
+        planned_stop = entry - scale_direction * risk_gap
+        result["stop_loss"] = planned_stop
+        result["second_entry_price"] = entry - scale_direction * PAPER_SCALE_IN_STEP_USDT
+        result["third_entry_price"] = entry - scale_direction * PAPER_SCALE_IN_STEP_USDT * 2
+        result["paper_scale_in_plan"] = True
+        result["paper_scale_in_step_usdt"] = PAPER_SCALE_IN_STEP_USDT
+        result["paper_scale_in_stop_buffer_usdt"] = PAPER_SCALE_IN_STOP_BUFFER_USDT
     run_key = f"{session_date}:{session_key}"
     analysis_run = _scheduled_analysis_runs.setdefault(
         run_key, {"samples": [], "attempts": 0, "last_analysis_at": 0.0}
@@ -1798,7 +1815,7 @@ def _restore_open_scheduled_scale_in() -> bool:
         "direction": direction,
         "first_entry_price": entry,
         "original_stop": planned_stop,
-        "risk_per_btc": abs(entry - planned_stop),
+        "risk_per_btc": risk_gap,
         "add_size_btc": add_size,
         "add_notional_usdt": add_notional,
         "target_size_btc": target_size,

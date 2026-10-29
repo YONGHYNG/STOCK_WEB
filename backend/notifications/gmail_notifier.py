@@ -93,6 +93,7 @@ def send_trade_event_email(event: str, result: dict) -> tuple[bool, str]:
     entry = float(result.get("entry_price") or 0)
     stop = float(result.get("stop_loss") or 0)
     tp1 = float(result.get("take_profit_1") or 0)
+    tp2 = float(result.get("take_profit_2") or 0)
     exit_price = float(result.get("exit_price") or 0)
     pnl_pct = result.get("pnl_pct")
     mode = str(result.get("mode") or result.get("trade_type") or "").upper()
@@ -132,13 +133,18 @@ def send_trade_event_email(event: str, result: dict) -> tuple[bool, str]:
     elif event == "ADD":
         if not added_entry:
             return False, "추가 진입 가격이 완성되지 않음"
+        if not average_entry or not stop or not tp1 or not tp2:
+            return False, "추가 진입 후 평균단가 또는 손절·익절 가격이 완성되지 않음"
         title = f"[BTCUSDT] {mode_label}{direction} 추가 진입 · 총 {position_share:g}%"
         body = (
             f"BTCUSDT {entry_stage}차 추가 진입이 체결되었습니다.\n\n"
+            f"방향: {direction}\n"
             f"추가 체결가: {added_entry:,.2f} USDT\n"
             + (f"추가 수량: {added_size:.8f} BTC\n" if added_size else "") +
             f"현재 평균단가: {average_entry:,.2f} USDT\n"
             f"현재 손절가: {stop:,.2f} USDT\n"
+            f"현재 1차 익절가: {tp1:,.2f} USDT\n"
+            f"현재 2차 익절가: {tp2:,.2f} USDT\n"
             f"현재 총 비중: {position_share:g}%\n"
         )
     elif event in ("TP1", "TP2", "SL", "TRAILING_EXIT", "SESSION_EXIT", "EXIT"):

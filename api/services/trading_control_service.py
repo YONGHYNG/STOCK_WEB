@@ -1545,6 +1545,7 @@ async def _complete_scheduled_paper_scale_in(
     completed["average_entry_price"] = average
     # 평단을 개선하더라도 기존 손절가를 더 멀리 늘리지 않는다.
     trade_id, average = paper_trader.scale_in(fill_price, added_size, completed)
+    completed["average_entry_price"] = average
     detail = (
         f"PAPER 조정 50%+50% 완료 #{trade_id} · {reason} · 2차 ${fill_price:,.2f} · "
         f"평균단가 ${average:,.2f} · SL ${completed['stop_loss']:,.2f} · "
@@ -1682,6 +1683,7 @@ async def _complete_scheduled_profit_add(
     })
     pyramid["last_candle_timestamp"] = timestamp
     trade_id, actual_average = paper_trader.scale_in(price, added_size, plan)
+    plan["average_entry_price"] = actual_average
     pyramid["last_add_price"] = price
     pyramid["result"] = plan
     if stage == 2:

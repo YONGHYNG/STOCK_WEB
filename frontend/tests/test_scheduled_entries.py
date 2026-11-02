@@ -38,7 +38,7 @@ class ScheduledEntryTests(unittest.TestCase):
     def test_windows_and_overnight_session_date(self):
         self.assertIsNone(active_scheduled_session(datetime(2026, 8, 19, 5, 59, tzinfo=KST)))
         self.assertEqual(active_scheduled_session(datetime(2026, 8, 19, 6, 0, tzinfo=KST)), ("2026-08-19", "MORNING"))
-        self.assertEqual(active_scheduled_session(datetime(2026, 8, 19, 9, 10, tzinfo=KST)), ("2026-08-19", "MORNING"))
+        self.assertEqual(active_scheduled_session(datetime(2026, 8, 19, 8, 40, tzinfo=KST)), ("2026-08-19", "MORNING"))
         self.assertIsNone(active_scheduled_session(datetime(2026, 8, 19, 9, 11, tzinfo=KST)))
         self.assertIsNone(active_scheduled_session(datetime(2026, 8, 19, 16, 59, tzinfo=KST)))
         self.assertEqual(active_scheduled_session(datetime(2026, 8, 19, 17, 0, tzinfo=KST)), ("2026-08-19", "EVENING"))
@@ -59,10 +59,10 @@ class ScheduledEntryTests(unittest.TestCase):
     def test_session_bounds_and_remaining_time(self):
         morning_start, morning_end = scheduled_session_bounds("2026-08-19", "MORNING")
         self.assertEqual((morning_start.hour, morning_start.minute), (6, 0))
-        self.assertEqual((morning_end.hour, morning_end.minute), (9, 10))
+        self.assertEqual((morning_end.hour, morning_end.minute), (8, 40))
         self.assertEqual(
             seconds_until_session_end(
-                "2026-08-19", "MORNING", datetime(2026, 8, 19, 9, 9, tzinfo=KST)
+                "2026-08-19", "MORNING", datetime(2026, 8, 19, 8, 39, tzinfo=KST)
             ),
             60,
         )

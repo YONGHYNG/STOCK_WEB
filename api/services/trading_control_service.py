@@ -103,8 +103,54 @@ SCHEDULED_IMPULSE_VOLUME_RATIO = 1.5
 SCHEDULED_PULLBACK_MIN_RATIO = 0.25
 SCHEDULED_PULLBACK_MAX_RATIO = 0.60
 SCHEDULED_PULLBACK_VOLUME_CONTRACTION = 0.70
+# 일반 분석 루프는 진입 세션과 무관하게 24시간 돈다. 같은 완성 5분봉을
+# 15초마다 중복 저장하지 않고 최근 24시간(5분봉 288개)의 방향 표본을 보존한다.
+CONTINUOUS_ANALYSIS_MAX_SAMPLES = 24 * 60 // 5
 KST = ZoneInfo("Asia/Seoul")
 _scheduled_analysis_runs: dict[str, dict] = {}
+_continuous_analysis_samples: list[dict] = []
+
+
+def _analysis_sample_timestamp(result: dict) -> int:
+    metrics = (result.get("diagnostics") or {}).get("metrics") or {}
+    try:
+        return int(metrics.get("timestamp") or result.get("timestamp") or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _append_analysis_sample(samples: list[dict], result: Optional[dict], limit: int) -> None:
+    """같은 분석봉은 최신 계산으로 교체하고 표본 수를 제한한다."""
+    if not result:
+        return
+    timestamp = _analysis_sample_timestamp(result)
+    if samples and timestamp and _analysis_sample_timestamp(samples[-1]) == timestamp:
+        samples[-1] = result
+    else:
+        samples.append(result)
+    if len(samples) > limit:
+        del samples[:-limit]
+
+
+def _remember_continuous_analysis(result: Optional[dict]) -> None:
+    """세션 밖을 포함한 상시 분석 결과를 의무 방향 점수용으로 누적한다."""
+    _append_analysis_sample(
+        _continuous_analysis_samples,
+        result,
+        CONTINUOUS_ANALYSIS_MAX_SAMPLES,
+    )
+
+
+def _new_scheduled_analysis_run() -> dict:
+    """새 세션은 직전 24시간 상시 분석 점수를 이어받아 시작한다."""
+    return {
+        "processed_event_ids": set(),
+        "last_analysis_at": 0.0,
+        "attempts": 0,
+        # 세션 안 Volume Event/분할 판단용 표본과 24시간 방향 점수는 분리한다.
+        "samples": [],
+        "score_samples": list(_continuous_analysis_samples),
+    }
 
 
 def _automatic_loss_analysis(trade_id: Optional[int], elapsed_seconds: Optional[int] = None) -> str:
@@ -1275,6 +1321,7 @@ async def signal_loop():
 
             if result:
                 state.last_result = result
+                _remember_continuous_analysis(result)
                 for err in errors:
                     msg = state.add_log(f"[WARN] {err}")
                     await manager.broadcast({"type": "log", "data": {"message": msg}})
@@ -2095,13 +2142,10 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     if mode == "LIVE_TRADING" and (not private_client or not risk_cfg.live_trading_allowed):
         return False
 
-    run = _scheduled_analysis_runs.setdefault(
-        run_key,
-        {
-            "processed_event_ids": set(), "last_analysis_at": 0.0,
-            "attempts": 0, "samples": [],
-        },
-    )
+    run = _scheduled_analysis_runs.get(run_key)
+    if run is None:
+        run = _new_scheduled_analysis_run()
+        _scheduled_analysis_runs[run_key] = run
     # 이미 시작한 50/25/25 평단 개선 계획은 세션 종료 후에도 별도 루프가 추적한다.
     if run.get("pyramid"):
         return False
@@ -2130,8 +2174,12 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         await manager.broadcast({"type": "log", "data": {"message": msg}})
     if latest:
         state.last_result = latest
-        run["samples"].append(latest)
-        run["samples"] = run["samples"][-120:]
+        _remember_continuous_analysis(latest)
+        _append_analysis_sample(run["samples"], latest, 120)
+        score_samples = run.setdefault("score_samples", [])
+        _append_analysis_sample(
+            score_samples, latest, CONTINUOUS_ANALYSIS_MAX_SAMPLES,
+        )
 
     # 가장 마지막 항목은 진행 중인 봉이므로 제외하고 확정봉만 판단한다.
     candles_5m = get_recent_candles(SYMBOL, "5m", 260)
@@ -2170,7 +2218,9 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
             )
             await manager.broadcast({"type": "log", "data": {"message": msg}})
             return False
-        direction, consensus_score = choose_consensus_direction(run["samples"] or [latest])
+        direction, consensus_score = choose_consensus_direction(
+            run.get("score_samples") or run["samples"] or [latest]
+        )
         if direction not in ("LONG", "SHORT"):
             direction = choose_forced_direction(latest)
         result = build_forced_entry_result(

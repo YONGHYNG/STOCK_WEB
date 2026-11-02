@@ -7,7 +7,8 @@ from zoneinfo import ZoneInfo
 
 KST = ZoneInfo("Asia/Seoul")
 SCHEDULED_ENTRY_WINDOWS = (
-    ("MORNING", time(6, 0), time(9, 10)),
+    # 종료 5분 전 의무 방향 확정 규칙에 따라 08:35까지 포지션 방향을 정한다.
+    ("MORNING", time(6, 0), time(8, 40)),
     ("EVENING", time(17, 0), time(23, 30)),
 )
 SCALP_STOP_ATR_MULTIPLIER = 1.0

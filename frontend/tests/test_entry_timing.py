@@ -38,6 +38,37 @@ def frame_for(side="LONG", structural=False):
 
 
 class EntryTimingTests(unittest.TestCase):
+    def test_continuous_analysis_keeps_one_sample_per_candle_for_24_hours(self):
+        from api.services import trading_control_service as svc
+
+        samples = []
+        first = {"timestamp": 1000, "direction": "LONG"}
+        recalculated = {"timestamp": 1000, "direction": "SHORT"}
+        svc._append_analysis_sample(samples, first, 2)
+        svc._append_analysis_sample(samples, recalculated, 2)
+        svc._append_analysis_sample(samples, {"timestamp": 2000}, 2)
+        svc._append_analysis_sample(samples, {"timestamp": 3000}, 2)
+
+        self.assertEqual([item["timestamp"] for item in samples], [2000, 3000])
+        self.assertNotIn(first, samples)
+
+    def test_new_session_inherits_all_time_analysis_without_using_it_as_session_event(self):
+        from api.services import trading_control_service as svc
+
+        prior = [{
+            "timestamp": 1000,
+            "direction": "SHORT",
+            "long_probability": 20,
+            "short_probability": 80,
+            "timeframe_directions": {"5m": "SHORT", "15m": "SHORT", "1H": "SHORT"},
+        }]
+        with patch.object(svc, "_continuous_analysis_samples", prior):
+            run = svc._new_scheduled_analysis_run()
+
+        self.assertEqual(run["score_samples"], prior)
+        self.assertIsNot(run["score_samples"], prior)
+        self.assertEqual(run["samples"], [])
+
     def test_scale_in_price_must_strictly_improve_the_current_average(self):
         from backend.order.paper_trader import PaperTrader, is_better_scale_in_price
 

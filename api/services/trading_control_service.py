@@ -2168,7 +2168,12 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
     run["last_analysis_at"] = now
     run["attempts"] += 1
 
-    latest, errors = await asyncio.to_thread(_worker_analyze)
+    # 마감 의무 시각에는 새 네트워크 분석이 끝나기를 기다리지 않는다. 상시 분석
+    # 루프가 직전까지 누적한 최신 결과로 즉시 방향을 확정해 실제 체결을 시작한다.
+    if force_entry_due:
+        latest, errors = state.last_result, []
+    else:
+        latest, errors = await asyncio.to_thread(_worker_analyze)
     for error in errors:
         msg = state.add_log(f"[고정 세션 {session_key} 분석 경고] {error}")
         await manager.broadcast({"type": "log", "data": {"message": msg}})
@@ -2318,7 +2323,10 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
                 await manager.broadcast({"type": "log", "data": {"message": msg}})
             return False
 
-    result = apply_scheduled_entry_offset(result, risk_cfg)
+    # 정상 Volume Event는 유리한 지정가를 사용할 수 있지만, 마감 의무 진입은
+    # 지정가 대기로 08:35/23:25를 넘기지 않도록 현재가 계획을 그대로 사용한다.
+    if not mandatory_fallback:
+        result = apply_scheduled_entry_offset(result, risk_cfg)
     state.last_result = result
     await manager.broadcast({"type": "signal", "data": result})
 
@@ -2376,9 +2384,14 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
             "1차 50% 진입 · 롱은 현재 평단 미만, 숏은 현재 평단 초과에서만 추가",
             "추세·거래량 조건 유지 시 더 좋은 가격에서 25%씩 최대 두 번 추가",
         ]
-        return await _queue_scheduled_paper_order(
+        queued = await _queue_scheduled_paper_order(
             session_date, session_key, run_key, direction, plan,
         )
+        if queued and mandatory_fallback:
+            # 의무 진입 계획은 현재가로 만들었으므로 PAPER에서도 같은 호출 안에
+            # 체결해 '방향 확정'이 아니라 실제 포지션 보유 상태를 보장한다.
+            await _check_pending_paper_entry(float(state.last_price))
+        return queued
 
     # LIVE는 실거래 허용이 명시적으로 켜진 경우에도 위험기반 전체 수량의 50%만 첫 주문한다.
     full_size = max(0.0, float(result.get("position_size_btc") or risk_cfg.order_size_btc))
@@ -2387,23 +2400,31 @@ async def _execute_scheduled_entry(session_date: str, session_key: str) -> bool:
         return False
     side = "buy" if direction == "LONG" else "sell"
     size = f"{first_size:.8f}".rstrip("0").rstrip(".")
-    limit_price = f"{float(result['entry_price']):.1f}"
+    entry_price = f"{float(result['entry_price']):.1f}"
     try:
-        response = await asyncio.to_thread(
-            private_client.place_limit_order, side, size, limit_price, "open"
-        )
+        if mandatory_fallback:
+            response = await asyncio.to_thread(
+                private_client.place_market_order, side, size, "open"
+            )
+        else:
+            response = await asyncio.to_thread(
+                private_client.place_limit_order, side, size, entry_price, "open"
+            )
     except Exception as exc:
         msg = state.add_log(f"[고정 세션 {session_key}] LIVE 1차 주문 실패: {exc}")
         await manager.broadcast({"type": "log", "data": {"message": msg}})
         return False
     record_scheduled_entry_session(
         session_date, session_key, "ENTERED", mode, direction,
-        f"LIVE 1차 50% 지정가 ${limit_price} 주문 {response.get('orderId') or 'submitted'}",
+        (
+            f"LIVE 1차 50% {'시장가' if mandatory_fallback else '지정가'} "
+            f"${entry_price} 주문 {response.get('orderId') or 'submitted'}"
+        ),
     )
     state.pending_live_order_id = str(response.get("orderId") or "pending")
     state.pending_live_order = {
         "direction": direction,
-        "entry_price": float(limit_price),
+        "entry_price": float(entry_price),
         "order_id": state.pending_live_order_id,
         "result": dict(result),
         **_pending_order_timestamps(result=result),

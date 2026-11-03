@@ -448,27 +448,14 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
             remaining.return_value = 240
             await svc._execute_scheduled_entry("2026-09-14", "EVENING")
 
-        trader.open_trade.assert_not_called()
-        self.assertIsNotNone(fake_state.pending_paper_order)
-        plan = fake_state.pending_paper_order["result"]
-        self.assertEqual(fake_state.pending_paper_order["direction"], "LONG")
+        trader.open_trade.assert_called_once()
+        self.assertIsNone(fake_state.pending_paper_order)
+        direction, plan = trader.open_trade.call_args.args
+        self.assertEqual(direction, "LONG")
         self.assertEqual(plan["position_size_percent"], 50)
         self.assertEqual(plan["position_size_btc"], .01)
         self.assertIsNotNone(plan["stop_loss"])
-        limit_price = plan["entry_price"]
-
-        with patch.object(svc, "state", fake_state), patch.object(svc, "paper_trader", trader), \
-             patch.object(svc, "_scheduled_analysis_runs", analysis_runs), \
-             patch.object(svc, "record_scheduled_entry_session"), \
-             patch.object(svc, "_status_payload", return_value={}), \
-             patch.object(svc, "manager", SimpleNamespace(broadcast=AsyncMock())), \
-             patch.object(svc, "_send_filled_position_email", AsyncMock()):
-            await svc._check_pending_paper_entry(limit_price + 0.01)
-            trader.open_trade.assert_not_called()
-            await svc._check_pending_paper_entry(limit_price)
-
-        trader.open_trade.assert_called_once_with("LONG", plan)
-        self.assertIsNone(fake_state.pending_paper_order)
+        self.assertEqual(plan["entry_price"], fake_state.last_price)
 
     async def test_scheduled_paper_limit_waits_without_expiring(self):
         from api.services import trading_control_service as svc
@@ -486,6 +473,48 @@ class ServiceTimingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(expired)
         self.assertIs(fake_state.pending_paper_order, pending)
+
+    async def test_live_deadline_uses_market_order_instead_of_waiting_for_limit(self):
+        from api.services import trading_control_service as svc
+
+        result = dict(
+            direction="HOLD", confidence=0, entry_price=104,
+            timeframe_directions={"5m": "SHORT", "15m": "SHORT", "1H": "SHORT"},
+        )
+        fake_state = SimpleNamespace(
+            trading_mode="LIVE_TRADING", auto_trade_enabled=True,
+            emergency_stopped=False, last_price=104, last_result=result,
+            cached_positions=[], pending_paper_order=None, pending_live_order=None,
+            pending_live_order_id=None, add_log=lambda message: message,
+        )
+        private = Mock()
+        private.place_market_order.return_value = {"orderId": "market-1"}
+        risk = Mock()
+        risk.check_mandatory_session_entry.return_value = (True, "")
+        settings = SimpleNamespace(
+            live_trading_allowed=True, order_size_btc=.02,
+            stop_gap_min_usdt=400, stop_gap_max_usdt=600,
+            atr_stop_multiplier=1, take_profit_1_min_usdt=500,
+            take_profit_1_max_usdt=800, take_profit_2_usdt=1200,
+        )
+        with patch.object(svc, "state", fake_state), \
+             patch.object(svc, "private_client", private), \
+             patch.object(svc, "risk_cfg", settings), \
+             patch.object(svc, "risk_mgr", risk), \
+             patch.object(svc, "_scheduled_analysis_runs", {}), \
+             patch.object(svc, "get_scheduled_entry_session", return_value=None), \
+             patch.object(svc, "seconds_until_session_end", return_value=240), \
+             patch.object(svc, "get_recent_candles", return_value=[]), \
+             patch.object(svc, "record_scheduled_entry_session"), \
+             patch.object(svc, "_status_payload", return_value={}), \
+             patch.object(svc, "manager", SimpleNamespace(broadcast=AsyncMock())), \
+             patch.object(svc, "_send_trade_event_notification", AsyncMock()):
+            entered = await svc._execute_scheduled_entry("2026-09-14", "EVENING")
+
+        self.assertTrue(entered)
+        private.place_market_order.assert_called_once_with("sell", "0.01", "open")
+        private.place_limit_order.assert_not_called()
+        self.assertEqual(fake_state.pending_live_order_id, "market-1")
 
     async def test_new_session_keeps_previous_position_when_direction_matches(self):
         from api.services import trading_control_service as svc
